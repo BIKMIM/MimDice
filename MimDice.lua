@@ -134,6 +134,10 @@ function MimDice_CHAT_MSG_SYSTEM(msg)
 		}) 
 		-- 이벤트 수신하면 창 띄우기
 		MimDice_ShowWindow()
+
+
+		local args = {}
+ 		local localizedClass, englishClass, localizedRace, englishRace, sex, name, realm = GetPlayerInfoByGUID(args)
 	end
 end
 
@@ -166,6 +170,7 @@ function Choice_Sort(a, b)
 		return a.Roll > b.Roll
 	end
 end
+
 
 
 
@@ -249,6 +254,7 @@ function MimDice_ClearRolls()
 	rollNames = {}
 	DEFAULT_CHAT_FRAME:AddMessage(L["All rolls have been cleared."])
 	MimDice_UpdateList()
+
 end
 
 
@@ -311,9 +317,39 @@ function Prefix()
 	Final_Text = T_Check()  .. D_Check() .. H_Check() .. Dice_Text .. Num_Dice .. Space .. High_Check() .. Low_Check() .. Suffix
 	
 
-	-- print(Final_Text)
 	-- SendChatMessage("msg" ,"chatType" ,"language" ,"channel");
 	 SendChatMessage(Final_Text,"SAY")
 	 SendChatMessage(StartLine,"SAY")
 	--SendChatMessage(Final_Text,"RAID_WARNING")
 end
+
+
+-- function Mim_GetClassColor(Class)
+
+--     local ClassColor = ""
+--     local Red, Green, Blue
+
+--     Class = strupper(Class)
+
+--     if RAID_CLASS_COLORS[Class] ~= nil then
+--         Red = RAID_CLASS_COLORS[Class].r
+--         Green = RAID_CLASS_COLORS[Class].g
+--         Blue = RAID_CLASS_COLORS[Class].b
+
+--         ClassColor = "|c" .. string.format("%2x%2x%2x%2x", 255, Red * 255, Green * 255, Blue * 255)
+--     end
+
+--     return ClassColor
+-- end
+
+
+
+-- function MimGetClassInfo()
+-- 	local localizedClass, englishClass, classIndex = UnitClass(name)
+-- 	print("클래스정보 출력")
+-- 	print(localizedClass)
+-- 	print(englishClass)
+-- 	print(classIndex)
+-- 	--print(UnitClass(name))
+-- 	--print(GetClassInfo(name))
+-- end
