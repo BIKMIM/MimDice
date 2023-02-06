@@ -255,43 +255,65 @@ end
 
 -- 역할별 문장
 function Prefix()
-	local T_Prefix = "탱커님들, "
-	local D_Prefix = "딜러님들, "
-	local H_Prefix = "힐러님들, "
+	local T_Prefix = "탱커님들 "
+	local D_Prefix = "딜러님들 "
+	local H_Prefix = "힐러님들 "
 	local Dice_Text = "주사위 "
 	local Space = " "
 	local Num_Dice = DiceEditBox:GetText()
-	local Suffix = MainEditBox:GetText()
-	local Final_Text = ""
 	local High_Text = "하이"
 	local Low_Text = "로우"
-
-
-	if TankCheckBox:GetChecked(true) and DpsCheckBox:GetChecked(true) and HealCheckBox:GetChecked(true) and UpBtn:GetChecked(true) then
-		Final_Text = T_Prefix .. D_Prefix .. H_Prefix .. Dice_Text .. Num_Dice .. Space .. High_Text .. Suffix 
-	elseif TankCheckBox:GetChecked(true) and DpsCheckBox:GetChecked(true) then
-	 	Final_Text = T_Prefix .. D_Prefix .. Dice_Text .. Num_Dice .. Space .. Suffix  
+	local Suffix = MainEditBox:GetText()
+	local StartLine = "=============================="
 	
-	elseif TankCheckBox:GetChecked(true) and HealCheckBox:GetChecked(true) then
-	 	Final_Text = T_Prefix .. H_Prefix .. Dice_Text .. Num_Dice .. Space .. Suffix  
+	local Final_Text = ""
 	
-	elseif DpsCheckBox:GetChecked(true) and HealCheckBox:GetChecked(true) then
-	 	Final_Text = D_Prefix .. H_Prefix .. Dice_Text .. Num_Dice .. Space .. Suffix  
-	
-	elseif HealCheckBox:GetChecked(true) then
-	 	Final_Text = H_Prefix .. Dice_Text .. Num_Dice .. Space .. Suffix  
-	
-	elseif DpsCheckBox:GetChecked(true) then
-	 	Final_Text = D_Prefix .. Dice_Text .. Num_Dice .. Space .. Suffix  
-	
-	elseif TankCheckBox:GetChecked(true) then
-	 	Final_Text = T_Prefix .. Dice_Text .. Num_Dice .. Space .. Suffix  
-	
-	else
-	 	Final_Text = Dice_Text .. Num_Dice .. Space .. Suffix  
+	local function T_Check()
+		if TankCheckBox:GetChecked(true) then
+			return T_Prefix
+		else
+			return ""
+		end
 	end
 
+	local function D_Check()
+		if DpsCheckBox:GetChecked(true) then
+			return D_Prefix
+		else
+			return ""
+		end
+	end
+
+	local function H_Check()
+		if HealCheckBox:GetChecked(true) then
+			return H_Prefix
+		else
+			return ""
+		end
+	end
+
+	local function High_Check()
+		if UpBtn:GetChecked(true) then
+			return High_Text
+		else
+			return ""
+		end
+	end
+
+	local function Low_Check()
+		if DownBtn:GetChecked(true) then
+			return Low_Text
+		else
+			return ""
+		end
+	end
+
+	Final_Text = T_Check()  .. D_Check() .. H_Check() .. Dice_Text .. Num_Dice .. Space .. High_Check() .. Low_Check() .. Suffix
+	
+
+	-- print(Final_Text)
 	-- SendChatMessage("msg" ,"chatType" ,"language" ,"channel");
-	SendChatMessage(Final_Text,"SAY")
+	 SendChatMessage(Final_Text,"SAY")
+	 SendChatMessage(StartLine,"SAY")
 	--SendChatMessage(Final_Text,"RAID_WARNING")
 end

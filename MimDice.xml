@@ -3,7 +3,7 @@
 	<Frame name="MainWindow" inherits="BackdropTemplate" movable="true">
 		<Size x="300" y="474" />
 		<Anchors>
-			<Anchor x="378" y="-144" point="TOPLEFT" />
+			<Anchor x="401" y="-118" point="TOPLEFT" />
 		</Anchors>
 		<KeyValues>
 			<KeyValue key="backdropInfo" value="BACKDROP_DIALOG_32_32" keyType="string" type="global" />
@@ -148,20 +148,6 @@
 					</OnClick>
 				</Scripts>
 			</CheckButton>
-			<Button name="Start_Button" inherits="UIPanelButtonTemplate" text="시작">
-				<Size x="60" y="40" />
-				<Anchors>
-					<Anchor x="221" y="-53" point="TOPLEFT" />
-				</Anchors>
-				<Scripts>
-					<OnClick>
-						Prefix()
-					</OnClick>
-				</Scripts>
-				<ButtonText name="$parentText" font="Fonts\2002.ttf">
-					<FontHeight val="12" />
-				</ButtonText>
-			</Button>
 			<Button name="CloseButton" inherits="UIPanelCloseButton" movable="true" resizable="true" text="Button1">
 				<Size x="25" y="25" />
 				<Anchors>
@@ -197,6 +183,20 @@
 					<Anchor x="28" y="-99" point="TOPLEFT" />
 				</Anchors>
 			</EditBox>
+			<Button name="Start_Button" inherits="UIPanelButtonTemplate" text="시작">
+				<Size x="60" y="40" />
+				<Anchors>
+					<Anchor x="224" y="-53" point="TOPLEFT" />
+				</Anchors>
+				<Scripts>
+					<OnClick>
+						Prefix()
+					</OnClick>
+				</Scripts>
+				<ButtonText name="$parentText" font="Fonts\2002.ttf">
+					<FontHeight val="12" />
+				</ButtonText>
+			</Button>
 		</Frames>
 		<Scripts>
 			<OnLoad inherit="prepend">
