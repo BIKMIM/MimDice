@@ -1,0 +1,6 @@
+2/2 14:04:32.498  vendor: AuthenticAMD
+2/2 14:04:32.498  branding: AMD Ryzen 3 PRO 4350G with Radeon Graphics
+2/2 14:04:32.498  features: lahf64 cmpxchg16b sse sse2 sse3 ssse3 sse41 sse42 avx avx2 aesni clmul sha rdrand 
+2/2 14:04:32.498  sockets: 1
+2/2 14:04:32.498  cores: 4
+2/2 14:04:32.498  threads: 8

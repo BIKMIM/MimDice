@@ -1,0 +1,34 @@
+<Project ToolsVersion="4.0" DefaultTargets="Deploy" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Default</Configuration>
+    <Name>MimDice</Name>
+    <ProjectGuid>70ef7078-c1ec-4d75-83ce-15fd9ac0ddea</ProjectGuid>
+    <AssemblyName>Mim_Dice</AssemblyName>
+    <RootNamespace>Mim_Dice</RootNamespace>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)' == 'Default' ">
+    <OutputPath>.</OutputPath>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="MimDice.toc">
+      <SubType>TableOfContents</SubType>
+    </Content>
+    <Content Include="MimDice.xml">
+      <SubType>Frame</SubType>
+    </Content>
+    <Content Include="MimDice.lua">
+      <SubType>Code</SubType>
+      <DependentUpon>MimDice.xml</DependentUpon>
+    </Content>
+  </ItemGroup>
+  <Import Project="$(DevEnvDir)\Extensions\Tools\MSBuild\AddonStudio\Wow\3.0\WowAddonStudio.targets" />
+  <!--
+  To modify your build process, add your task inside one of the targets below and uncomment it.
+  <Target Name="BeforeClean"></Target>
+  <Target Name="AfterClean"></Target>
+  <Target Name="BeforeRebuild"></Target>
+  <Target Name="AfterRebuild"></Target>
+  <Target Name="BeforeDeploy"></Target>
+  <Target Name="AfterDeploy"></Target>
+  -->
+</Project>

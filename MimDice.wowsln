@@ -1,0 +1,22 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# WowAddOnStudio Solution File, Format Version 11.00
+VisualStudioVersion = 17.4.33103.184
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{E6E1D386-69D8-4755-9E61-0950293915FC}") = "MimDice", "MimDice.wowproj", "{70EF7078-C1EC-4D75-83CE-15FD9AC0DDEA}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Default|Any CPU = Default|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{70EF7078-C1EC-4D75-83CE-15FD9AC0DDEA}.Default|Any CPU.ActiveCfg = Default|Any CPU
+		{70EF7078-C1EC-4D75-83CE-15FD9AC0DDEA}.Default|Any CPU.Build.0 = Default|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {3B6A1909-D802-4B68-960A-99437F58F130}
+	EndGlobalSection
+EndGlobal

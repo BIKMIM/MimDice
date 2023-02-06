@@ -1,0 +1,8 @@
+## Interface: 100005
+## Title: Mim Dice
+## Author: BIK
+## DefaultState: enabled
+## SavedVariables: MimDiceDB
+## Version: 1.0
+
+MimDice.xml
