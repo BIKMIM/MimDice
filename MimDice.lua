@@ -17,6 +17,8 @@ local L = setmetatable({}, {
     end
 })
 
+MimDice_Addon = Mim -- luacheck: ignore
+
 -- 최대파티 수
 Mim.MAXRARITY = 6
 -- 와우 클래식용
@@ -81,6 +83,7 @@ function Mim.GetPlayerList(unsort)
             tinsert(ret, entry)
             retName[name] = entry
         end
+     
     end
 
 	-- 정렬이 안되어 있으면 정렬
@@ -91,6 +94,158 @@ function Mim.GetPlayerList(unsort)
     return ret, retName
 end
 
+function Mim.RegisterEvent(event,func)
+	if eventFrame==nil then
+		eventFrame=CreateFrame("Frame")	
+	end
+	if eventFrame._GPIPRIVAT_events==nil then 
+		eventFrame._GPIPRIVAT_events={}
+		eventFrame:SetScript("OnEvent",EventHandler)
+	end
+	tinsert(eventFrame._GPIPRIVAT_events,{event,func})
+	eventFrame:RegisterEvent(event)	
+end
+
+function Mim.CreatePattern(pattern,maximize)		
+	pattern = string.gsub(pattern, "[%(%)%-%+%[%]]", "%%%1")
+	if not maximize then 
+		pattern = string.gsub(pattern, "%%s", "(.-)")
+	else
+		pattern = string.gsub(pattern, "%%s", "(.+)")
+	end
+	pattern = string.gsub(pattern, "%%d", "%(%%d-%)")
+	if not maximize then 
+		pattern = string.gsub(pattern, "%%%d%$s", "(.-)")
+	else
+		pattern = string.gsub(pattern, "%%%d%$s", "(.+)")
+	end
+	pattern = string.gsub(pattern, "%%%d$d", "%(%%d-%)")		
+	--pattern = string.gsub(pattern, "%[", "%|H%(%.%-%)%[")
+	--pattern = string.gsub(pattern, "%]", "%]%|h")
+	return pattern
+end
+
+function Mim.OnUpdate(func)
+	if eventFrame==nil then
+		eventFrame=CreateFrame("Frame")	
+	end
+	if eventFrame._GPIPRIVAT_updates==nil then 
+		eventFrame._GPIPRIVAT_updates={}
+		eventFrame:SetScript("OnUpdate",UpdateHandler)
+	end
+	tinsert(eventFrame._GPIPRIVAT_updates,func)
+end
+
+function Mim.RGBtoEscape(r, g, b,a)
+	if type(r)=="table" then
+		a=r.a
+		g=r.g
+		b=r.b
+		r=r.r
+	end
+	
+	r = r~=nil and r <= 1 and r >= 0 and r or 1
+	g = g~=nil and g <= 1 and g >= 0 and g or 1
+	b = b~=nil and b <= 1 and b >= 0 and b or 1
+	a = a~=nil and a <= 1 and a >= 0 and a or 1
+	return string.format("|c%02x%02x%02x%02x", a*255, r*255, g*255, b*255)
+end
+
+
+-- DataBrocker
+local DataBrocker=false
+function Mim.AddDataBrocker(icon,onClick,onTooltipShow,text)
+	if LibStub ~= nil and DataBrocker ~= true then 
+		local Launcher = LibStub('LibDataBroker-1.1',true)
+		if Launcher ~= nil then	
+			DataBrocker=true
+			Launcher:NewDataObject(TOCNAME, {
+				type = "launcher",
+				icon = icon,
+				OnClick = onClick,
+				OnTooltipShow = onTooltipShow,
+				tocname = TOCNAME,
+				label = text or GetAddOnMetadata(TOCNAME, "Title"),
+			})
+		end
+	end	
+end
+
+
+
+Mim.IconClassTexture="Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES"
+Mim.IconClassTextureWithoutBorder="Interface\\WorldStateFrame\\ICONS-CLASSES"
+Mim.IconClassTextureCoord='CLASS_ICON_TCOORDS'
+Mim.IconClass={
+  ["WARRIOR"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:0:64:0:64|t",
+  ["MAGE"]=		"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:64:128:0:64|t",
+  ["ROGUE"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:128:192:0:64|t",
+  ["DRUID"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:192:256:0:64|t",
+  ["HUNTER"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:0:64:64:128|t",
+  ["SHAMAN"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:64:128:64:128|t",
+  ["PRIEST"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:128:192:64:128|t",
+  ["WARLOCK"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:192:256:64:128|t",
+  ["PALADIN"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:0:64:128:192|t",
+  }
+  Mim.IconClassBig={
+  ["WARRIOR"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:0:64:0:64|t",
+  ["MAGE"]=		"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:64:128:0:64|t",
+  ["ROGUE"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:128:192:0:64|t",
+  ["DRUID"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:192:256:0:64|t",
+  ["HUNTER"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:0:64:64:128|t",
+  ["SHAMAN"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:64:128:64:128|t",
+  ["PRIEST"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:128:192:64:128|t",
+  ["WARLOCK"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:192:256:64:128|t",
+  ["PALADIN"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:0:64:128:192|t",
+  }  
+  
+  Mim.RaidIconNames=ICON_TAG_LIST
+  Mim.RaidIcon={
+	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:0|t", -- [1]
+	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_2:0|t", -- [2]
+	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_3:0|t", -- [3]
+	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_4:0|t", -- [4]
+	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_5:0|t", -- [5]
+	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_6:0|t", -- [6]
+	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_7:0|t", -- [7]
+	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:0|t", -- [8]
+}
+  
+Mim.Classes=CLASS_SORT_ORDER
+Mim.ClassName=LOCALIZED_CLASS_NAMES_MALE
+Mim.ClassColor=RAID_CLASS_COLORS
+
+Mim.NameToClass={}
+for eng,name in pairs(LOCALIZED_CLASS_NAMES_MALE) do
+	Mim.NameToClass[name]=eng
+	Mim.NameToClass[eng]=eng
+end
+for eng,name in pairs(LOCALIZED_CLASS_NAMES_FEMALE) do
+	Mim.NameToClass[name]=eng
+end
+
+
+
+function Mim.OnLoad(self)
+    --print("Mim-onload")
+    if Mixin and BackdropTemplateMixin then
+        Mixin(self,BackdropTemplateMixin)
+    end
+    self:SetBackdrop(BACKDROP_TUTORIAL_16_16)
+    --self:SetMinResize(194, 170)--
+
+    Mim.RegisterEvent("ADDON_LOADED", Event_ADDON_LOADED)
+    Mim.RegisterEvent("START_LOOT_ROLL", Event_START_LOOT_ROLL)
+    Mim.RegisterEvent("LOOT_ROLLS_COMPLETE", Event_LOOT_ROLLS_COMPLETE)
+
+    Mim.RegisterEvent("CHAT_MSG_LOOT", Event_CHAT_MSG_LOOT)
+    Mim.RegisterEvent("CHAT_MSG_SYSTEM", Event_CHAT_MSG_SYSTEM)
+
+    Mim.RegisterEvent("CHAT_MSG_PARTY", Event_Generic_CHAT_MSG)
+    Mim.RegisterEvent("CHAT_MSG_PARTY_LEADER", Event_Generic_CHAT_MSG)
+    Mim.RegisterEvent("CHAT_MSG_RAID", Event_Generic_CHAT_MSG)
+    Mim.RegisterEvent("CHAT_MSG_RAID_LEADER", Event_Generic_CHAT_MSG)
+end
 
 -- Init
 function Mim.Init()
@@ -100,20 +255,15 @@ function Mim.Init()
 	-- 로딩되면 기본적으로 Up 정렬
 	UpBtn:SetChecked(true)
 
-	-- 이벤트 수신
-	Mim.Tool.RegisterEvent("ADDON_LOADED", Event_ADDON_LOADED)
-	Mim.Tool.RegisterEvent("CHAT_MSG_SYSTEM", Event_CHAT_MSG_SYSTEM)
-
 	-- 테이블 생성
     Mim.rollArray = {}
     Mim.rollNames = {}
 
     -- using strings from GlobalStrings.lua
-    Mim.PatternRoll = Mim.Tool.CreatePattern(RANDOM_ROLL_RESULT)
+    Mim.PatternRoll = Mim.CreatePattern(RANDOM_ROLL_RESULT)
 
     -- settings
-    if not MimDiceDB then MimDiceDB = {} end -- fresh DB
-	Mim.DB = MimDiceDB
+    if not Mim.DB then Mim.DB = {} end -- fresh DB
     local x, y, w, h = Mim.DB.X, Mim.DB.Y, Mim.DB.Width, Mim.DB.Height
     if not x or not y or not w or not h then
         Mim.SaveAnchors()
@@ -133,7 +283,7 @@ function Mim.Init()
 	SlashCmdList["MIMDICE"] = function (msg)
 		-- 주사위 창 띄우기
 			MimDice_ShowWindow()
-    Mim.Tool.OnUpdate(Mim.Timers)
+    Mim.OnUpdate(Mim.Timers)
 	end
 end
 
@@ -143,7 +293,7 @@ local function Event_ADDON_LOADED(arg1)
     if arg1 == TOCNAME then
         Mim.Init()
     end
-    Mim.Tool.AddDataBrocker(Mim.IconDice, Mim.MenuButtonClick, Mim.MenuToolTip)
+    Mim.AddDataBrocker(Mim.IconDice, Mim.MenuButtonClick, Mim.MenuToolTip)
 end
 
 local function Event_START_LOOT_ROLL(arg1, _, arg3)
@@ -176,6 +326,10 @@ local function Event_CHAT_MSG_SYSTEM(arg1)
         --출력(".."..이름.." "..현재주사위.." "..최소값.." "..최대값)
         Mim.AddRoll(name, roll, min, max)
     end
+    print(name)
+    print(roll)
+    print(min)
+    print(max)
 end
 
 function Mim.AddRoll(name, roll, min, max)
@@ -219,7 +373,7 @@ function Mim.AddRoll(name, roll, min, max)
         end
 
         rollNames[name] = rollNames[name] and rollNames[name] + 1 or 1
-        table.insert(rollArray, {
+        table.insert(Mim.rollArray, {
             Name = name,
             Roll = tonumber(roll),
             Min = tonumber(min),
@@ -314,17 +468,17 @@ end
 
 function Mim.FormatRollText(roll, _, partyName)
 	local Num_Dice = DiceEditBox:GetText()
-    local colorTied = Mim.Tool.RGBtoEscape(Mim.DB.ColorNormal)
-    local colorCheat = ((roll.Min ~= 1 or roll.Max ~= Num_Dice) or (roll.Count > 1)) and Mim.Tool.RGBtoEscape(Mim.DB.ColorCheat) or colorTied
+    local colorTied = Mim.RGBtoEscape(Mim.DB.ColorNormal)
+    local colorCheat = ((roll.Min ~= 1 or roll.Max ~= Num_Dice) or (roll.Count > 1)) and Mim.RGBtoEscape(Mim.DB.ColorCheat) or colorTied
     
     local colorName
     local iconClass
-    local colorRank = Mim.Tool.RGBtoEscape(Mim.DB.ColorGuild)
+    local colorRank = Mim.RGBtoEscape(Mim.DB.ColorGuild)
     local rank = ""
 
     if partyName[roll.Name] and partyName[roll.Name].class then
         colorName = "|c" .. RAID_CLASS_COLORS[partyName[roll.Name].class].colorStr
-        iconClass = Mim.Tool.IconClass[partyName[roll.Name].class]
+        iconClass = Mim.IconClass[partyName[roll.Name].class]
     end
     if colorName == nil or Mim.DB.ColorName == false then colorName = colorCheat end
     if iconClass == nil or Mim.DB.ShowClassIcon == false then iconClass = "" end
@@ -349,28 +503,28 @@ function Mim.UpdateRollList()
 
     local party, partyName = Mim.GetPlayerList()
 
-    table.sort(rollArray, Choice_Sort)
+    table.sort(Mim.rollArray, Choice_Sort)
 
     -- 포맷 설정 및 주사위 출력, 동점 확인
     if Mim.DB.NeedAndGreed then
         local rtxt = ""
-        rollText = Mim.Tool.RGBtoEscape(Mim.DB.ColorInfo) .. L["TxtNeed"] .. "\n" .. rtxt
+        rollText = Mim.RGBtoEscape(Mim.DB.ColorInfo) .. L["TxtNeed"] .. "\n" .. rtxt
         rtxt = ""
-        rollText = rollText .. "\n" .. Mim.Tool.RGBtoEscape(Mim.DB.ColorInfo) .. L["TxtGreed"] .. "\n" .. rtxt
+        rollText = rollText .. "\n" .. Mim.RGBtoEscape(Mim.DB.ColorInfo) .. L["TxtGreed"] .. "\n" .. rtxt
     else
-        for _, roll in pairs(rollArray) do
+        for _, roll in pairs(Mim.rollArray) do
             rollText = Mim.FormatRollText(roll, party, partyName) .. rollText
         end
     end
 
     if IsInGroup() then
-        rollText = rollText .. Mim.Tool.RGBtoEscape(Mim.DB.ColorInfo) .. L["TxtLine"] .. "\n"
-        local gtxt = Mim.Tool.RGBtoEscape(Mim.DB.ColorInfo)
+        rollText = rollText .. Mim.RGBtoEscape(Mim.DB.ColorInfo) .. L["TxtLine"] .. "\n"
+        local gtxt = Mim.RGBtoEscape(Mim.DB.ColorInfo)
         local missClasses = {}
         Mim.allRolled = true
         for _, p in ipairs(party) do
             if rollNames[p.name] == nil or rollNames[p.name] == 0 then
-                local iconClass = Mim.Tool.IconClass[partyName[p.name].class]
+                local iconClass = Mim.IconClass[partyName[p.name].class]
                 local rank = ""
                 if iconClass == nil or Mim.DB.ShowClassIcon == false then
                     iconClass = ""
@@ -387,10 +541,10 @@ function Mim.UpdateRollList()
         local ctxt = ""
         if Mim.CLASSIC_ERA then
             local isHorde = (UnitFactionGroup("player")) == "Horde"
-            for _, class in pairs(Mim.Tool.Classes) do
+            for _, class in pairs(Mim.Classes) do
                 --클래스 카운트하고 호드 주술사, 얼라이언스 성기사 체크
                 if not (isHorde and class == "PALADIN") and not (not isHorde and class == "SHAMAN") then
-                    ctxt = ctxt .. Mim.Tool.IconClass[class] .. (missClasses[class] or 0) .. " "
+                    ctxt = ctxt .. Mim.IconClass[class] .. (missClasses[class] or 0) .. " "
                 end
             end
             if ctxt ~= "" then ctxt = ctxt .. "\n" .. L["TxtLine"] .. "\n" end
@@ -402,7 +556,7 @@ function Mim.UpdateRollList()
 	-- 롤스트링 스크롤프레임에 rollText 입력
     RollStrings:SetText(rollText)
 	-- 몇명 굴렸는지 입력
-	MimDiceStatusTextFrame:SetText(string.format(L["%d Roll(s)"], table.getn(rollArray)))
+	MimDiceStatusTextFrame:SetText(string.format(L["%d Roll(s)"], table.getn(Mim.rollArray)))
 end
 
 
@@ -543,8 +697,8 @@ end
 
 -- 주사위 리셋
 function MimDice_ClearRolls()
-	rollArray = {}
-	rollNames = {}
+	Mim.rollArray = {}
+	Mim.rollNames = {}
 	DEFAULT_CHAT_FRAME:AddMessage(L["All rolls have been cleared."])
 	MimDice_UpdateList()
 

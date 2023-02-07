@@ -3,7 +3,7 @@
 	<Frame name="MainWindow" inherits="BackdropTemplate" movable="true">
 		<Size x="300" y="474" />
 		<Anchors>
-			<Anchor x="401" y="-118" point="TOPLEFT" />
+			<Anchor x="456" y="-130" point="TOPLEFT" />
 		</Anchors>
 		<KeyValues>
 			<KeyValue key="backdropInfo" value="BACKDROP_DIALOG_32_32" keyType="string" type="global" />
@@ -33,13 +33,6 @@
 				</Texture>
 			</Layer>
 			<Layer level="OVERLAY">
-				<FontString name="Mim_Dice_Title" inherits="GameFontNormalHuge" font="Fonts\2002.ttf" text="MIM DICE" justifyH="LEFT">
-					<Size x="150" y="20" />
-					<Anchors>
-						<Anchor x="17" y="-14" point="TOPLEFT" relativeTo="MainWindow" />
-					</Anchors>
-					<FontHeight val="20" />
-				</FontString>
 				<FontString name="DiceString" inherits="GameFontNormal" text="주사위">
 					<Size x="40" y="20" />
 					<Anchors>
@@ -58,6 +51,13 @@
 					<Size x="130" y="30" />
 					<Anchors>
 						<Anchor y="10" point="BOTTOM" relativeTo="MainWindow" />
+					</Anchors>
+					<FontHeight val="20" />
+				</FontString>
+				<FontString name="Mim_Dice_Title" inherits="GameFontNormalHuge" font="Fonts\2002.ttf" text="MIM DICE" justifyH="LEFT">
+					<Size x="150" y="20" />
+					<Anchors>
+						<Anchor x="14" y="-14" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<FontHeight val="20" />
 				</FontString>
@@ -199,8 +199,9 @@
 			</Button>
 		</Frames>
 		<Scripts>
-			<OnLoad inherit="prepend">
+			<OnLoad>
 				self:RegisterForDrag("LeftButton")
+				MimDice_Addon.OnLoad(self)
 			</OnLoad>
 			<OnDragStart>
 				self:StartMoving()
