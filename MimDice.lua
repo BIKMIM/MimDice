@@ -1,182 +1,157 @@
 -- Author      : BIK
 -- Create Date : 2023-01-28 오후 7:11:08
+
+---@diagnostic disable: undefined-global, param-type-mismatch, undefined-field, cast-local-type -- global 함수 정의에러 무시
+
 -- 리로드할때 /rl 만 쳐도 됨
-SLASH_RELOAD3 = "/rl" -- 영어 줄임말
-SLASH_RELOAD2 = "/리" -- 한글 줄임말
+SLASH_RELOAD3 = "/rl"
+SLASH_RELOAD2 = "/리"
 SLASH_RELOAD1 = "/fl" -- 영어 오타
 SLASH_RELOAD4 = "/기" -- 한글 오타
 SLASH_RELOAD5 = "/리로드" -- 한글 풀네임
 SlashCmdList["RELOAD"] = ReloadUI -- 실제 함수 동작 부분
 -------------------------------------------------------------------------------------------
 
----@diagnostic disable: undefined-global, param-type-mismatch, undefined-field, cast-local-type -- global 함수 정의에러 무시
-local TOCNAME, Mim = ...
-local L = setmetatable({}, {
-    __index = function(_, k)
-        return Mim.L[k]
-    end
+MimDice_Addon = Mim -- luacheck: ignore
+-- 테이블 생성
+local rollArray
+local rollNames
+local EnglishClass
+
+
+-- 이벤트 프레임 생성
+local MimFrame = CreateFrame("frame")
+MimFrame:RegisterEvent("CHAT_MSG_SYSTEM")
+MimFrame:RegisterEvent("ADDON_LOADED")
+
+MimFrame:SetScript("OnEvent", function(self, event, ...)
+	local msg = ...
+	if (event == "ADDON_LOADED" and msg == "MimDice") then
+		self:UnregisterEvent("ADDON_LOADED")
+		MimDice_OnLoad(self)
+	elseif (event == "CHAT_MSG_SYSTEM") then
+		MimDice_CHAT_MSG_SYSTEM(msg);
+	end
+end)
+
+
+-- /주사위 했을 때 나오는 문자열 정리 
+-- GlobalStrings 에서 값 가져옴.
+local pattern = string.gsub(RANDOM_ROLL_RESULT, "[%(%)-]", "%%%1")
+pattern = string.gsub(pattern, "%%s", "(.+)")
+pattern = string.gsub(pattern, "%%d", "%(%%d+%)")
+
+--Mim.TxtEscapeIcon = "|T%s:0:0:0:0:64:64:4:60:4:60|t"
+
+-- 다국어지원
+local locales = {
+	koKR = {
+		["All rolls have been cleared."] = "주사위가 초기화 되었습니다.",
+		["%d Roll(s)"] = "%d 명 굴림",
+	},
+	esES = {
+		["All rolls have been cleared."] = "Todas las tiradas han sido borradas.",
+		["%d Roll(s)"] = "%d Tiradas",
+	},
+	frFR = {
+		["All rolls have been cleared."] = "Tous les jets ont été effacés.",
+		["%d Roll(s)"] = "%d Jet(s)",
+	},
+	ruRU = {
+		["All rolls have been cleared."] = "Все броски костей очищены.",
+		["%d Roll(s)"] = "%d броска(ов)",
+	},
+	zhCN = {
+		["All rolls have been cleared."] = "所有骰子已被清除。",
+		["%d Roll(s)"] = "%d个骰子",
+	},
+	zhTW = {
+		["All rolls have been cleared."] = "所有擲骰紀錄已被清除。",
+		["%d Roll(s)"] = "共計 %d 人擲骰",
+	},
+}
+local L = locales[GetLocale()] or {}
+setmetatable(L, {
+	__index = {
+		-- 주사위 몇명 굴렸는지에 대한 기본설정값
+		["%d Roll(s)"] = "%d Roll(s)",
+		-- 주사위가 초기화 되었다는 메세지에 대한 기본설정값
+		["All rolls have been cleared."] = "All rolls have been cleared.",
+	},
 })
 
-MimDice_Addon = Mim -- luacheck: ignore
 
--- 최대파티 수
-Mim.MAXRARITY = 6
--- 와우 클래식용
-Mim.CLASSIC_ERA = WOW_PROJECT_ID == WOW_PROJECT_CLASSIC
-Mim.BCC = WOW_PROJECT_ID == WOW_PROJECT_BURNING_CRUSADE_CLASSIC
+-- 처음 로딩
+function MimDice_OnLoad(self)
 
 
--- 플레이어 가져오기
-function Mim.GetPlayerList(unsort)
-    local count, start
-    local prefix
-    local ret = {}
-    local retName = {}
 
-	-- 레이드 인지 확인하고 레이드면 앞에 "raid" 붙이기 레이드는 1부터 시작
-    if IsInRaid() then
-        prefix = "raid"
-        count = MAX_RAID_MEMBERS
-        start = 1
-    else -- 파티 붙이기 파티는 0부터 시작
-        prefix = "party"
-        count = MAX_PARTY_MEMBERS
-        start = 0
-    end
+	-- 로딩되면 기본적으로 Up 정렬
+	UpBtn:SetChecked(true)
 
+	-- 주사위 테이블, 이름 테이블 만들기
+	rollArray = {}
+	rollNames = {}
 
-	-- 말머리 + 플레이어로 설정
-    for index = start, count do
-        local guildName, guildRankName
-        local id
-        if index > 0 then
-            id = prefix .. index
-        else
-            id = "player"
-        end
-
-		-- 이름이랑 클래스 확인
-        local name = GetUnitName(id)
-        local _, englishClass = UnitClass(id)
-
-
-		-- 길드 내 랭크 권한 확인
-        local rank = ""
-        if IsInGuild() and UnitIsInMyGuild(id) then
-            rank = "<" .. GuildControlGetRankName(C_GuildInfo.GetGuildRankOrder(UnitGUID(id))) .. ">"
-        else
-            guildName, guildRankName = GetGuildInfo(id)
-            if guildName and guildRankName then
-                rank = "<" .. guildName .. " / " .. guildRankName .. ">"
-            end
-        end
-
-		-- 이름이 비어있지 않으면
-        if name ~= nil then
-
-			-- 이름, 랭크, 직업 등록
-            local entry = {
-                ["name"] = name,
-                ["rank"] = rank,
-                ["class"] = englishClass,
-            }
-            tinsert(ret, entry)
-            retName[name] = entry
-        end
-     
-    end
-
-	-- 정렬이 안되어 있으면 정렬
-    if unsort then
-        sort(ret, function(a, b) return (a.class < b.class or (a.class == b.class and a.name < b.name)) end)
-    end
-	-- 플레이어 리스트, 이름 반환
-    return ret, retName
-end
-
-function Mim.RegisterEvent(event,func)
-	if eventFrame==nil then
-		eventFrame=CreateFrame("Frame")	
-	end
-	if eventFrame._GPIPRIVAT_events==nil then 
-		eventFrame._GPIPRIVAT_events={}
-		eventFrame:SetScript("OnEvent",EventHandler)
-	end
-	tinsert(eventFrame._GPIPRIVAT_events,{event,func})
-	eventFrame:RegisterEvent(event)	
-end
-
-function Mim.CreatePattern(pattern,maximize)		
-	pattern = string.gsub(pattern, "[%(%)%-%+%[%]]", "%%%1")
-	if not maximize then 
-		pattern = string.gsub(pattern, "%%s", "(.-)")
+	-- DB 없으면 DB 만들기
+	if not MimDiceDB then MimDiceDB = {} end 
+	local x, y, w, h = MimDiceDB.X, MimDiceDB.Y, MimDiceDB.Width, MimDiceDB.Height
+	if not x or not y or not w or not h then
+		MimDice_SaveAnchors()
 	else
-		pattern = string.gsub(pattern, "%%s", "(.+)")
+		self:ClearAllPoints()
+		self:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", x, y)
+		self:SetWidth(w)
+		self:SetHeight(h)
 	end
-	pattern = string.gsub(pattern, "%%d", "%(%%d-%)")
-	if not maximize then 
-		pattern = string.gsub(pattern, "%%%d%$s", "(.-)")
-	else
-		pattern = string.gsub(pattern, "%%%d%$s", "(.+)")
-	end
-	pattern = string.gsub(pattern, "%%%d$d", "%(%%d-%)")		
-	--pattern = string.gsub(pattern, "%[", "%|H%(%.%-%)%[")
-	--pattern = string.gsub(pattern, "%]", "%]%|h")
-	return pattern
-end
 
-function Mim.OnUpdate(func)
-	if eventFrame==nil then
-		eventFrame=CreateFrame("Frame")	
+	-- 슬래시 커맨드
+	SLASH_MIMDICE1 = "/mimdice"
+	SLASH_MIMDICE2 = "/md"
+	SLASH_MIMDICE3 = "/밈"
+	SLASH_MIMDICE4 = "/ala"
+	SLASH_MIMDICE5 = "/밈주사위"
+	SlashCmdList["MIMDICE"] = function (msg)
+		-- 주사위 창 띄우기
+			MimDice_ShowWindow()
 	end
-	if eventFrame._GPIPRIVAT_updates==nil then 
-		eventFrame._GPIPRIVAT_updates={}
-		eventFrame:SetScript("OnUpdate",UpdateHandler)
-	end
-	tinsert(eventFrame._GPIPRIVAT_updates,func)
-end
-
-function Mim.RGBtoEscape(r, g, b,a)
-	if type(r)=="table" then
-		a=r.a
-		g=r.g
-		b=r.b
-		r=r.r
-	end
-	
-	r = r~=nil and r <= 1 and r >= 0 and r or 1
-	g = g~=nil and g <= 1 and g >= 0 and g or 1
-	b = b~=nil and b <= 1 and b >= 0 and b or 1
-	a = a~=nil and a <= 1 and a >= 0 and a or 1
-	return string.format("|c%02x%02x%02x%02x", a*255, r*255, g*255, b*255)
 end
 
 
--- DataBrocker
-local DataBrocker=false
-function Mim.AddDataBrocker(icon,onClick,onTooltipShow,text)
-	if LibStub ~= nil and DataBrocker ~= true then 
-		local Launcher = LibStub('LibDataBroker-1.1',true)
-		if Launcher ~= nil then	
-			DataBrocker=true
-			Launcher:NewDataObject(TOCNAME, {
-				type = "launcher",
-				icon = icon,
-				OnClick = onClick,
-				OnTooltipShow = onTooltipShow,
-				tocname = TOCNAME,
-				label = text or GetAddOnMetadata(TOCNAME, "Title"),
-			})
-		end
-	end	
+-- 이벤트 핸들러
+function MimDice_CHAT_MSG_SYSTEM(msg)
+    
+
+	-- GlobalStrings 이용해서 이름,주사위,최소값,최대값 불러오는 부분
+	for name, roll, minRoll, maxRoll in string.gmatch(msg, pattern) do
+	-- 두번 굴림 확인. 한번 굴렸으면 1 이상이 됨.
+		rollNames[name] = rollNames[name] and rollNames[name] + 1 or 1
+		_, EnglishClass = UnitClass(name)
+	-- rollArray 테이블에 데이터 입력
+	 	table.insert(rollArray, {
+		
+			-- 이름
+			Name = name,
+			-- 주사위 값
+			Roll = tonumber(roll),
+			-- 주사위 최소값	
+			Min = tonumber(minRoll),
+			-- 주사위 최대값
+			Max = tonumber(maxRoll),
+			-- 몇명굴렸는지 카운트
+			Count = rollNames[name]
+		}) 
+		-- 이벤트 수신하면 창 띄우기
+		MimDice_ShowWindow()
+		-- 클래스 정보
+		
+	end
 end
 
-
-
-Mim.IconClassTexture="Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES"
-Mim.IconClassTextureWithoutBorder="Interface\\WorldStateFrame\\ICONS-CLASSES"
-Mim.IconClassTextureCoord='CLASS_ICON_TCOORDS'
-Mim.IconClass={
+IconClassTexture="Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES"
+IconClassTextureWithoutBorder="Interface\\WorldStateFrame\\ICONS-CLASSES"
+IconClassTextureCoord='CLASS_ICON_TCOORDS'
+IconClass={
   ["WARRIOR"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:0:64:0:64|t",
   ["MAGE"]=		"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:64:128:0:64|t",
   ["ROGUE"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:128:192:0:64|t",
@@ -186,256 +161,11 @@ Mim.IconClass={
   ["PRIEST"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:128:192:64:128|t",
   ["WARLOCK"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:192:256:64:128|t",
   ["PALADIN"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:0:64:128:192|t",
-  }
-  Mim.IconClassBig={
-  ["WARRIOR"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:0:64:0:64|t",
-  ["MAGE"]=		"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:64:128:0:64|t",
-  ["ROGUE"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:128:192:0:64|t",
-  ["DRUID"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:192:256:0:64|t",
-  ["HUNTER"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:0:64:64:128|t",
-  ["SHAMAN"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:64:128:64:128|t",
-  ["PRIEST"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:128:192:64:128|t",
-  ["WARLOCK"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:192:256:64:128|t",
-  ["PALADIN"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:18:18:-4:4:256:256:0:64:128:192|t",
-  }  
-  
-  Mim.RaidIconNames=ICON_TAG_LIST
-  Mim.RaidIcon={
-	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_1:0|t", -- [1]
-	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_2:0|t", -- [2]
-	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_3:0|t", -- [3]
-	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_4:0|t", -- [4]
-	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_5:0|t", -- [5]
-	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_6:0|t", -- [6]
-	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_7:0|t", -- [7]
-	"|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:0|t", -- [8]
+  ["DEATHKNIGHT"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:64:128:128:192|t",
+  ["MONK"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:128:192:128:192|t",
+  ["DEMONHUNTER"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:192:256:128:192|t",
+  ["EVOKER"]=	"|TInterface\\WorldStateFrame\\ICONS-CLASSES:0:0:0:0:256:256:0:64:192:256|t",
 }
-  
-Mim.Classes=CLASS_SORT_ORDER
-Mim.ClassName=LOCALIZED_CLASS_NAMES_MALE
-Mim.ClassColor=RAID_CLASS_COLORS
-
-Mim.NameToClass={}
-for eng,name in pairs(LOCALIZED_CLASS_NAMES_MALE) do
-	Mim.NameToClass[name]=eng
-	Mim.NameToClass[eng]=eng
-end
-for eng,name in pairs(LOCALIZED_CLASS_NAMES_FEMALE) do
-	Mim.NameToClass[name]=eng
-end
-
-
-
-function Mim.OnLoad(self)
-    --print("Mim-onload")
-    if Mixin and BackdropTemplateMixin then
-        Mixin(self,BackdropTemplateMixin)
-    end
-    self:SetBackdrop(BACKDROP_TUTORIAL_16_16)
-    --self:SetMinResize(194, 170)--
-
-    Mim.RegisterEvent("ADDON_LOADED", Event_ADDON_LOADED)
-    Mim.RegisterEvent("START_LOOT_ROLL", Event_START_LOOT_ROLL)
-    Mim.RegisterEvent("LOOT_ROLLS_COMPLETE", Event_LOOT_ROLLS_COMPLETE)
-
-    Mim.RegisterEvent("CHAT_MSG_LOOT", Event_CHAT_MSG_LOOT)
-    Mim.RegisterEvent("CHAT_MSG_SYSTEM", Event_CHAT_MSG_SYSTEM)
-
-    Mim.RegisterEvent("CHAT_MSG_PARTY", Event_Generic_CHAT_MSG)
-    Mim.RegisterEvent("CHAT_MSG_PARTY_LEADER", Event_Generic_CHAT_MSG)
-    Mim.RegisterEvent("CHAT_MSG_RAID", Event_Generic_CHAT_MSG)
-    Mim.RegisterEvent("CHAT_MSG_RAID_LEADER", Event_Generic_CHAT_MSG)
-end
-
--- Init
-function Mim.Init()
-	-- 다국어 지원
-    L = Mim.GetLocale()
-	
-	-- 로딩되면 기본적으로 Up 정렬
-	UpBtn:SetChecked(true)
-
-	-- 테이블 생성
-    Mim.rollArray = {}
-    Mim.rollNames = {}
-
-    -- using strings from GlobalStrings.lua
-    Mim.PatternRoll = Mim.CreatePattern(RANDOM_ROLL_RESULT)
-
-    -- settings
-    if not Mim.DB then Mim.DB = {} end -- fresh DB
-    local x, y, w, h = Mim.DB.X, Mim.DB.Y, Mim.DB.Width, Mim.DB.Height
-    if not x or not y or not w or not h then
-        Mim.SaveAnchors()
-    else
-        MainWindow:ClearAllPoints()
-        MainWindow:SetPoint("TOPLEFT", SharedTooltipTemplate, "BOTTOMLEFT", x, y)
-        MainWindow:SetWidth(w)
-        MainWindow:SetHeight(h)
-    end
-
-    -- 슬래시 커맨드
-	SLASH_MIMDICE1 = "/mimdice"
-	SLASH_MIMDICE2 = "/md"
-	SLASH_MIMDICE3 = "/밈"
-	SLASH_MIMDICE4 = "/ala"
-	SLASH_MIMDICE5 = "/밈주사위"
-	SlashCmdList["MIMDICE"] = function (msg)
-		-- 주사위 창 띄우기
-			MimDice_ShowWindow()
-    Mim.OnUpdate(Mim.Timers)
-	end
-end
-
-
--- 로딩
-local function Event_ADDON_LOADED(arg1)
-    if arg1 == TOCNAME then
-        Mim.Init()
-    end
-    Mim.AddDataBrocker(Mim.IconDice, Mim.MenuButtonClick, Mim.MenuToolTip)
-end
-
-local function Event_START_LOOT_ROLL(arg1, _, arg3)
-    --START_LOOT_ROLL: rollID, rollTime, lootHandle
-    if Mim.DB.AutoLootRolls then
-        Mim.LootHistoryShow(arg1)
-    end
-    if arg3 then -- loothandle CAN be nil
-        Mim.LootHistoryHandle[arg3] = true
-        Mim.LootHistoryCountHandle = Mim.LootHistoryCountHandle + 1
-    end
-    Mim.LootHistoryCloseTimer = 0
-end
-
-local function Event_LOOT_ROLLS_COMPLETE(arg1)
-    --LOOT_ROLLS_COMPLETE: lootHandle
-    if Mim.LootHistoryHandle[arg1] == true then
-        Mim.LootHistoryHandle[arg1] = nil
-        Mim.LootHistoryCountHandle = Mim.LootHistoryCountHandle - 1
-        if Mim.LootHistoryCountHandle <= 0 then
-            Mim.LootHistoryCountHandle = 0
-            wipe(Mim.LootHistoryHandle)
-            Mim.LootHistoryCloseTimer = time() + (Mim.DB.AutoCloseDelay or 5)
-        end
-    end
-end
-
-local function Event_CHAT_MSG_SYSTEM(arg1)
-    for name, roll, min, max in string.gmatch(arg1, Mim.PatternRoll) do
-        --출력(".."..이름.." "..현재주사위.." "..최소값.." "..최대값)
-        Mim.AddRoll(name, roll, min, max)
-    end
-    print(name)
-    print(roll)
-    print(min)
-    print(max)
-end
-
-function Mim.AddRoll(name, roll, min, max)
-    local ok = false
-    if name == "*" then
-        for i = 1, 5 do
-            Mim.AddRoll("rndneed" .. i, tostring(random(1, 100)), "1", "100")
-            Mim.AddRoll("rndgreed" .. i, tostring(random(1, 50)), "1", "50")
-        end
-        return
-    end
-
-    if Mim.IsRaidRoll and min == "1" and tonumber(max) == #Mim.IsRaidRoll and name == GetUnitName("player") then
-        roll = tonumber(roll)
-        Mim.AddChat(Mim.MSGPREFIX .. string.format(L["MsgRaidRoll"], Mim.IsRaidRoll[roll].name, roll))
-        Mim.IsRaidRoll = nil
-        return
-    end
-
-    if not Mim.AllowInInstance() then
-        return
-    end
-
-    -- 두번굴림 확인 전에 굴렸으면 1이상으로 표시
-    if Mim.DB.NeedAndGreed then
-        if (Mim.DB.IgnoreDouble == false or rollNames[name] == nil or rollNames[name] == 0) and
-                ((low == "1" and high == "50") or (low == "1" and high == "100")) then
-            ok = true
-        end
-    else
-        if (Mim.DB.IgnoreDouble == false or rollNames[name] == nil or rollNames[name] == 0) and
-                (Mim.DB.RejectOutBounds == false or (low == "1" and high == "100")) then
-            ok = true
-        end
-    end
-
-    if ok then
-
-        if Mim.DB.PromoteRolls and tonumber(roll) == 69 then
-            roll = "101"
-        end
-
-        rollNames[name] = rollNames[name] and rollNames[name] + 1 or 1
-        table.insert(Mim.rollArray, {
-            Name = name,
-            Roll = tonumber(roll),
-            Min = tonumber(min),
-            Max = tonumber(max),
-            Count = rollNames[name]
-        })
-
-        Mim.ShowWindow(1)
-
-        if Mim.allRolled and Mim.DB.AutmaticAnnounce then
-            Mim.BtnAnnounce()
-        elseif Mim.Countdown then
-            Mim.StartCountdown(Mim.DB.CDRefresh)
-        end
-    else
-        DEFAULT_CHAT_FRAME:AddMessage(string.format(RMimTC.MSGPREFIX .. L["MsgCheat"], name, roll, min, max), Mim.DB.ColorChat.r, Mim.DB.ColorChat.g, Mim.DB.ColorChat.b, Mim.DB.ColorChat.a)
-    end
-end
-
-		-- 주사위 몇명 굴렸는지에 대한 기본설정값
-		-- ["%d Roll(s)"] = "%d Roll(s)",
-		-- 주사위가 초기화 되었다는 메세지에 대한 기본설정값
-		-- ["All rolls have been cleared."] = "All rolls have been cleared."
-
-		
-
-
-
-
-
-
-
--- Event handler
-
-
-
--- -- 이벤트 핸들러
--- function MimDice_CHAT_MSG_SYSTEM(msg)
-
--- 	-- GlobalStrings 이용해서 이름,주사위,최소값,최대값 불러오는 부분
--- 	for name, roll, minRoll, maxRoll in string.gmatch(msg, pattern) do
--- 	-- 두번 굴림 확인. 한번 굴렸으면 1 이상이 됨.
--- 		rollNames[name] = rollNames[name] and rollNames[name] + 1 or 1
--- 	-- rollArray 테이블에 데이터 입력
--- 	 	table.insert(rollArray, {
--- 			-- 이름
--- 			Name = name,
--- 			-- 주사위 값
--- 			Roll = tonumber(roll),
--- 			-- 주사위 최소값	
--- 			Min = tonumber(minRoll),
--- 			-- 주사위 최대값
--- 			Max = tonumber(maxRoll),
--- 			-- 몇명굴렸는지 카운트
--- 			Count = rollNames[name]
--- 		}) 
--- 		-- 이벤트 수신하면 창 띄우기
--- 		MimDice_ShowWindow()
--- 	end
--- end
-
-
 
 -- 높은수 버튼 한번 누르면 비활성화
 function Sort_Up()
@@ -466,215 +196,68 @@ end
 
 
 
-function Mim.FormatRollText(roll, _, partyName)
-	local Num_Dice = DiceEditBox:GetText()
-    local colorTied = Mim.RGBtoEscape(Mim.DB.ColorNormal)
-    local colorCheat = ((roll.Min ~= 1 or roll.Max ~= Num_Dice) or (roll.Count > 1)) and Mim.RGBtoEscape(Mim.DB.ColorCheat) or colorTied
-    
-    local colorName
-    local iconClass
-    local colorRank = Mim.RGBtoEscape(Mim.DB.ColorGuild)
-    local rank = ""
+-- colorName = "|c" .. RAID_CLASS_COLORS[roll.Name.class].colorStr
 
-    if partyName[roll.Name] and partyName[roll.Name].class then
-        colorName = "|c" .. RAID_CLASS_COLORS[partyName[roll.Name].class].colorStr
-        iconClass = Mim.IconClass[partyName[roll.Name].class]
-    end
-    if colorName == nil or Mim.DB.ColorName == false then colorName = colorCheat end
-    if iconClass == nil or Mim.DB.ShowClassIcon == false then iconClass = "" end
-    if Mim.DB.ColorName == false then colorRank = colorCheat end
+-- 스크롤 프레임 창 업데이트
+function MimDice_UpdateList()
+	
+	
 
-    if Mim.DB.ShowGuildRank and partyName[roll.Name] and partyName[roll.Name].rank then
-        rank = " " .. partyName[roll.Name].rank
-    end
+	-- 롤텍스트 비워놓기
+	local rollText = ""
 
-    local txtCount = roll.Count > 1 and format(" [%d]", roll.Count) or ""
+	-- 순서 정리
+	table.sort(rollArray, Choice_Sort)
+	
+	-- 주사위 포맷 출력, 동점 확인
+	for i, roll in pairs(rollArray) do
 
-    return "|Hplayer:" .. roll.Name .. "|h" ..
-            colorTied .. string.format("%3d", roll.Roll) .. ": " ..
-            iconClass .. colorName .. roll.Name .. colorRank .. rank .. "|r " ..
-            colorCheat .. txtRange .. "|r " ..
-            colorCheat .. txtCount .. "|h\n"
-end
+		
+		-- 중복 확인해서 중복이면 빨강색으로 체크
+		local tied = (rollArray[i + 1] and roll.Roll == rollArray[i + 1].Roll) or 
+					 (rollArray[i - 1] and roll.Roll == rollArray[i - 1].Roll)
+		
+
+		-- 다른 사람이랑 주사위 다르게 굴리면 위아래까지 색깔 변경
+		local function diff()
+			if	((rollArray[i + 1] and roll.Max ~= rollArray[i + 1].Max) or 
+		 		(rollArray[i - 1] and roll.Max ~= rollArray[i - 1].Max)) then
+				return rollArray[i].Roll
+			end
+		end
+
+		
+		
+
+				-- 6개의 값 포맷
+				rollText = string.format("|c%s%d|r  : |c%s  %s|r   %s  %s|r\n",
+							  
+				--1.  주사위숫자 동점체크 색상문자 (동점이면 빨강색 or 동점 아니면 살구색)
+				tied and "FFFF0000" or "ffffcccc",
+
+				--2.  주사위 숫자 
+				roll.Roll,
+				
+				--3.  다른사람이랑 주사위 다르게 굴리면 빨강색
+				diff() and  "FFFF0000" or "ffffcccc",
 
 
-function Mim.UpdateRollList()
-    local rollText = ""
+				-- 클래스
+				IconClass[EnglishClass] .. Mim_GetClassColor(EnglishClass).. roll.Name,
+				
 
-    local party, partyName = Mim.GetPlayerList()
+				--5. (최소값이 0이 아니거나 최대값이 0이 아님) and (숫자~숫자) 형식이면, 최소값, 최대값 표시하고 아니라면 빈칸
+				(roll.Min ~= 0 or roll.Max ~= 0) and format(" (%d-%d)", roll.Min, roll.Max) or "",
 
-    table.sort(Mim.rollArray, Choice_Sort)
-
-    -- 포맷 설정 및 주사위 출력, 동점 확인
-    if Mim.DB.NeedAndGreed then
-        local rtxt = ""
-        rollText = Mim.RGBtoEscape(Mim.DB.ColorInfo) .. L["TxtNeed"] .. "\n" .. rtxt
-        rtxt = ""
-        rollText = rollText .. "\n" .. Mim.RGBtoEscape(Mim.DB.ColorInfo) .. L["TxtGreed"] .. "\n" .. rtxt
-    else
-        for _, roll in pairs(Mim.rollArray) do
-            rollText = Mim.FormatRollText(roll, party, partyName) .. rollText
-        end
-    end
-
-    if IsInGroup() then
-        rollText = rollText .. Mim.RGBtoEscape(Mim.DB.ColorInfo) .. L["TxtLine"] .. "\n"
-        local gtxt = Mim.RGBtoEscape(Mim.DB.ColorInfo)
-        local missClasses = {}
-        Mim.allRolled = true
-        for _, p in ipairs(party) do
-            if rollNames[p.name] == nil or rollNames[p.name] == 0 then
-                local iconClass = Mim.IconClass[partyName[p.name].class]
-                local rank = ""
-                if iconClass == nil or Mim.DB.ShowClassIcon == false then
-                    iconClass = ""
-                else
-                    missClasses[partyName[p.name].class] = missClasses[partyName[p.name].class] and missClasses[partyName[p.name].class] + 1 or 1
-                end
-                if Mim.DB.ShowGuildRank and partyName[p.name] and partyName[p.name].rank then
-                    rank = " " .. partyName[p.name].rank
-                end
-                gtxt = gtxt .. "|Hplayer:" .. p.name .. "|h" .. iconClass .. p.name .. rank .. "|h\n"
-                Mim.allRolled = false
-            end
-        end
-        local ctxt = ""
-        if Mim.CLASSIC_ERA then
-            local isHorde = (UnitFactionGroup("player")) == "Horde"
-            for _, class in pairs(Mim.Classes) do
-                --클래스 카운트하고 호드 주술사, 얼라이언스 성기사 체크
-                if not (isHorde and class == "PALADIN") and not (not isHorde and class == "SHAMAN") then
-                    ctxt = ctxt .. Mim.IconClass[class] .. (missClasses[class] or 0) .. " "
-                end
-            end
-            if ctxt ~= "" then ctxt = ctxt .. "\n" .. L["TxtLine"] .. "\n" end
-        end
-
-        rollText = rollText .. ctxt .. gtxt
-    end
-
+				--6. 롤카운트가 1이상이면 숫자+카운트로 rollText에 표시
+				roll.Count >= 1 and format(" [%2d 번째 굴림]", roll.Count) or "") .. rollText
+	end
 	-- 롤스트링 스크롤프레임에 rollText 입력
-    RollStrings:SetText(rollText)
+	RollStrings:SetText(rollText)
 	-- 몇명 굴렸는지 입력
-	MimDiceStatusTextFrame:SetText(string.format(L["%d Roll(s)"], table.getn(Mim.rollArray)))
+	MimDiceStatusTextFrame:SetText(string.format(L["%d Roll(s)"], table.getn(rollArray)))
 end
 
-
--- function Mim.NotRolled()
---     if IsInGroup() or IsInRaid() then
---         local party = Mim.GetPlayerList()
---         local names = ""
---         for _, p in ipairs(party) do
---             if Mim.rollNames[p.name] == nil or Mim.rollNames[p.name] == 0 then
---                 names = names .. ", " .. p.name
---             end
---         end
---         names = string.sub(names, 3)
-
---         if names ~= "" then
---             Mim.AddChat(Mim.MSGPREFIX .. string.format(L["MsgNotRolled"], L["pass"]))
---             Mim.AddChat(names)
---         end
---     end
--- end
-
--- function Mim.RollAnnounce(numbers)
---     local winNum = 0
---     local winName = ""
---     local max = -1
---     local addPrefix = ""
---     local msg = ""
---     local list = {}
---     numbers = (tonumber(numbers) or Mim.DB.AnnounceList or 1)
---     if numbers == 1 then numbers = 0 end
-
---     table.sort(Mim.rollArray, Mim.SortRollsRev)
-
---     if Mim.DB.NeedAndGreed then
---         for _, roll in pairs(Mim.rollArray) do
---             if (Mim.DB.AnnounceIgnoreDouble == false or roll.Count == 1) and
---                     (roll.Roll > 0 and roll.Low == 1 and roll.High == 100) then
---                 if roll.Roll == max then
---                     winNum = winNum + 1
---                     winName = winName .. ", " .. roll.Name
---                 elseif roll.Roll > max then
---                     max = roll.Roll
---                     winNum = 1
---                     winName = roll.Name
---                 end
---                 if numbers > 0 then
---                     numbers = numbers - 1
---                     tinsert(list, roll.Roll .. " " .. roll.Name .. " (" .. roll.Low .. "-" .. roll.High .. ")")
---                 end
---             end
---         end
-
---         if winNum == 0 then
---             for _, roll in pairs(Mim.rollArray) do
---                 if (Mim.DB.AnnounceIgnoreDouble == false or roll.Count == 1) and
---                         (roll.Roll == 0 or (roll.Low == 1 and roll.High == 50)) then
-
---                     if roll.Roll == max then
---                         winNum = winNum + 1
---                         winName = winName .. ", " .. roll.Name
---                     elseif roll.Roll > max then
---                         max = roll.Roll
---                         winNum = 1
---                         winName = roll.Name
---                     end
---                     if numbers > 0 then
---                         numbers = numbers - 1
---                         tinsert(list, roll.Roll .. " " .. roll.Name .. " (" .. roll.Low .. "-" .. roll.High .. ")")
---                     end
---                 end
---             end
---             addPrefix = L["TxtGreed"] .. "! "
---         else
---             addPrefix = L["TxtNeed"] .. "! "
---         end
-
---     else
---         for _, roll in pairs(Mim.rollArray) do
-
---             if (Mim.DB.AnnounceIgnoreDouble == false or roll.Count == 1) and
---                     (Mim.DB.AnnounceRejectOutBounds == false or (roll.Low == 1 and roll.High == 100)) then
-
---                 if roll.Roll == max and roll.Roll ~= 0 then
---                     winNum = winNum + 1
---                     winName = winName .. ", " .. roll.Name
---                 elseif roll.Roll > max and roll.Roll ~= 0 then
---                     max = roll.Roll
---                     winNum = 1
---                     winName = roll.Name
---                 end
---                 if numbers > 0 then
---                     numbers = numbers - 1
---                     tinsert(list, roll.Roll .. " " .. roll.Name .. " (" .. roll.Low .. "-" .. roll.High .. ")")
---                 end
---             end
---         end
---     end
-
---     if winNum == 1 and Mim.lastItem == nil then
---         msg = Mim.MSGPREFIX .. addPrefix .. string.format(L["MsgAnnounce"], winName, max)
---     elseif winNum == 1 and Mim.lastItem ~= nil then
---         msg = Mim.MSGPREFIX .. addPrefix .. string.format(L["MsgAnnounceItem"], winName, Mim.lastItem, max)
---     elseif winNum > 1 and Mim.lastItem == nil then
---         msg = Mim.MSGPREFIX .. addPrefix .. string.format(L["MsgAnnounceTie"], winName, max)
---     elseif winNum > 1 and Mim.lastItem ~= nil then
---         msg = Mim.MSGPREFIX .. addPrefix .. string.format(L["MsgAnnounceTieItem"], winName, Mim.lastItem, max)
---     elseif Mim.Countdown then
---         msg = Mim.MSGPREFIX .. L["MsgForcedAnnounce"]
---     end
-
---     Mim.AddChat(msg)
---     for _, out in ipairs(list) do
---         Mim.AddChat(out)
---     end
-
-
---     Mim.StopCountdown()
--- end
 
 -- 위치 저장
 function MimDice_SaveAnchors()
@@ -697,8 +280,8 @@ end
 
 -- 주사위 리셋
 function MimDice_ClearRolls()
-	Mim.rollArray = {}
-	Mim.rollNames = {}
+	rollArray = {}
+	rollNames = {}
 	DEFAULT_CHAT_FRAME:AddMessage(L["All rolls have been cleared."])
 	MimDice_UpdateList()
 
@@ -764,70 +347,37 @@ function Prefix()
 	Final_Text = T_Check()  .. D_Check() .. H_Check() .. Dice_Text .. Num_Dice .. Space .. High_Check() .. Low_Check() .. Suffix
 	
 
-	local function SendMessage_ChoiceChannel()
-		if IsInRaid() == true then
-	 	SendChatMessage(Final_Text,"RAID_WARNING")  -- 레이드 공지로 얘기하기
-	 	SendChatMessage(StartLine,"RAID_WARNING")	-- ======================= 줄 긋는 부분		
-
-		elseif IsInRaid() == false and IsInGroup() == true then
-			SendChatMessage(Final_Text,"INSTANCE_CHAT") -- 인던채팅으로 얘기하기
-			SendChatMessage(StartLine,"INSTANCE_CHAT")	-- ======================= 줄 긋는 부분
-
-		elseif IsInRaid() == false and IsInGroup() == false then
-			SendChatMessage(Final_Text,"SAY")	-- 일반채팅으로 얘기하기
-			SendChatMessage(StartLine,"SAY")	-- ======================= 줄 긋는 부분
-		end
-	end
-
-	SendMessage_ChoiceChannel()
-	
+	 SendChatMessage(Final_Text,"RAID_WARNING")
+	 SendChatMessage(StartLine,"RAID_WARNING")
 end
 
 
---local lastCountDown
--- function Mim.Timers()
---     if Mim.LootHistoryCloseTimer > 0 and Mim.LootHistoryCloseTimer < time() and Mim.LootHistoryCountHandle <= 0 then
---         if Mim.DB.AutoCloseLootRolls then
---             LootHistoryFrame_CollapseAll(LootHistoryFrame)
---             LootHistoryFrame:Hide()
---         end
---         Mim.LootHistoryCloseTimer = 0
---         Mim.LootHistoryCountHandle = 0
---     end
+function Mim_GetClassColor(Class)
 
---     if Mim.Countdown ~= nil then
---         local sec = math.floor(Mim.Countdown - GetTime() + 0.999)
---         if sec > 5 then
---             sec = math.floor((sec + 9) / 10) * 10
---         end
+    local ClassColor = ""
+    local Red, Green, Blue
 
---         if sec ~= lastCountDown then
---             lastCountDown = sec
---             if sec > 0 then
---                 Mim.AddChat(Mim.MSGPREFIX .. sec)
---             else
---                 Mim.RollAnnounce()
---                 Mim.lastItem = nil
---                 if Mim.DB.ClearOnAnnounce then
---                     Mim.ClearRolls()
---                 end
---                 if Mim.DB.CloseOnAnnounce then
---                     Mim.HideWindow()
---                 end
---                 Mim.Countdown = nil
---                 lastCountDown = nil
---             end
---         end
---     end
--- end
+    Class = strupper(Class)
 
--- function Mim.StaMimountdown(x)
---     local ti = GetTime() + (x or Mim.DB.DefaultCD)
---     if Mim.Countdown == nil or Mim.Countdown < ti then
---         Mim.Countdown = ti
---     end
--- end
+    if RAID_CLASS_COLORS[Class] ~= nil then
+        Red = RAID_CLASS_COLORS[Class].r
+        Green = RAID_CLASS_COLORS[Class].g
+        Blue = RAID_CLASS_COLORS[Class].b
 
--- function Mim.StopCountdown()
---     Mim.Countdown = nil
+        ClassColor = "|c" .. string.format("%2x%2x%2x%2x", 255, Red * 255, Green * 255, Blue * 255)
+    end
+
+    return ClassColor
+end
+
+
+
+-- function MimGetClassInfo()
+-- 	local localizedClass, englishClass, classIndex = UnitClass(name)
+-- 	print("클래스정보 출력")
+-- 	print(localizedClass)
+-- 	print(englishClass)
+-- 	print(classIndex)
+-- 	--print(UnitClass(name))
+-- 	--print(GetClassInfo(name))
 -- end
