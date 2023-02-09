@@ -12,12 +12,12 @@ SLASH_RELOAD5 = "/리로드" -- 한글 풀네임
 SlashCmdList["RELOAD"] = ReloadUI -- 실제 함수 동작 부분
 -------------------------------------------------------------------------------------------
 
-MimDice_Addon = Mim -- luacheck: ignore
+MimDice_Addon = RTC -- luacheck: ignore
 -- 테이블 생성
 local rollArray
 local rollNames
 local EnglishClass
-
+local Class
 
 -- 이벤트 프레임 생성
 local MimFrame = CreateFrame("frame")
@@ -129,7 +129,9 @@ function MimDice_CHAT_MSG_SYSTEM(msg)
 		_, EnglishClass = UnitClass(name)
 	-- rollArray 테이블에 데이터 입력
 	 	table.insert(rollArray, {
-		
+            
+            --클래스
+            Class = EnglishClass,
 			-- 이름
 			Name = name,
 			-- 주사위 값
@@ -243,7 +245,7 @@ function MimDice_UpdateList()
 
 
 				-- 클래스
-				IconClass[EnglishClass] .. Mim_GetClassColor(EnglishClass).. roll.Name,
+				IconClass[roll.Class] .. Mim_GetClassColor(roll.Class).. roll.Name,
 				
 
 				--5. (최소값이 0이 아니거나 최대값이 0이 아님) and (숫자~숫자) 형식이면, 최소값, 최대값 표시하고 아니라면 빈칸
