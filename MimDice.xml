@@ -1,6 +1,6 @@
 <Ui xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.blizzard.com/wow/ui/">
 	<Script file="MimDice.lua" />
-	<Frame name="MainWindow" inherits="BasicFrameTemplate" movable="true">
+	<Frame name="MainWindow" inherits="InsetFrameTemplate3" movable="true">
 		<Size x="300" y="474" />
 		<Anchors>
 			<Anchor x="456" y="-130" point="TOPLEFT" />
@@ -158,12 +158,6 @@
 					</OnClick>
 				</Scripts>
 			</CheckButton>
-			<Button name="CloseButton" inherits="UIPanelCloseButton" hidden="true" movable="true" resizable="true" text="Button1">
-				<Size x="25" y="25" />
-				<Anchors>
-					<Anchor x="-16" y="-14" point="TOPRIGHT" relativeTo="MainWindow" />
-				</Anchors>
-			</Button>
 			<Button name="Announce_Button" inherits="UIPanelButtonTemplate" text="보고">
 				<Size x="50" y="30" />
 				<Anchors>
@@ -206,6 +200,17 @@
 				<ButtonText name="$parentText" font="Fonts\2002.ttf">
 					<FontHeight val="12" />
 				</ButtonText>
+			</Button>
+			<Button name="CloseButton" inherits="UIPanelCloseButton" movable="true" resizable="true" text="Button1">
+				<Size x="25" y="25" />
+				<Anchors>
+					<Anchor x="-3" y="-3" point="TOPRIGHT" relativeTo="MainWindow" />
+				</Anchors>
+				<Scripts>
+					<OnClick>
+						MimDice_HideWindow()
+					</OnClick>
+				</Scripts>
 			</Button>
 		</Frames>
 		<Scripts>

@@ -275,6 +275,14 @@ function MimDice_ShowWindow()
 	MimDice_UpdateList()
 end
 
+-- 창 닫기
+function MimDice_HideWindow()
+	MainWindow:Hide()
+	MimDice_ClearRolls()
+end
+
+
+
 -- 몇명 굴렸는지 확인
 function RolledPerson(msg)
     MimDiceStatusTextFrame:SetText(msg)
@@ -288,6 +296,7 @@ function MimDice_ClearRolls()
 	MimDice_UpdateList()
 
 end
+
 
 
 
