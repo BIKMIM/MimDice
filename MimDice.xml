@@ -33,19 +33,13 @@
 				</Texture>
 			</Layer>
 			<Layer level="OVERLAY">
-				<FontString name="DiceString" inherits="GameFontNormal" text="주사위">
-					<Size x="40" y="20" />
+				<FontString name="DiceString" inherits="" font="Fonts\2002.ttf" text="주사위">
+					<Size x="65" y="20" />
 					<Anchors>
-						<Anchor x="100" y="-50" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="90" y="-50" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<FontHeight val="12" />
-				</FontString>
-				<FontString name="SortText" inherits="GameFontNormal" text="하이 / 로우">
-					<Size x="60" y="20" />
-					<Anchors>
-						<Anchor x="155" y="-50" point="TOPLEFT" relativeTo="MainWindow" />
-					</Anchors>
-					<FontHeight val="12" />
+					<Color r="1" g="0.82" />
 				</FontString>
 				<FontString name="MimDiceStatusTextFrame" inherits="GameFontNormalHuge" text="  0 명 굴림">
 					<Size x="130" y="30" />
@@ -60,6 +54,22 @@
 						<Anchor x="3" y="-1" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<FontHeight val="16" />
+				</FontString>
+				<FontString name="SortTextLow" inherits="" font="Fonts\2002.ttf" text="로우">
+					<Size x="60" y="20" />
+					<Anchors>
+						<Anchor x="187" y="-50" point="TOPLEFT" relativeTo="MainWindow" />
+					</Anchors>
+					<FontHeight val="12" />
+					<Color r="1" g="0.82" />
+				</FontString>
+				<FontString name="SortTextHigh" inherits="" font="Fonts\2002.ttf" text="하이">
+					<Size x="43" y="20" />
+					<Anchors>
+						<Anchor x="151" y="-50" point="TOPLEFT" relativeTo="MainWindow" />
+					</Anchors>
+					<FontHeight val="12" />
+					<Color r="1" g="0.82" />
 				</FontString>
 			</Layer>
 		</Layers>
@@ -95,7 +105,7 @@
 									<Anchors>
 										<Anchor x="15" y="-20" point="TOPLEFT" />
 									</Anchors>
-									<FontHeight val="10" />
+									<FontHeight val="12" />
 									<Color r="1" g="0.82" />
 									<Shadow>
 										<Offset>
@@ -139,7 +149,7 @@
 			<CheckButton name="UpBtn" inherits="UIRadioButtonTemplate" text="CheckButton1">
 				<Size x="25" y="25" />
 				<Anchors>
-					<Anchor x="156" y="-68" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="160" y="-68" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 				<Scripts>
 					<OnClick>
@@ -150,7 +160,7 @@
 			<CheckButton name="DownBtn" inherits="UIRadioButtonTemplate" text="CheckButton1">
 				<Size x="25" y="25" />
 				<Anchors>
-					<Anchor x="190" y="-68" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="203" y="-68" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 				<Scripts>
 					<OnClick>
@@ -163,6 +173,11 @@
 				<Anchors>
 					<Anchor x="14" y="15" point="BOTTOMLEFT" relativeTo="MainWindow" />
 				</Anchors>
+				<Scripts>
+					<OnClick>
+						MimDice_RollAnnounce()
+					</OnClick>
+				</Scripts>
 				<ButtonText name="$parentText" font="Fonts\2002.ttf">
 					<FontHeight val="12" />
 				</ButtonText>
@@ -226,4 +241,10 @@
 			</OnDragStop>
 		</Scripts>
 	</Frame>
+	<Texture file="Interface\AddOns\MimDice\img\Mim_minimap_icon.tga">
+		<Size x="25" y="25" />
+		<Anchors>
+			<Anchor x="903" y="-265" point="TOPLEFT" />
+		</Anchors>
+	</Texture>
 </Ui>

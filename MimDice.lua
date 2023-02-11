@@ -12,12 +12,11 @@ SLASH_RELOAD5 = "/리로드" -- 한글 풀네임
 SlashCmdList["RELOAD"] = ReloadUI -- 실제 함수 동작 부분
 -------------------------------------------------------------------------------------------
 
-MimDice_Addon = RTC -- luacheck: ignore
 -- 테이블 생성
 local rollArray
 local rollNames
 local EnglishClass
-local Class
+
 
 -- 이벤트 프레임 생성
 local MimFrame = CreateFrame("frame")
@@ -41,7 +40,6 @@ local pattern = string.gsub(RANDOM_ROLL_RESULT, "[%(%)-]", "%%%1")
 pattern = string.gsub(pattern, "%%s", "(.+)")
 pattern = string.gsub(pattern, "%%d", "%(%%d+%)")
 
---Mim.TxtEscapeIcon = "|T%s:0:0:0:0:64:64:4:60:4:60|t"
 
 -- 다국어지원
 local locales = {
@@ -83,8 +81,6 @@ setmetatable(L, {
 
 -- 처음 로딩
 function MimDice_OnLoad(self)
-
-
 
 	-- 로딩되면 기본적으로 Up 정렬
 	UpBtn:SetChecked(true)
@@ -150,6 +146,8 @@ function MimDice_CHAT_MSG_SYSTEM(msg)
 	end
 end
 
+
+-- 클래스 아이콘 불러와서 자르기
 IconClassTexture="Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES"
 IconClassTextureWithoutBorder="Interface\\WorldStateFrame\\ICONS-CLASSES"
 IconClassTextureCoord='CLASS_ICON_TCOORDS'
@@ -197,68 +195,73 @@ function Choice_Sort(a, b)
 end
 
 
-
--- colorName = "|c" .. RAID_CLASS_COLORS[roll.Name.class].colorStr
-
+local rollTextRank = {}
 -- 스크롤 프레임 창 업데이트
 function MimDice_UpdateList()
 	
-	
-
 	-- 롤텍스트 비워놓기
 	local rollText = ""
 
 	-- 순서 정리
 	table.sort(rollArray, Choice_Sort)
+
+	
 	
 	-- 주사위 포맷 출력, 동점 확인
 	for i, roll in pairs(rollArray) do
 
 		
 		-- 중복 확인해서 중복이면 빨강색으로 체크
+		-- rollArray(클래스,이름,주사위,최소,최대값) 의 다음사람 and 현재주사위 == rollArray의 다음사람의 주사위
 		local tied = (rollArray[i + 1] and roll.Roll == rollArray[i + 1].Roll) or 
 					 (rollArray[i - 1] and roll.Roll == rollArray[i - 1].Roll)
 		
 
-		-- 다른 사람이랑 주사위 다르게 굴리면 위아래까지 색깔 변경
-		local function diff()
-			if	((rollArray[i + 1] and roll.Max ~= rollArray[i + 1].Max) or 
-		 		(rollArray[i - 1] and roll.Max ~= rollArray[i - 1].Max)) then
-				return rollArray[i].Roll
-			end
-		end
-
-		
-		
-
-				-- 6개의 값 포맷
-				rollText = string.format("|c%s%d|r  : |c%s  %s|r   %s  %s|r\n",
+		-- 기준값이랑 다른 주사위를 굴리면 색상 변경
+		local standardNumber = tonumber(DiceEditBox:GetText())
+		local diff = standardNumber ~= roll.Max
+				
+		-- 6개의 값 포맷
+		rollText = string.format("|c%s%d|r : |c%s%s|r%s%s|r\n",
 							  
-				--1.  주사위숫자 동점체크 색상문자 (동점이면 빨강색 or 동점 아니면 살구색)
-				tied and "FFFF0000" or "ffffcccc",
+			--1.  주사위숫자 동점체크 색상문자 (동점이면 빨강색 or 동점 아니면 살구색)
+			tied and "FFFF0000".."> " or "ffffcccc",
 
-				--2.  주사위 숫자 
-				roll.Roll,
+			--2.  주사위 숫자 
+			roll.Roll,
 				
-				--3.  다른사람이랑 주사위 다르게 굴리면 빨강색
-				diff() and  "FFFF0000" or "ffffcccc",
+			--3.  기준값이랑 다른 주사위를 굴리면 색상 변경
+			diff and  "FFFF0000" or "ffffcccc",
 
-
-				-- 클래스
-				IconClass[roll.Class] .. Mim_GetClassColor(roll.Class).. roll.Name,
+			-- 클래스
+			IconClass[roll.Class] .. Mim_GetClassColor(roll.Class).. roll.Name,
 				
 
-				--5. (최소값이 0이 아니거나 최대값이 0이 아님) and (숫자~숫자) 형식이면, 최소값, 최대값 표시하고 아니라면 빈칸
-				(roll.Min ~= 0 or roll.Max ~= 0) and format(" (%d-%d)", roll.Min, roll.Max) or "",
+			--5. (최소값이 0이 아니거나 최대값이 0이 아님) and (숫자~숫자) 형식이면, 최소값, 최대값 표시하고 아니라면 빈칸
+			(roll.Min ~= 0 or roll.Max ~= 0) and format(" (%d-%d)", roll.Min, roll.Max) or "",
 
-				--6. 롤카운트가 1이상이면 숫자+카운트로 rollText에 표시
-				roll.Count >= 1 and format(" [%2d 번째 굴림]", roll.Count) or "") .. rollText
+			--6. 롤카운트가 1이상이면 숫자+카운트로 rollText에 표시
+			roll.Count > 1 and format(" [%2d번굴림]", roll.Count) or "") .. rollText
+				
+				
 	end
 	-- 롤스트링 스크롤프레임에 rollText 입력
 	RollStrings:SetText(rollText)
 	-- 몇명 굴렸는지 입력
 	MimDiceStatusTextFrame:SetText(string.format(L["%d Roll(s)"], table.getn(rollArray)))
 end
+
+-- 결과 보고
+function MimDice_RollAnnounce()
+    
+	-- 채팅 메세지 선택하고, 메세지 보낼 채널 선택
+	-- SendChatMessage(rollTextRank,"SAY")
+	-- SendChatMessage(StartLine,SelectChannel())
+	--for k, v in pairs(rollTextRank) do
+		print(rollTextRank[1])
+	--end
+end
+
 
 
 -- 위치 저장
@@ -297,8 +300,19 @@ function MimDice_ClearRolls()
 
 end
 
-
-
+-- 채팅메세지 보낼 채널 선택
+function SelectChannel()
+    local SendChatMessageChannel
+    if IsInRaid() then
+        SendChatMessageChannel = "RAID_WARNING"
+	elseif IsInRaid() then
+			SendChatMessageChannel = "RAID"
+    elseif IsInGroup() then
+        SendChatMessageChannel = "PARTY"
+	else SendChatMessageChannel = "RAID_WARNING"
+    end
+    return SendChatMessageChannel
+end
 
 -- 역할별 문장
 function Prefix()
@@ -312,9 +326,9 @@ function Prefix()
 	local Low_Text = "로우"
 	local Suffix = MainEditBox:GetText()
 	local StartLine = "=============================="
-	
 	local Final_Text = ""
 	
+	-- 탱커 체크
 	local function T_Check()
 		if TankCheckBox:GetChecked(true) then
 			return T_Prefix
@@ -323,6 +337,7 @@ function Prefix()
 		end
 	end
 
+	-- 딜러 체크
 	local function D_Check()
 		if DpsCheckBox:GetChecked(true) then
 			return D_Prefix
@@ -331,6 +346,7 @@ function Prefix()
 		end
 	end
 
+	-- 힐러 체크
 	local function H_Check()
 		if HealCheckBox:GetChecked(true) then
 			return H_Prefix
@@ -339,6 +355,7 @@ function Prefix()
 		end
 	end
 
+	-- 정렬 하이 체크
 	local function High_Check()
 		if UpBtn:GetChecked(true) then
 			return High_Text
@@ -347,6 +364,7 @@ function Prefix()
 		end
 	end
 
+	-- 정렬 로우 체크
 	local function Low_Check()
 		if DownBtn:GetChecked(true) then
 			return Low_Text
@@ -355,14 +373,16 @@ function Prefix()
 		end
 	end
 
+	-- 최종 메세지 조합
 	Final_Text = T_Check()  .. D_Check() .. H_Check() .. Dice_Text .. Num_Dice .. Space .. High_Check() .. Low_Check() .. Suffix
 	
 
-	 SendChatMessage(Final_Text,"RAID_WARNING")
-	 SendChatMessage(StartLine,"RAID_WARNING")
+	-- 채팅 메세지 선택하고, 메세지 보낼 채널 선택
+	 SendChatMessage(Final_Text,SelectChannel())
+	 SendChatMessage(StartLine,SelectChannel())
 end
 
-
+-- 클래스 글자 색깔
 function Mim_GetClassColor(Class)
 
     local ClassColor = ""
@@ -383,12 +403,4 @@ end
 
 
 
--- function MimGetClassInfo()
--- 	local localizedClass, englishClass, classIndex = UnitClass(name)
--- 	print("클래스정보 출력")
--- 	print(localizedClass)
--- 	print(englishClass)
--- 	print(classIndex)
--- 	--print(UnitClass(name))
--- 	--print(GetClassInfo(name))
--- end
+
