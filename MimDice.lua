@@ -228,9 +228,7 @@ end
 
 
 -- 주사위 결과 순위 변수
-local rollRankTable
--- 주사위 결과 순위
-local rollRank
+local RankList = {}
 
 -- 스크롤 프레임 창 업데이트
 function MimDice_UpdateList()
@@ -251,8 +249,12 @@ function MimDice_UpdateList()
 
 		-- 기준값이랑 다른 주사위를 굴리면 색상 변경
 		local standardNumber = tonumber(DiceEditBox:GetText())
-		local diff = standardNumber ~= roll.Max
-				
+		local diff = (standardNumber ~= roll.Max)
+		local brkt
+		
+		
+		
+		
 		-- 6개의 값 포맷
 		rollText = string.format("|c%s%d|r : |c%s%s|r%s%s|r\n",
 							  
@@ -273,13 +275,70 @@ function MimDice_UpdateList()
 
 			--6. 롤카운트가 1이상이면 숫자+카운트로 rollText에 표시
 			roll.Count > 1 and format(" [%2d번굴림]", roll.Count) or "") .. rollText
+
+
+			if tied == true then
+				brkt =  "> "
+			else brkt = ""
+			end
+
+			tinsert(RankList, brkt .. roll.Roll .. " " .. roll.Name .. " (" .. roll.Min .. "-" .. roll.Max .. ")")
+			
+
 	end
 	-- 롤스트링 스크롤프레임에 rollText 입력
 	RollStrings:SetText(rollText)
-
 	-- 몇명 굴렸는지 입력
 	MimDiceStatusTextFrame:SetText(string.format(L["%d Roll(s)"], table.getn(rollArray)))
+
 end
+
+
+-- 결과 보고
+function MimDice_RollAnnounce()
+	local Rank1 = "1등"
+	local Rank2 = "2등"
+	local Rank3 = "3등"
+	local Rank4 = "4등"
+	local Rank5 = "5등"
+	local Rank6 = "6등"
+	local Rank7 = "7등"
+	local Rank8= "8등"
+	local Rank9= "9등"
+	local Rank10 = "10등"
+	local Rank11 = "11등"
+	local Rank12 = "12등"
+	local Rank13 = "13등"
+	local Rank14 = "14등"
+	local Rank15 = "15등"
+	local Rank16 = "16등"
+	local Rank17 = "17등"
+	local Rank18 = "18등"
+	local Rank19 = "19등"
+	local Rank20 = "20등"
+
+local i = #RankList
+local pass
+
+for pass = 1, i, 1 do
+	if #RankList >= 1 then
+		if string.find(RankList[i], "> ") == nil then  -- 첫번째에 동탈 없으면==
+			print(Rank1 .. RankList[i])					-- 첫번째가 1등
+			break
+		elseif string.find(RankList[i], "> ") ~= nil then -- 첫째에 동탈 있으면 ~=
+			if string.find(RankList[i-pass], "> ") == nil then -- 두번째에 동탈 있나보고 없으면==
+				print(Rank1 .. RankList[i-pass])					-- 두번째가 1등
+				break
+				end
+			end
+		end
+	end
+end
+
+
+
+
+
 
 -- 위치 저장
 function MimDice_SaveAnchors()
@@ -310,9 +369,9 @@ end
 function MimDice_ClearRolls()
 	rollArray = {}
 	rollNames = {}
+	RankList = {}
 	DEFAULT_CHAT_FRAME:AddMessage(L["All rolls have been cleared."])
 	MimDice_UpdateList()
-
 end
 
 -- 채팅메세지 보낼 채널 선택
@@ -413,104 +472,3 @@ function Mim_GetClassColor(Class)
     return ClassColor
 end
 
--- 결과 보고
-function MimDice_RollAnnounce(numbers)
-
-	-- 우승자 이름
-    local winName = ""
-	-- ?
-    local max = -1
-
-	-- 말머리
-    local addPrefix = ""
-
-	-- 메세지
-    local msg = ""
-
-	-- 리스트
-    local list = {}
-
-    numbers = (tonumber(numbers) or RTC.DB.AnnounceList or 1)
-    if numbers == 1 then numbers = 0 end
-
-    table.sort(rollArray, Choice_Sort)
-
-    if RTC.DB.NeedAndGreed then
-        for _, roll in pairs(RTC.rollArray) do
-            if (RTC.DB.AnnounceIgnoreDouble == false or roll.Count == 1) and
-                    (roll.Roll > 0 and roll.Low == 1 and roll.High == 100) then
-                if roll.Roll == max then
-                    winName = winName .. ", " .. roll.Name
-                elseif roll.Roll > max then
-                    max = roll.Roll
-                    winName = roll.Name
-                end
-                if numbers > 0 then
-                    numbers = numbers - 1
-                    tinsert(list, roll.Roll .. " " .. roll.Name .. " (" .. roll.Low .. "-" .. roll.High .. ")")
-                end
-            end
-        end
-
-        if winNum == 0 then
-            for _, roll in pairs(RTC.rollArray) do
-                if (RTC.DB.AnnounceIgnoreDouble == false or roll.Count == 1) and
-                        (roll.Roll == 0 or (roll.Low == 1 and roll.High == 50)) then
-
-                    if roll.Roll == max then
-                        winName = winName .. ", " .. roll.Name
-                    elseif roll.Roll > max then
-                        max = roll.Roll
-                        winName = roll.Name
-                    end
-                    if numbers > 0 then
-                        numbers = numbers - 1
-                        tinsert(list, roll.Roll .. " " .. roll.Name .. " (" .. roll.Low .. "-" .. roll.High .. ")")
-                    end
-                end
-            end
-            addPrefix = L["TxtGreed"] .. "! "
-        else
-            addPrefix = L["TxtNeed"] .. "! "
-        end
-
-    else
-        for _, roll in pairs(RTC.rollArray) do
-
-            if (RTC.DB.AnnounceIgnoreDouble == false or roll.Count == 1) and
-                    (RTC.DB.AnnounceRejectOutBounds == false or (roll.Low == 1 and roll.High == 100)) then
-
-                if roll.Roll == max and roll.Roll ~= 0 then
-                    winName = winName .. ", " .. roll.Name
-                elseif roll.Roll > max and roll.Roll ~= 0 then
-                    max = roll.Roll
-                    winName = roll.Name
-                end
-                if numbers > 0 then
-                    numbers = numbers - 1
-                    tinsert(list, roll.Roll .. " " .. roll.Name .. " (" .. roll.Low .. "-" .. roll.High .. ")")
-                end
-            end
-        end
-    end
-
-    if RTC.lastItem == nil then
-        msg = RTC.MSGPREFIX .. addPrefix .. string.format(L["MsgAnnounce"], winName, max)
-    elseif RTC.lastItem ~= nil then
-        msg = RTC.MSGPREFIX .. addPrefix .. string.format(L["MsgAnnounceItem"], winName, RTC.lastItem, max)
-    elseif RTC.lastItem == nil then
-        msg = RTC.MSGPREFIX .. addPrefix .. string.format(L["MsgAnnounceTie"], winName, max)
-    elseif RTC.lastItem ~= nil then
-        msg = RTC.MSGPREFIX .. addPrefix .. string.format(L["MsgAnnounceTieItem"], winName, RTC.lastItem, max)
-    elseif RTC.Countdown then
-        msg = RTC.MSGPREFIX .. L["MsgForcedAnnounce"]
-    end
-
-    RTC.AddChat(msg)
-    for _, out in ipairs(list) do
-        RTC.AddChat(out)
-    end
-
-
-    RTC.StopCountdown()
-end
