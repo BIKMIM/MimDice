@@ -1,6 +1,6 @@
 <Ui xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.blizzard.com/wow/ui/">
 	<Script file="MimDice.lua" />
-	<Frame name="MainWindow" inherits="InsetFrameTemplate3" movable="true">
+	<Frame name="MainWindow" inherits="InsetFrameTemplate3" hidden="true" movable="true">
 		<Size x="300" y="474" />
 		<Anchors>
 			<Anchor x="456" y="-130" point="TOPLEFT" />
@@ -241,10 +241,4 @@
 			</OnDragStop>
 		</Scripts>
 	</Frame>
-	<Texture file="Interface\AddOns\MimDice\img\Mim_minimap_icon.tga">
-		<Size x="25" y="25" />
-		<Anchors>
-			<Anchor x="903" y="-265" point="TOPLEFT" />
-		</Anchors>
-	</Texture>
 </Ui>

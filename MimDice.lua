@@ -17,6 +17,11 @@ local rollArray
 local rollNames
 local EnglishClass
 
+-- 라이브러리 불러오기
+local LibDB		= LibStub("LibDataBroker-1.1")
+local LibDBIcon	= LibStub("LibDBIcon-1.0")
+-- local LibWindow = LibStub("LibWindow-1.1")
+
 
 -- 이벤트 프레임 생성
 local MimFrame = CreateFrame("frame")
@@ -35,7 +40,7 @@ end)
 
 
 -- /주사위 했을 때 나오는 문자열 정리 
--- GlobalStrings 에서 값 가져옴.
+-- RollTrackerClassic GlobalStrings 에서 값 가져옴.
 local pattern = string.gsub(RANDOM_ROLL_RESULT, "[%(%)-]", "%%%1")
 pattern = string.gsub(pattern, "%%s", "(.+)")
 pattern = string.gsub(pattern, "%%d", "%(%%d+%)")
@@ -79,6 +84,7 @@ setmetatable(L, {
 })
 
 
+
 -- 처음 로딩
 function MimDice_OnLoad(self)
 
@@ -91,7 +97,7 @@ function MimDice_OnLoad(self)
 
 	-- DB 없으면 DB 만들기
 	if not MimDiceDB then MimDiceDB = {} end 
-	local x, y, w, h = MimDiceDB.X, MimDiceDB.Y, MimDiceDB.Width, MimDiceDB.Height
+	local x, y, w, h = MimDiceDB.window_X, MimDiceDB.window_Y, MimDiceDB.window_Width, MimDiceDB.window_Height
 	if not x or not y or not w or not h then
 		MimDice_SaveAnchors()
 	else
@@ -114,9 +120,36 @@ function MimDice_OnLoad(self)
 end
 
 
--- 이벤트 핸들러
-function MimDice_CHAT_MSG_SYSTEM(msg)
-    
+-- LibDBIcon 라이브러리 써서 미니맵 버튼 구현
+if not MimDiceDB_Minimap then MimDiceDB_Minimap = {} end
+	local miniButton = LibStub("LibDataBroker-1.1"):NewDataObject("MimDice", {
+		type = "data source",
+		text = "MIM DICE",
+		icon = "Interface\\AddOns\\MimDice\\img\\Mim_minimap_icon.tga",
+		OnClick = function(self, btn)
+			ToggleMinimapBtn()
+		end,
+		OnTooltipShow = function(tooltip)
+			if not tooltip or not tooltip.AddLine then return end
+			tooltip:AddLine("MIM DICE")
+		end,
+		})
+		local icon = LibStub("LibDBIcon-1.0", true)
+		icon:Register("MimDice", miniButton, MimDiceDB_Minimap)
+		MimDiceDB_Minimap["hide"] = false
+		icon:Show("MimDice")
+	
+	-- 미니맵 토글버튼 Show/hide
+		function ToggleMinimapBtn()
+			if MainWindow:IsVisible() == true then
+				MainWindow:Hide()
+			else
+				MainWindow:Show()
+			end
+		end
+
+	-- 이벤트 핸들러
+	function MimDice_CHAT_MSG_SYSTEM(msg)
 
 	-- GlobalStrings 이용해서 이름,주사위,최소값,최대값 불러오는 부분
 	for name, roll, minRoll, maxRoll in string.gmatch(msg, pattern) do
@@ -139,10 +172,9 @@ function MimDice_CHAT_MSG_SYSTEM(msg)
 			-- 몇명굴렸는지 카운트
 			Count = rollNames[name]
 		}) 
+
 		-- 이벤트 수신하면 창 띄우기
 		MimDice_ShowWindow()
-		-- 클래스 정보
-		
 	end
 end
 
@@ -185,7 +217,7 @@ function Sort_Down()
 	MimDice_UpdateList()
 end
 
--- 정렬버튼 고르기 내용 부분
+-- 정렬버튼 오름차순, 내림차순
 function Choice_Sort(a, b)
 	if UpBtn:GetChecked(true) then
 		return a.Roll < b.Roll
@@ -195,7 +227,11 @@ function Choice_Sort(a, b)
 end
 
 
-local rollTextRank = {}
+-- 주사위 결과 순위 변수
+local rollRankTable
+-- 주사위 결과 순위
+local rollRank
+
 -- 스크롤 프레임 창 업데이트
 function MimDice_UpdateList()
 	
@@ -204,18 +240,14 @@ function MimDice_UpdateList()
 
 	-- 순서 정리
 	table.sort(rollArray, Choice_Sort)
-
-	
 	
 	-- 주사위 포맷 출력, 동점 확인
 	for i, roll in pairs(rollArray) do
-
 		
 		-- 중복 확인해서 중복이면 빨강색으로 체크
 		-- rollArray(클래스,이름,주사위,최소,최대값) 의 다음사람 and 현재주사위 == rollArray의 다음사람의 주사위
 		local tied = (rollArray[i + 1] and roll.Roll == rollArray[i + 1].Roll) or 
 					 (rollArray[i - 1] and roll.Roll == rollArray[i - 1].Roll)
-		
 
 		-- 기준값이랑 다른 주사위를 굴리면 색상 변경
 		local standardNumber = tonumber(DiceEditBox:GetText())
@@ -235,34 +267,19 @@ function MimDice_UpdateList()
 
 			-- 클래스
 			IconClass[roll.Class] .. Mim_GetClassColor(roll.Class).. roll.Name,
-				
 
 			--5. (최소값이 0이 아니거나 최대값이 0이 아님) and (숫자~숫자) 형식이면, 최소값, 최대값 표시하고 아니라면 빈칸
 			(roll.Min ~= 0 or roll.Max ~= 0) and format(" (%d-%d)", roll.Min, roll.Max) or "",
 
 			--6. 롤카운트가 1이상이면 숫자+카운트로 rollText에 표시
 			roll.Count > 1 and format(" [%2d번굴림]", roll.Count) or "") .. rollText
-				
-				
 	end
 	-- 롤스트링 스크롤프레임에 rollText 입력
 	RollStrings:SetText(rollText)
+
 	-- 몇명 굴렸는지 입력
 	MimDiceStatusTextFrame:SetText(string.format(L["%d Roll(s)"], table.getn(rollArray)))
 end
-
--- 결과 보고
-function MimDice_RollAnnounce()
-    
-	-- 채팅 메세지 선택하고, 메세지 보낼 채널 선택
-	-- SendChatMessage(rollTextRank,"SAY")
-	-- SendChatMessage(StartLine,SelectChannel())
-	--for k, v in pairs(rollTextRank) do
-		print(rollTextRank[1])
-	--end
-end
-
-
 
 -- 위치 저장
 function MimDice_SaveAnchors()
@@ -283,8 +300,6 @@ function MimDice_HideWindow()
 	MainWindow:Hide()
 	MimDice_ClearRolls()
 end
-
-
 
 -- 몇명 굴렸는지 확인
 function RolledPerson(msg)
@@ -375,7 +390,6 @@ function Prefix()
 
 	-- 최종 메세지 조합
 	Final_Text = T_Check()  .. D_Check() .. H_Check() .. Dice_Text .. Num_Dice .. Space .. High_Check() .. Low_Check() .. Suffix
-	
 
 	-- 채팅 메세지 선택하고, 메세지 보낼 채널 선택
 	 SendChatMessage(Final_Text,SelectChannel())
@@ -394,13 +408,109 @@ function Mim_GetClassColor(Class)
         Red = RAID_CLASS_COLORS[Class].r
         Green = RAID_CLASS_COLORS[Class].g
         Blue = RAID_CLASS_COLORS[Class].b
-
         ClassColor = "|c" .. string.format("%2x%2x%2x%2x", 255, Red * 255, Green * 255, Blue * 255)
     end
-
     return ClassColor
 end
 
+-- 결과 보고
+function MimDice_RollAnnounce(numbers)
+
+	-- 우승자 이름
+    local winName = ""
+	-- ?
+    local max = -1
+
+	-- 말머리
+    local addPrefix = ""
+
+	-- 메세지
+    local msg = ""
+
+	-- 리스트
+    local list = {}
+
+    numbers = (tonumber(numbers) or RTC.DB.AnnounceList or 1)
+    if numbers == 1 then numbers = 0 end
+
+    table.sort(rollArray, Choice_Sort)
+
+    if RTC.DB.NeedAndGreed then
+        for _, roll in pairs(RTC.rollArray) do
+            if (RTC.DB.AnnounceIgnoreDouble == false or roll.Count == 1) and
+                    (roll.Roll > 0 and roll.Low == 1 and roll.High == 100) then
+                if roll.Roll == max then
+                    winName = winName .. ", " .. roll.Name
+                elseif roll.Roll > max then
+                    max = roll.Roll
+                    winName = roll.Name
+                end
+                if numbers > 0 then
+                    numbers = numbers - 1
+                    tinsert(list, roll.Roll .. " " .. roll.Name .. " (" .. roll.Low .. "-" .. roll.High .. ")")
+                end
+            end
+        end
+
+        if winNum == 0 then
+            for _, roll in pairs(RTC.rollArray) do
+                if (RTC.DB.AnnounceIgnoreDouble == false or roll.Count == 1) and
+                        (roll.Roll == 0 or (roll.Low == 1 and roll.High == 50)) then
+
+                    if roll.Roll == max then
+                        winName = winName .. ", " .. roll.Name
+                    elseif roll.Roll > max then
+                        max = roll.Roll
+                        winName = roll.Name
+                    end
+                    if numbers > 0 then
+                        numbers = numbers - 1
+                        tinsert(list, roll.Roll .. " " .. roll.Name .. " (" .. roll.Low .. "-" .. roll.High .. ")")
+                    end
+                end
+            end
+            addPrefix = L["TxtGreed"] .. "! "
+        else
+            addPrefix = L["TxtNeed"] .. "! "
+        end
+
+    else
+        for _, roll in pairs(RTC.rollArray) do
+
+            if (RTC.DB.AnnounceIgnoreDouble == false or roll.Count == 1) and
+                    (RTC.DB.AnnounceRejectOutBounds == false or (roll.Low == 1 and roll.High == 100)) then
+
+                if roll.Roll == max and roll.Roll ~= 0 then
+                    winName = winName .. ", " .. roll.Name
+                elseif roll.Roll > max and roll.Roll ~= 0 then
+                    max = roll.Roll
+                    winName = roll.Name
+                end
+                if numbers > 0 then
+                    numbers = numbers - 1
+                    tinsert(list, roll.Roll .. " " .. roll.Name .. " (" .. roll.Low .. "-" .. roll.High .. ")")
+                end
+            end
+        end
+    end
+
+    if RTC.lastItem == nil then
+        msg = RTC.MSGPREFIX .. addPrefix .. string.format(L["MsgAnnounce"], winName, max)
+    elseif RTC.lastItem ~= nil then
+        msg = RTC.MSGPREFIX .. addPrefix .. string.format(L["MsgAnnounceItem"], winName, RTC.lastItem, max)
+    elseif RTC.lastItem == nil then
+        msg = RTC.MSGPREFIX .. addPrefix .. string.format(L["MsgAnnounceTie"], winName, max)
+    elseif RTC.lastItem ~= nil then
+        msg = RTC.MSGPREFIX .. addPrefix .. string.format(L["MsgAnnounceTieItem"], winName, RTC.lastItem, max)
+    elseif RTC.Countdown then
+        msg = RTC.MSGPREFIX .. L["MsgForcedAnnounce"]
+    end
+
+    RTC.AddChat(msg)
+    for _, out in ipairs(list) do
+        RTC.AddChat(out)
+    end
 
 
-
+    RTC.StopCountdown()
+end
