@@ -227,8 +227,6 @@ function Choice_Sort(a, b)
 end
 
 
--- 주사위 결과 순위 변수
-local RankList = {}
 
 -- 스크롤 프레임 창 업데이트
 function MimDice_UpdateList()
@@ -250,7 +248,7 @@ function MimDice_UpdateList()
 		-- 기준값이랑 다른 주사위를 굴리면 색상 변경
 		local standardNumber = tonumber(DiceEditBox:GetText())
 		local diff = (standardNumber ~= roll.Max)
-		local brkt
+		
 		
 		
 		
@@ -277,13 +275,6 @@ function MimDice_UpdateList()
 			roll.Count > 1 and format(" [%2d번굴림]", roll.Count) or "") .. rollText
 
 
-			if tied == true then
-				brkt =  "> "
-			else brkt = ""
-			end
-
-			tinsert(RankList, brkt .. roll.Roll .. " " .. roll.Name .. " (" .. roll.Min .. "-" .. roll.Max .. ")")
-			
 
 	end
 	-- 롤스트링 스크롤프레임에 rollText 입력
@@ -293,47 +284,50 @@ function MimDice_UpdateList()
 
 end
 
+-- 주사위 결과 순위 변수
+
 
 -- 결과 보고
-function MimDice_RollAnnounce()
-	local Rank1 = "1등"
-	local Rank2 = "2등"
-	local Rank3 = "3등"
-	local Rank4 = "4등"
-	local Rank5 = "5등"
-	local Rank6 = "6등"
-	local Rank7 = "7등"
-	local Rank8= "8등"
-	local Rank9= "9등"
-	local Rank10 = "10등"
-	local Rank11 = "11등"
-	local Rank12 = "12등"
-	local Rank13 = "13등"
-	local Rank14 = "14등"
-	local Rank15 = "15등"
-	local Rank16 = "16등"
-	local Rank17 = "17등"
-	local Rank18 = "18등"
-	local Rank19 = "19등"
-	local Rank20 = "20등"
+function MimDice_RollAnnounce(numbers)
 
-local i = #RankList
-local pass
+	-- 롤텍스트 비워놓기
+	local RankList = {}
+	local brkt
+	local winNum = 0
+    local winName = ""
+    local max = -1
+    local addPrefix = ""
+    local msg = ""
 
-for pass = 1, i, 1 do
-	if #RankList >= 1 then
-		if string.find(RankList[i], "> ") == nil then  -- 첫번째에 동탈 없으면==
-			print(Rank1 .. RankList[i])					-- 첫번째가 1등
-			break
-		elseif string.find(RankList[i], "> ") ~= nil then -- 첫째에 동탈 있으면 ~=
-			if string.find(RankList[i-pass], "> ") == nil then -- 두번째에 동탈 있나보고 없으면==
-				print(Rank1 .. RankList[i-pass])					-- 두번째가 1등
-				break
-				end
-			end
-		end
+	-- 순서 정리
+	table.sort(rollArray, Choice_Sort)
+	
+	-- 주사위 포맷 출력, 동점 확인
+	for _, roll in pairs(rollArray) do
+
+		-- 주사위값이 -1 이고, 0이 아니면
+		if roll.Roll == max and roll.Roll ~= 0 then
+			-- 순위 = 순위+1
+			winNum = winNum + 1
+			winName = winName .. ", " .. roll.Name
+
+			-- 주사위값이 max값보다 크고 0이 아니면
+		elseif roll.Roll > max and roll.Roll ~= 0 then
+			-- 주사위값을 max에 넣어서 업데이트하고
+			max = roll.Roll
+			-- 1등으로 지정
+			winNum = 1
+			winName = roll.Name
+
+			tinsert(RankList, roll.Roll .. " " .. roll.Name .. " (" .. roll.Min .. "-" .. roll.Max .. ")")
 	end
+
+	print(RankList[#RankList])
 end
+end
+
+
+
 
 
 
