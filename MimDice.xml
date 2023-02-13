@@ -1,6 +1,6 @@
 <Ui xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.blizzard.com/wow/ui/">
 	<Script file="MimDice.lua" />
-	<Frame name="MainWindow" inherits="InsetFrameTemplate3" hidden="true" movable="true">
+	<Frame name="MainWindow" inherits="InsetFrameTemplate3" hidden="true" movable="true" resizable="true">
 		<Size x="300" y="474" />
 		<Anchors>
 			<Anchor x="456" y="-130" point="TOPLEFT" />
@@ -8,26 +8,30 @@
 		<KeyValues>
 			<KeyValue key="backdropInfo" value="BACKDROP_DIALOG_32_32" keyType="string" type="global" />
 		</KeyValues>
+		<ResizeBounds>
+			<minResize x="300" y="200" />
+			<maxResize x="1200" y="1200" />
+		</ResizeBounds>
 		<Layers>
 			<Layer>
 				<Texture name="DpsTexture" file="Interface\LFGFRAME\UI-LFG-ICON-ROLES">
 					<Size x="25" y="25" />
 					<Anchors>
-						<Anchor x="40" y="-50" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="38" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<TexCoords left="0.52" right="0.25" top="0.26" bottom="0.52" />
 				</Texture>
 				<Texture name="HealTexture" file="Interface\LFGFRAME\UI-LFG-ICON-ROLES">
 					<Size x="25" y="25" />
 					<Anchors>
-						<Anchor x="65" y="-50" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="63" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<TexCoords left="0.26" right="0.52" top="0" bottom="0.25" />
 				</Texture>
 				<Texture name="TankTexture" file="Interface\LFGFRAME\UI-LFG-ICON-ROLES">
 					<Size x="25" y="25" />
 					<Anchors>
-						<Anchor x="14" y="-50" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="11" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<TexCoords left="0" right="0.25" top="0.26" bottom="0.52" />
 				</Texture>
@@ -36,7 +40,7 @@
 				<FontString name="DiceString" inherits="" font="Fonts\2002.ttf" text="주사위">
 					<Size x="65" y="20" />
 					<Anchors>
-						<Anchor x="90" y="-50" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="94" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<FontHeight val="12" />
 					<Color r="1" g="0.82" />
@@ -51,22 +55,22 @@
 				<FontString name="Mim_Dice_Title" inherits="GameFontNormal" font="Fonts\2002.ttf" text="MIM DICE" justifyH="LEFT">
 					<Size x="150" y="20" />
 					<Anchors>
-						<Anchor x="3" y="-1" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="7" y="-5" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<FontHeight val="16" />
-				</FontString>
-				<FontString name="SortTextLow" inherits="" font="Fonts\2002.ttf" text="로우">
-					<Size x="60" y="20" />
-					<Anchors>
-						<Anchor x="187" y="-50" point="TOPLEFT" relativeTo="MainWindow" />
-					</Anchors>
-					<FontHeight val="12" />
-					<Color r="1" g="0.82" />
 				</FontString>
 				<FontString name="SortTextHigh" inherits="" font="Fonts\2002.ttf" text="하이">
 					<Size x="43" y="20" />
 					<Anchors>
-						<Anchor x="151" y="-50" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="155" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
+					</Anchors>
+					<FontHeight val="12" />
+					<Color r="1" g="0.82" />
+				</FontString>
+				<FontString name="SortTextLow" inherits="" font="Fonts\2002.ttf" text="로우">
+					<Size x="60" y="20" />
+					<Anchors>
+						<Anchor x="184" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<FontHeight val="12" />
 					<Color r="1" g="0.82" />
@@ -74,73 +78,45 @@
 			</Layer>
 		</Layers>
 		<Frames>
-			<ScrollFrame name="MimDiceScrollFrame" inherits="UIPanelScrollFrameTemplate">
-				<Size x="247" y="278" />
+			<Button parentKey="resizer">
+				<Size x="16" y="16" />
 				<Anchors>
-					<Anchor x="17" y="-135" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor point="BOTTOMRIGHT" />
 				</Anchors>
-				<Layers>
-					<Layer>
-						<Texture name="mimBackground" alpha="0.2" file="Interface\AddOns\MimDice\img\mim.tga">
-							<Size x="259" y="275" />
-							<Anchors>
-								<Anchor x="14" y="-135" point="TOPLEFT" relativeTo="MainWindow" />
-							</Anchors>
-						</Texture>
-					</Layer>
-				</Layers>
-				<ScrollChild>
-					<Frame name="RollListFrame">
-						<Size x="424" y="870" />
-						<Anchors>
-							<Anchor x="130" y="-99" point="TOPLEFT" />
-						</Anchors>
-						<KeyValues>
-							<KeyValue key="backdropInfo" value="BACKDROP_DIALOG_32_32" keyType="string" type="global" />
-						</KeyValues>
-						<Layers>
-							<Layer level="OVERLAY">
-								<FontString name="RollStrings" font="Fonts\2002.ttf" text="굴려굴려 주사위~!" justifyV="TOP" justifyH="LEFT">
-									<Size x="424" y="850" />
-									<Anchors>
-										<Anchor x="15" y="-20" point="TOPLEFT" />
-									</Anchors>
-									<FontHeight val="12" />
-									<Color r="1" g="0.82" />
-									<Shadow>
-										<Offset>
-											<AbsDimension x="1" y="-1" />
-										</Offset>
-										<Color />
-									</Shadow>
-								</FontString>
-							</Layer>
-						</Layers>
-					</Frame>
-				</ScrollChild>
-			</ScrollFrame>
+				<Scripts>
+					<OnMouseDown>
+						self:GetParent():StartSizing("BOTTOMRIGHT")
+					</OnMouseDown>
+					<OnMouseUp>
+						self:GetParent():StopMovingOrSizing("BOTTOMRIGHT")
+					</OnMouseUp>
+				</Scripts>
+				<NormalTexture file="Interface/ChatFrame/UI-ChatIM-SizeGrabber-Down" />
+				<PushedTexture file="Interface/ChatFrame/UI-ChatIM-SizeGrabber-Up" />
+				<HighlightTexture file="Interface/ChatFrame/UI-ChatIM-SizeGrabber-Highlight" />
+			</Button>
 			<CheckButton name="TankCheckBox" inherits="UICheckButtonTemplate" text="CheckButton4">
 				<Size x="25" y="25" />
 				<Anchors>
-					<Anchor x="14" y="-73" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="12" y="-56" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 			</CheckButton>
 			<CheckButton name="HealCheckBox" inherits="UICheckButtonTemplate" text="CheckButton4">
 				<Size x="25" y="25" />
 				<Anchors>
-					<Anchor x="65" y="-73" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="63" y="-56" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 			</CheckButton>
 			<CheckButton name="DpsCheckBox" inherits="UICheckButtonTemplate" text="CheckButton4">
 				<Size x="25" y="25" />
 				<Anchors>
-					<Anchor x="40" y="-73" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="38" y="-56" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 			</CheckButton>
 			<EditBox name="DiceEditBox" inherits="NumericInputBoxTemplate" autoFocus="false">
 				<Size x="50" y="20" />
 				<Anchors>
-					<Anchor x="100" y="-73" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="104" y="-56" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 				<FontString inherits="ChatFontNormal" font="Fonts\ARIALN.ttf">
 					<FontHeight val="14" />
@@ -149,7 +125,7 @@
 			<CheckButton name="UpBtn" inherits="UIRadioButtonTemplate" text="CheckButton1">
 				<Size x="25" y="25" />
 				<Anchors>
-					<Anchor x="160" y="-68" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="162" y="-56" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 				<Scripts>
 					<OnClick>
@@ -160,7 +136,7 @@
 			<CheckButton name="DownBtn" inherits="UIRadioButtonTemplate" text="CheckButton1">
 				<Size x="25" y="25" />
 				<Anchors>
-					<Anchor x="203" y="-68" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="204" y="-56" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 				<Scripts>
 					<OnClick>
@@ -196,16 +172,10 @@
 					<FontHeight val="12" />
 				</ButtonText>
 			</Button>
-			<EditBox name="MainEditBox" inherits="InputBoxTemplate" autoFocus="false">
-				<Size x="236" y="32" />
-				<Anchors>
-					<Anchor x="28" y="-99" point="TOPLEFT" />
-				</Anchors>
-			</EditBox>
 			<Button name="Start_Button" inherits="UIPanelButtonTemplate" text="시작">
 				<Size x="60" y="40" />
 				<Anchors>
-					<Anchor x="234" y="-58" point="TOPLEFT" />
+					<Anchor x="-5" y="-41" point="TOPRIGHT" relativeTo="MainWindow" />
 				</Anchors>
 				<Scripts>
 					<OnClick>
@@ -224,6 +194,82 @@
 				<Scripts>
 					<OnClick>
 						MimDice_HideWindow()
+					</OnClick>
+				</Scripts>
+			</Button>
+			<EditBox name="MainEditBox" inherits="InputBoxTemplate" resizable="true" autoFocus="false">
+				<Size x="267" y="27" />
+				<Anchors>
+					<Anchor x="17" y="-87" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="-16" y="-87" point="TOPRIGHT" relativeTo="MainWindow" />
+				</Anchors>
+			</EditBox>
+			<ScrollFrame name="MimDiceScrollFrame" inherits="UIPanelScrollFrameTemplate" resizable="true">
+				<Size x="272" y="293" />
+				<Anchors>
+					<Anchor y="-120" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="-28" y="61" point="BOTTOMRIGHT" relativeTo="MainWindow" />
+				</Anchors>
+				<Layers>
+					<Layer>
+						<Texture name="mimBackground" setAllPoints="true" alpha="0.2" file="Interface\AddOns\MimDice\img\mim.tga">
+							<Size x="283" y="290" />
+							<Anchors>
+								<Anchor x="5" y="-120" point="TOPLEFT" relativeTo="MainWindow" />
+								<Anchor x="-5" y="64" point="BOTTOMRIGHT" relativeTo="MainWindow" />
+							</Anchors>
+						</Texture>
+					</Layer>
+				</Layers>
+				<ScrollChild>
+					<Frame name="RollListFrame">
+						<Size x="1500" y="1000" />
+						<Anchors>
+							<Anchor x="130" y="-99" point="TOPLEFT" />
+						</Anchors>
+						<KeyValues>
+							<KeyValue key="backdropInfo" value="BACKDROP_DIALOG_32_32" keyType="string" type="global" />
+						</KeyValues>
+						<Layers>
+							<Layer level="OVERLAY">
+								<FontString name="RollStrings" font="Fonts\2002.ttf" text="굴려굴려 주사위~!" justifyV="TOP" justifyH="LEFT">
+									<Size x="1500" y="1000" />
+									<Anchors>
+										<Anchor x="15" y="-20" point="TOPLEFT" />
+									</Anchors>
+									<FontHeight val="12" />
+									<Color r="1" g="0.82" />
+									<Shadow>
+										<Offset>
+											<AbsDimension x="1" y="-1" />
+										</Offset>
+										<Color />
+									</Shadow>
+								</FontString>
+							</Layer>
+						</Layers>
+					</Frame>
+				</ScrollChild>
+			</ScrollFrame>
+			<Button name="FontSizePlus" inherits="UIPanelButtonTemplate" text="+">
+				<Size x="25" y="25" />
+				<Anchors>
+					<Anchor x="40" y="40" point="BOTTOM" relativeTo="MainWindow" />
+				</Anchors>
+				<Scripts>
+					<OnClick>
+						FontSizePlus()
+					</OnClick>
+				</Scripts>
+			</Button>
+			<Button name="FontSizeMinus" inherits="UIPanelButtonTemplate" text="-">
+				<Size x="25" y="25" />
+				<Anchors>
+					<Anchor x="-40" y="40" point="BOTTOM" relativeTo="MainWindow" />
+				</Anchors>
+				<Scripts>
+					<OnClick>
+						FontSizeMinus()
 					</OnClick>
 				</Scripts>
 			</Button>
