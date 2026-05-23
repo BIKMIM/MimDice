@@ -106,8 +106,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-rem MimDice.lua header comment: "-- Version        : vX.Y.Z" (whitespace preserved via capture group)
-powershell -NoProfile -Command "$c=(Get-Content '%LUA_PATH%' -Raw -Encoding UTF8) -replace '(?m)^(--\s*Version\s*:\s*)v[\w.]*$', ('${1}v' + '!NEW_VER!'); [System.IO.File]::WriteAllText('%LUA_PATH%', $c, (New-Object System.Text.UTF8Encoding $false))"
+rem MimDice.lua header comment: "-- Version        : vX.Y.Z" (들여쓰기 하드코딩 — capture group 회피)
+powershell -NoProfile -Command "$c=(Get-Content '%LUA_PATH%' -Raw -Encoding UTF8) -replace '(?m)^--\s*Version\s*:.*$', '-- Version        : v!NEW_VER!'; [System.IO.File]::WriteAllText('%LUA_PATH%', $c, (New-Object System.Text.UTF8Encoding $false))"
 if errorlevel 1 (
     echo.
     echo [ERROR] Failed to update MimDice.lua
