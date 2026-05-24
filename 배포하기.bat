@@ -10,6 +10,7 @@ echo.
 
 set "TOC_PATH=%~dp0MimDice.toc"
 set "LUA_PATH=%~dp0MimDice.lua"
+set "XML_PATH=%~dp0MimDice.xml"
 
 rem Read current version from TOC (## Version: X.Y.Z)
 powershell -NoProfile -Command "$m = Select-String -Path '%TOC_PATH%' -Pattern '^##\s*Version:\s*(\S+)' | Select-Object -First 1; if ($m) { $m.Matches[0].Groups[1].Value | Out-File -Encoding ascii '%TEMP%\mimdice_ver.txt' -NoNewline }"
@@ -115,7 +116,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo [1/3] Version updated to !NEW_VER!
+rem MimDice.xml: <FontString name="version" ... text="v X.Y.Z">  (게임 내 표시용)
+powershell -NoProfile -Command "$q=[char]34; $pat='(name='+$q+'version'+$q+'[^>]*text='+$q+')v\s*[0-9]+\.[0-9]+\.[0-9]+'; $c=(Get-Content '%XML_PATH%' -Raw -Encoding UTF8) -replace $pat, '${1}v !NEW_VER!'; [System.IO.File]::WriteAllText('%XML_PATH%', $c, (New-Object System.Text.UTF8Encoding $false))"
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Failed to update MimDice.xml
+    pause
+    exit /b 1
+)
+
+echo [1/3] Version updated to !NEW_VER! (TOC + Lua + XML)
 
 :step2
 echo.
