@@ -90,9 +90,20 @@ if errorlevel 1 (
 )
 echo.
 
-rem -- Step 1: Version update (TOC + MimDice.lua header comment)
+rem -- Step 1: Version update (TOC + MimDice.lua header + XML) + Last Updated timestamp
+
+rem MimDice.lua 헤더의 "Last Updated"는 버전 변경 여부와 무관하게 매번 현재 시각으로 갱신
+echo [1/3] Refreshing Last Updated timestamp...
+powershell -NoProfile -Command "$now=Get-Date; $ampm=if($now.Hour -lt 12){'오전'}else{'오후'}; $stamp=$now.ToString('yyyy-MM-dd') + ' ' + $ampm + ' ' + $now.ToString('hh:mm:ss'); $c=(Get-Content '%LUA_PATH%' -Raw -Encoding UTF8) -replace '(?m)^--\s*Last Updated\s*:.*$', ('-- Last Updated   : ' + $stamp); [System.IO.File]::WriteAllText('%LUA_PATH%', $c, (New-Object System.Text.UTF8Encoding $false)); Write-Output ('  -> ' + $stamp)"
+if errorlevel 1 (
+    echo.
+    echo [ERROR] Failed to update Last Updated timestamp
+    pause
+    exit /b 1
+)
+
 if "!NEW_VER!"=="%CURRENT_VER%" (
-    echo [1/3] No version change - skip
+    echo [1/3] Same version - only Last Updated refreshed
     goto :step2
 )
 
@@ -117,7 +128,8 @@ if errorlevel 1 (
 )
 
 rem MimDice.xml: <FontString name="version" ... text="v X.Y.Z">  (게임 내 표시용)
-powershell -NoProfile -Command "$q=[char]34; $pat='(name='+$q+'version'+$q+'[^>]*text='+$q+')v\s*[0-9]+\.[0-9]+\.[0-9]+'; $c=(Get-Content '%XML_PATH%' -Raw -Encoding UTF8) -replace $pat, '${1}v !NEW_VER!'; [System.IO.File]::WriteAllText('%XML_PATH%', $c, (New-Object System.Text.UTF8Encoding $false))"
+rem ※ [^^>]에서 ^^는 cmd가 ^를 escape 처리하기 위함. PowerShell이 받을 때 [^>]이 됨.
+powershell -NoProfile -Command "$q=[char]34; $pat='(name='+$q+'version'+$q+'[^^>]*text='+$q+')v\s*[0-9]+\.[0-9]+\.[0-9]+'; $c=(Get-Content '%XML_PATH%' -Raw -Encoding UTF8) -replace $pat, '${1}v !NEW_VER!'; [System.IO.File]::WriteAllText('%XML_PATH%', $c, (New-Object System.Text.UTF8Encoding $false))"
 if errorlevel 1 (
     echo.
     echo [ERROR] Failed to update MimDice.xml
