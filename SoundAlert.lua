@@ -51,6 +51,43 @@ local SA_OptionWindow = nil
 local SA_TabOption = nil
 local SA_EntryFrames = {}
 
+-- 시스템(기본) 엔트리 정의 - 표시 순서대로
+-- legacyDefaults: 이전 기본 파일명 목록 (이 값으로 저장돼 있으면 새 기본값으로 자동 갱신)
+local SYSTEM_ENTRIES = {
+    {
+        spellID = "JUMP", spellName = "점프",
+        defaultFile = "jump.ogg",
+        legacyDefaults = {},
+    },
+    {
+        spellID = "BLOODLUST", spellName = "블러드",
+        defaultFile = "블러드_ACallToArms.mp3",
+        legacyDefaults = { "bloodlust.ogg" },
+    },
+    {
+        spellID = "POWERINFUSE", spellName = "마력 주입",
+        defaultFile = "밀하우스_15초편집.mp3",
+        legacyDefaults = { "powerinfusion.ogg", "battle01[53225].mp3" },
+    },
+}
+
+-- 렌더링 시 시스템 엔트리 정렬용 (작을수록 위)
+local SYSTEM_ORDER = {}
+for i, def in ipairs(SYSTEM_ENTRIES) do SYSTEM_ORDER[def.spellID] = i end
+
+-- 블러드 감지용 디버프 (Sated/Exhaustion 계열 - 적용 시 블러드 직후로 간주)
+local BLOODLUST_DEBUFFS = {
+    [57723]  = true, -- Exhaustion (Heroism)
+    [57724]  = true, -- Sated (Bloodlust)
+    [80354]  = true, -- Temporal Displacement (Time Warp)
+    [95809]  = true, -- Insanity (Ancient Hysteria)
+    [264689] = true, -- Fatigued (Primal Rage)
+    [390435] = true, -- Exhaustion (Fury of the Aspects)
+}
+
+-- 마력 주입 (Power Infusion, 사제)
+local POWER_INFUSION_SPELL_ID = 10060
+
 function SA_InitDB()
     if not MimDiceDB then MimDiceDB = {} end
     if not MimDiceDB.soundAlerts then
@@ -58,27 +95,50 @@ function SA_InitDB()
     end
 
     local _, playerClass = UnitClass("player")
-    local hasJump = false
-    for _, entry in ipairs(MimDiceDB.soundAlerts) do
-        if entry.spellID == "JUMP" and entry.class == playerClass then
-            hasJump = true
-            entry.isSystem = true
-            break
-        end
-    end
 
-    if not hasJump then
-        table.insert(MimDiceDB.soundAlerts, 1, {
-            spellID = "JUMP",
-            spellName = "점프 (기본 동작)",
-            soundType = "custom",
-            soundKey = "jump.ogg",
-            soundFile = "jump.ogg",
-            soundName = "jump.ogg",
-            class = playerClass,
-            enabled = true,
-            isSystem = true
-        })
+    for _, def in ipairs(SYSTEM_ENTRIES) do
+        local existing
+        for _, entry in ipairs(MimDiceDB.soundAlerts) do
+            if entry.spellID == def.spellID and entry.class == playerClass then
+                existing = entry
+                break
+            end
+        end
+
+        if existing then
+            existing.isSystem = true
+            -- 시스템 엔트리 이름은 항상 최신 정의로 갱신 (예: 기본 동작 → 짧은 이름)
+            existing.spellName = def.spellName
+
+            -- 사운드 파일 마이그레이션:
+            -- 비어 있거나 이전 기본값과 일치하면 새 기본값으로 갱신.
+            -- 사용자가 직접 바꾼 값은 그대로 보존.
+            local current = existing.soundFile or ""
+            local shouldMigrate = (current == "")
+            if not shouldMigrate and def.legacyDefaults then
+                for _, old in ipairs(def.legacyDefaults) do
+                    if current == old then shouldMigrate = true; break end
+                end
+            end
+            if shouldMigrate then
+                existing.soundType = "custom"
+                existing.soundFile = def.defaultFile
+                existing.soundKey  = def.defaultFile
+                existing.soundName = def.defaultFile
+            end
+        else
+            table.insert(MimDiceDB.soundAlerts, {
+                spellID = def.spellID,
+                spellName = def.spellName,
+                soundType = "custom",
+                soundKey = def.defaultFile,
+                soundFile = def.defaultFile,
+                soundName = def.defaultFile,
+                class = playerClass,
+                enabled = true,
+                isSystem = true
+            })
+        end
     end
 end
 
@@ -119,11 +179,25 @@ local function SA_PlaySound(entry)
 end
 
 -- =====================================================================
--- 이벤트 감지 (스킬 & 점프)
+-- 이벤트 감지 (스킬 & 점프 & 블러드 & 마력주입)
 -- =====================================================================
+
+-- 시스템 엔트리 한 건을 찾아서 재생 (JUMP/BLOODLUST/POWERINFUSE 등)
+local function SA_PlaySystem(spellIDKey)
+    if not MimDiceDB or not MimDiceDB.soundAlerts then return end
+    local _, playerClass = UnitClass("player")
+    for _, entry in ipairs(MimDiceDB.soundAlerts) do
+        if entry.spellID == spellIDKey and entry.class == playerClass then
+            SA_PlaySound(entry)
+            return
+        end
+    end
+end
+
 local SA_EventFrame = CreateFrame("Frame")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
+SA_EventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 
 SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
@@ -138,6 +212,27 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
             if entry.spellID == spellID and entry.class == playerClass then
                 SA_PlaySound(entry)
                 break
+            end
+        end
+    elseif event == "UNIT_AURA" then
+        -- 다른 사람이 나에게 건 블러드/마력주입 감지
+        local unit, updateInfo = ...
+        if unit ~= "player" or not updateInfo or not updateInfo.addedAuras then return end
+
+        for i = 1, #updateInfo.addedAuras do
+            local aura = updateInfo.addedAuras[i]
+            local sid = aura and aura.spellId
+            if sid then
+                if BLOODLUST_DEBUFFS[sid] then
+                    -- Sated/Exhaustion 디버프는 10분(600초) 지속.
+                    -- 막 적용된 직후(잔여 ≥ 560초)면 블러드가 방금 걸렸다는 뜻.
+                    local remaining = aura.expirationTime and (aura.expirationTime - GetTime()) or 0
+                    if remaining >= 560 then
+                        SA_PlaySystem("BLOODLUST")
+                    end
+                elseif sid == POWER_INFUSION_SPELL_ID then
+                    SA_PlaySystem("POWERINFUSE")
+                end
             end
         end
     end
@@ -580,9 +675,12 @@ function SA_RefreshList()
         
         row.spellText:SetText(entry.spellName)
         if entry.isSystem then
+            -- 시스템 엔트리: 연녹색 + 굵은 외곽선
+            row.spellText:SetFont("Fonts\\2002.ttf", 12, "OUTLINE")
             row.spellText:SetTextColor(0.5, 1, 0.5)
             row.delBtn:Hide()
         else
+            row.spellText:SetFont("Fonts\\2002.ttf", 11)
             row.spellText:SetTextColor(1, 0.82, 0)
             row.delBtn:Show()
             row.delBtn:SetScript("OnClick", function()
@@ -703,11 +801,19 @@ function SA_RefreshList()
         yOffset = yOffset + 34
     end
 
+    -- 시스템 엔트리는 SYSTEM_ORDER에 따라 정렬해서 먼저 렌더링
+    local sysList = {}
     for i, entry in ipairs(MimDiceDB.soundAlerts) do
         if entry.class == playerClass and entry.isSystem then
-            RenderEntry(entry, i)
+            table.insert(sysList, { entry = entry, idx = i, order = SYSTEM_ORDER[entry.spellID] or 999 })
         end
     end
+    table.sort(sysList, function(a, b) return a.order < b.order end)
+    for _, item in ipairs(sysList) do
+        RenderEntry(item.entry, item.idx)
+    end
+
+    -- 사용자 추가 스킬은 그 아래에 저장 순서대로
     for i, entry in ipairs(MimDiceDB.soundAlerts) do
         if entry.class == playerClass and not entry.isSystem then
             RenderEntry(entry, i)
