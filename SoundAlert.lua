@@ -53,21 +53,25 @@ local SA_EntryFrames = {}
 
 -- 시스템(기본) 엔트리 정의 - 표시 순서대로
 -- legacyDefaults: 이전 기본 파일명 목록 (이 값으로 저장돼 있으면 새 기본값으로 자동 갱신)
+-- defaultEnabled: 처음 생성 시 체크박스 기본값
 local SYSTEM_ENTRIES = {
     {
         spellID = "JUMP", spellName = "점프",
         defaultFile = "jump.ogg",
         legacyDefaults = {},
+        defaultEnabled = true,
     },
     {
         spellID = "BLOODLUST", spellName = "블러드",
         defaultFile = "블러드_ACallToArms.mp3",
         legacyDefaults = { "bloodlust.ogg" },
+        defaultEnabled = false,
     },
     {
         spellID = "POWERINFUSE", spellName = "마력 주입",
         defaultFile = "밀하우스_15초편집.mp3",
         legacyDefaults = { "powerinfusion.ogg", "battle01[53225].mp3" },
+        defaultEnabled = false,
     },
 }
 
@@ -76,14 +80,28 @@ local SYSTEM_ORDER = {}
 for i, def in ipairs(SYSTEM_ENTRIES) do SYSTEM_ORDER[def.spellID] = i end
 
 -- 블러드 감지용 디버프 (Sated/Exhaustion 계열 - 적용 시 블러드 직후로 간주)
+-- ※ 리스트로 저장하고 == 비교로만 매칭. WoW의 secret value(보호된 aura.spellId)는
+--    테이블 키로 쓸 수 없지만 == 비교는 안전하게 가능. (ActionSounds도 동일 방식)
 local BLOODLUST_DEBUFFS = {
-    [57723]  = true, -- Exhaustion (Heroism)
-    [57724]  = true, -- Sated (Bloodlust)
-    [80354]  = true, -- Temporal Displacement (Time Warp)
-    [95809]  = true, -- Insanity (Ancient Hysteria)
-    [264689] = true, -- Fatigued (Primal Rage)
-    [390435] = true, -- Exhaustion (Fury of the Aspects)
+    57723,  -- Exhaustion (Heroism)
+    57724,  -- Sated (Bloodlust)
+    80354,  -- Temporal Displacement (Time Warp)
+    95809,  -- Insanity (Ancient Hysteria)
+    264689, -- Fatigued (Primal Rage)
+    390435, -- Exhaustion (Fury of the Aspects)
 }
+
+-- aura.spellId가 블러드 계열 디버프인지 확인 (secret value 안전 처리)
+local function SA_IsBloodlustAura(aura)
+    local sid = aura and aura.spellId
+    if not sid then return false end
+    for j = 1, #BLOODLUST_DEBUFFS do
+        if sid == BLOODLUST_DEBUFFS[j] then
+            return true
+        end
+    end
+    return false
+end
 
 -- 마력 주입 (Power Infusion, 사제)
 local POWER_INFUSION_SPELL_ID = 10060
@@ -95,6 +113,14 @@ function SA_InitDB()
     end
 
     local _, playerClass = UnitClass("player")
+
+    -- 시스템 엔트리 체크박스 기본값 1회성 마이그레이션 (계정-캐릭터별 1회)
+    -- 이전 버전에서 BLOODLUST/POWERINFUSE를 enabled=true로 만들어 둔 사용자들의
+    -- 체크박스를 새 defaultEnabled(false)로 한 번만 동기화.
+    -- 이후엔 사용자가 직접 켠 상태를 보존.
+    if not MimDiceDB.sysDefaultEnabledMigrated then
+        MimDiceDB.sysDefaultEnabledMigrated = {}
+    end
 
     for _, def in ipairs(SYSTEM_ENTRIES) do
         local existing
@@ -109,6 +135,13 @@ function SA_InitDB()
             existing.isSystem = true
             -- 시스템 엔트리 이름은 항상 최신 정의로 갱신 (예: 기본 동작 → 짧은 이름)
             existing.spellName = def.spellName
+
+            -- 체크박스 기본값 1회성 마이그레이션
+            local migKey = def.spellID .. ":" .. playerClass
+            if not MimDiceDB.sysDefaultEnabledMigrated[migKey] then
+                existing.enabled = def.defaultEnabled
+                MimDiceDB.sysDefaultEnabledMigrated[migKey] = true
+            end
 
             -- 사운드 파일 마이그레이션:
             -- 비어 있거나 이전 기본값과 일치하면 새 기본값으로 갱신.
@@ -127,6 +160,7 @@ function SA_InitDB()
                 existing.soundName = def.defaultFile
             end
         else
+            local migKey = def.spellID .. ":" .. playerClass
             table.insert(MimDiceDB.soundAlerts, {
                 spellID = def.spellID,
                 spellName = def.spellName,
@@ -135,9 +169,10 @@ function SA_InitDB()
                 soundFile = def.defaultFile,
                 soundName = def.defaultFile,
                 class = playerClass,
-                enabled = true,
+                enabled = def.defaultEnabled,
                 isSystem = true
             })
+            MimDiceDB.sysDefaultEnabledMigrated[migKey] = true
         end
     end
 end
@@ -221,18 +256,25 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
 
         for i = 1, #updateInfo.addedAuras do
             local aura = updateInfo.addedAuras[i]
-            local sid = aura and aura.spellId
-            if sid then
-                if BLOODLUST_DEBUFFS[sid] then
-                    -- Sated/Exhaustion 디버프는 10분(600초) 지속.
-                    -- 막 적용된 직후(잔여 ≥ 560초)면 블러드가 방금 걸렸다는 뜻.
-                    local remaining = aura.expirationTime and (aura.expirationTime - GetTime()) or 0
-                    if remaining >= 560 then
-                        SA_PlaySystem("BLOODLUST")
-                    end
-                elseif sid == POWER_INFUSION_SPELL_ID then
-                    SA_PlaySystem("POWERINFUSE")
+            -- aura 필드들이 secret value일 수 있어 pcall 로 감싼다.
+            -- 일부 personal/restricted aura는 spellId 등이 보호되어 직접 접근 시 에러 발생.
+            local ok, kind = pcall(function()
+                if SA_IsBloodlustAura(aura) then return "BLOODLUST" end
+                if aura and aura.spellId == POWER_INFUSION_SPELL_ID then return "POWERINFUSE" end
+                return nil
+            end)
+
+            if ok and kind == "BLOODLUST" then
+                -- Sated/Exhaustion 디버프는 10분(600초) 지속.
+                -- 막 적용된 직후(잔여 ≥ 560초)면 블러드가 방금 걸렸다는 뜻.
+                local okRem, remaining = pcall(function()
+                    return aura.expirationTime and (aura.expirationTime - GetTime()) or 0
+                end)
+                if okRem and remaining and remaining >= 560 then
+                    SA_PlaySystem("BLOODLUST")
                 end
+            elseif ok and kind == "POWERINFUSE" then
+                SA_PlaySystem("POWERINFUSE")
             end
         end
     end
