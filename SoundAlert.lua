@@ -428,11 +428,14 @@ local ROLE_TEXCOORD = {
 local function SA_EnsureDeathFrame()
     if SA_DeathFrame then return SA_DeathFrame end
 
-    local f = CreateFrame("Frame", "MimDice_DeathFrame", UIParent)
+    local f = CreateFrame("Frame", "MimDice_DeathFrame", UIParent, "BackdropTemplate")
     f:SetSize(500, 60)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     f:SetFrameStrata("HIGH")
+    -- 잠금 해제(편집 모드)일 때만 보이는 테두리 (평소엔 투명)
+    f:SetBackdrop({ edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 18 })
+    f:SetBackdropBorderColor(1, 0.85, 0, 0)
 
     -- 현재 위치를 DB에 저장하고, 설정창이 열려있으면 X/Y 입력칸도 실시간 갱신
     local function saveDeathPos(self)
@@ -564,15 +567,20 @@ function SA_UpdateDeathFrame()
 
     if dt.locked then
         f.bg:Hide()
+        f:SetBackdropBorderColor(1, 0.85, 0, 0)   -- 테두리 숨김
         f:EnableMouse(false)
-        -- 잠금 상태에서 미리보기가 떠 있으면 지움
-        if not f.fadeAnim:IsPlaying() and f.previewing then
+        -- 잠금 상태에서 (버튼 미리보기 아닌) 위치잡기 미리보기가 떠 있으면 지움
+        if not f.fadeAnim:IsPlaying() and f.previewing and not f.previewOn then
             f.text:SetText("")
             f.icon:Hide()
             f.previewing = false
+            f:Hide()
         end
     else
+        -- 잠금 해제(편집 모드): 강조 배경(노랑) + 강조 테두리로 이동 가능 표시
+        f.bg:SetColorTexture(1, 0.85, 0, 0.35)
         f.bg:Show()
+        f:SetBackdropBorderColor(1, 0.85, 0, 1)
         f:EnableMouse(true)
         f.fadeAnim:Stop()
         f:SetAlpha(1)
@@ -582,6 +590,7 @@ function SA_UpdateDeathFrame()
         local suffixColored = "|cff" .. string.format("%02x%02x%02x", (c.r or 1)*255, (c.g or 0.2)*255, (c.b or 0.2)*255)
             .. (dt.suffix or " 사망 !!") .. "|r"
         SA_SetDeathContent(SA_PlayerRoleForPreview(), dt.fontSize or 24, SA_PlayerColoredName() .. suffixColored)
+        f:Show()
     end
 end
 
@@ -590,10 +599,35 @@ end
 -- =====================================================================
 -- (SA_DeathConfig 는 위 죽음 프레임 근처에서 미리 선언됨)
 local SA_BuffConfigs = {}   -- 버프별 설정창(블러드/마력주입). 상호 닫기용으로 미리 선언.
+local SA_BuffBars = {}      -- 버프 바 프레임. 설정창 OnHide에서 참조하므로 미리 선언.
+
+-- 죽음 미리보기를 현재 설정으로 그림 (토글 아님, 페이드 없이 계속 표시)
+local function SA_RenderDeathPreview()
+    local f = SA_EnsureDeathFrame()
+    local dt = MimDiceDB and MimDiceDB.deathTrack
+    if not dt then return end
+    f:ClearAllPoints()
+    f:SetPoint("CENTER", UIParent, "CENTER", dt.x or 0, dt.y or 130)
+    local name = UnitName("player") or "밈주머니"
+    local _, classFile = UnitClass("player")
+    local coloredName
+    if classFile then
+        local c = C_ClassColor and C_ClassColor.GetClassColor(classFile)
+        if c then coloredName = "|c" .. c:GenerateHexColor() .. name .. "|r" end
+    end
+    coloredName = coloredName or ("|cffffffff" .. name .. "|r")
+    local col = dt.color or { r = 1, g = 0.2, b = 0.2 }
+    local hex = string.format("%02x%02x%02x", (col.r or 1)*255, (col.g or 0.2)*255, (col.b or 0.2)*255)
+    SA_SetDeathContent(SA_PlayerRoleForPreview(), dt.fontSize or 24,
+        coloredName .. "|cff" .. hex .. (dt.suffix or " 사망 !!") .. "|r")
+    f.fadeAnim:Stop()
+    f:SetAlpha(1)
+    f:Show()
+end
 
 -- 설정값 변경 시 미리보기 실시간 갱신
 -- - 잠금 해제(위치잡기) 모드면 SA_UpdateDeathFrame이 미리보기 텍스트 갱신
--- - 잠금 모드인데 미리보기 메시지가 떠 있으면 새 설정으로 다시 그림
+-- - 미리보기 토글 ON이면 현재 설정으로 다시 그림
 local function SA_RefreshPreviewIfVisible()
     local f = SA_DeathFrame
     if not f then return end
@@ -602,14 +636,8 @@ local function SA_RefreshPreviewIfVisible()
 
     if not dt.locked then
         SA_UpdateDeathFrame()
-        return
-    end
-
-    if f:IsShown() and f.fadeAnim and (f.fadeAnim:IsPlaying() or (f:GetAlpha() or 0) > 0.05) then
-        local txt = f.text and f.text:GetText()
-        if txt and txt ~= "" then
-            SA_DeathPreview()
-        end
+    elseif f.previewOn then
+        SA_RenderDeathPreview()
     end
 end
 
@@ -692,14 +720,13 @@ local function SA_AddPosRow(parent, y, getX, setX, getY, setY, onChange)
         e:SetAutoFocus(false)
         e:SetFont("Fonts\\2002.ttf", 11, "")
         e:SetMaxLetters(6)
-        local function commit()
+        -- 값 저장(포커스는 유지) — 탭/엔터 이동은 아래에서 따로 처리
+        e.commit = function()
             local v = tonumber(e:GetText())
             if v then setF(math.floor(v + 0.5)); if onChange then onChange() end end
             e:SetText(tostring(math.floor((getF() or 0) + 0.5)))
-            e:ClearFocus()
         end
-        e:SetScript("OnEnterPressed", commit)
-        e:SetScript("OnEditFocusLost", commit)
+        e:SetScript("OnEditFocusLost", e.commit)
         e:SetScript("OnEscapePressed", function() e:ClearFocus() end)
         return e
     end
@@ -713,6 +740,12 @@ local function SA_AddPosRow(parent, y, getX, setX, getY, setY, onChange)
     lblY:SetText("Y")
     local ey = mkBox(getY, setY)
     ey:SetPoint("LEFT", lblY, "RIGHT", 8, 0)
+
+    -- 탭/엔터로 X↔Y 칸 이동
+    ex:SetScript("OnTabPressed", function() ex.commit(); ey:SetFocus(); ey:HighlightText() end)
+    ex:SetScript("OnEnterPressed", function() ex.commit(); ey:SetFocus(); ey:HighlightText() end)
+    ey:SetScript("OnTabPressed", function() ey.commit(); ex:SetFocus(); ex:HighlightText() end)
+    ey:SetScript("OnEnterPressed", function() ey.commit(); ey:ClearFocus() end)
 
     return function()
         ex:SetText(tostring(math.floor((getX() or 0) + 0.5)))
@@ -742,6 +775,21 @@ local function SA_CreateDeathConfig()
     win:RegisterForDrag("LeftButton")
     win:SetScript("OnDragStart", win.StartMoving)
     win:SetScript("OnDragStop", win.StopMovingOrSizing)
+
+    -- 설정창 닫으면: 자동 잠금 + 미리보기 끄기
+    win:SetScript("OnHide", function()
+        MimDiceDB.deathTrack.locked = true
+        local f = SA_DeathFrame
+        if f then
+            f.previewOn = false
+            f.previewing = false
+            f.fadeAnim:Stop()
+            f.bg:Hide()
+            f:SetBackdropBorderColor(1, 0.85, 0, 0)
+            f.text:SetText(""); f.icon:Hide(); f:SetAlpha(0); f:Hide()
+        end
+        if win.RefreshLockBtn then win.RefreshLockBtn() end
+    end)
 
     local title = win:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOP", win, "TOP", 0, -12)
@@ -1032,6 +1080,15 @@ local function SA_CreateBuffConfig(key)
     win:SetScript("OnDragStop", win.StopMovingOrSizing)
     win.key = key
 
+    -- 설정창 닫으면: 자동 잠금 + 미리보기 끄기 (편집 모드/미리보기 바가 남지 않게)
+    win:SetScript("OnHide", function()
+        MimDiceDB.buffTrack[key].locked = true
+        local bar = SA_BuffBars[key]
+        if bar then bar.previewOn = false end
+        SA_UpdateBuffBar(key)
+        if win.RefreshLockBtn then win.RefreshLockBtn() end
+    end)
+
     local title = win:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOP", win, "TOP", 0, -12)
     title:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
@@ -1256,6 +1313,8 @@ local function SA_ShowDeathMessage(name, role, classFile)
     if not dt or not dt.showMessage then return end
 
     local f = SA_EnsureDeathFrame()
+    f.bg:Hide()                                  -- 실제 메시지엔 편집 배경/테두리 숨김
+    f:SetBackdropBorderColor(1, 0.85, 0, 0)
     f:ClearAllPoints()
     f:SetPoint("CENTER", UIParent, "CENTER", dt.x or 0, dt.y or 200)
 
@@ -1287,22 +1346,26 @@ local function SA_ShowDeathMessage(name, role, classFile)
 end
 
 -- 미리보기 (설정 팝업의 "미리보기" 버튼용) - 현재 접속 직업색으로 표시
+-- 미리보기 토글 (설정창 버튼) - 누르면 켜지고 다시 누르면 꺼짐
 function SA_DeathPreview()
-    local dt = MimDiceDB and MimDiceDB.deathTrack
-    if not dt then return end
-    local was = dt.showMessage
-    dt.showMessage = true             -- 미리보기는 항상 보이게
-    local name = UnitName("player") or "밈주머니"
-    local _, classFile = UnitClass("player")
-    SA_ShowDeathMessage(name, SA_PlayerRoleForPreview(), classFile)
-    dt.showMessage = was
+    local f = SA_EnsureDeathFrame()
+    f.previewOn = not f.previewOn
+    if f.previewOn then
+        SA_RenderDeathPreview()
+    else
+        f.fadeAnim:Stop()
+        f.text:SetText("")
+        f.icon:Hide()
+        f.previewing = false
+        f:SetAlpha(0)
+        f:Hide()
+    end
 end
 
 -- =====================================================================
 -- 블러드 / 마력주입 지속시간 바
+-- (SA_BuffBars 는 위에서 미리 선언됨 - 설정창 OnHide에서 참조)
 -- =====================================================================
-local SA_BuffBars = {}
-
 local function SA_EnsureBuffBar(key)
     if SA_BuffBars[key] then return SA_BuffBars[key] end
     local def = BUFF_DEF_BY_KEY[key]
@@ -1410,7 +1473,9 @@ function SA_UpdateBuffBar(key)
     f.lbl:SetFont("Fonts\\2002.ttf", fs, "OUTLINE")   -- 라벨(블러드 등)도 같이 스케일
 
     if not bt.locked then
-        -- 위치 잡기: 정적 풀 바 표시
+        -- 잠금 해제(위치 잡기): 강조 테두리 + 정적 풀 바 + 드래그 가능
+        f:SetBackdropColor(0.20, 0.15, 0.00, 0.65)          -- 어두운 노랑빛 배경
+        f:SetBackdropBorderColor(1, 0.85, 0, 1)             -- 밝은 노란 테두리 (편집 중 표시)
         f.previewing = true
         f.sb:SetValue(1)
         f.timeTxt:SetText(string.format("%.1f", def.duration))
@@ -1418,9 +1483,21 @@ function SA_UpdateBuffBar(key)
         f:EnableMouse(true)
         f:Show()
     else
-        f.previewing = false
+        -- 잠금: 일반 테두리
+        f:SetBackdropColor(0, 0, 0, 0.25)
+        f:SetBackdropBorderColor(0.4, 0.4, 0.4, 0.6)
         f:EnableMouse(false)
-        if f.endTime <= GetTime() then f:Hide() end
+        if f.previewOn then
+            -- 미리보기 토글 ON: 정적 풀 바 유지
+            f.previewing = true
+            f.sb:SetValue(1)
+            f.timeTxt:SetText(string.format("%.1f", def.duration))
+            f:SetAlpha(1)
+            f:Show()
+        else
+            f.previewing = false
+            if f.endTime <= GetTime() then f:Hide() end
+        end
     end
 end
 
@@ -1448,10 +1525,16 @@ local function SA_PlayBuff(key)
     SA_PlaySound(bt)
 end
 
--- 미리보기 (설정창 버튼) - 활성/표시 무관하게 바를 잠깐 보여줌
+-- 미리보기 토글 (설정창 버튼) - 누르면 켜지고 다시 누르면 꺼짐. 정적 풀 바로 계속 표시.
 function SA_BuffPreview(key)
-    local def = BUFF_DEF_BY_KEY[key]
-    if def then SA_StartBuffBar(key, def.duration, true) end
+    local f = SA_EnsureBuffBar(key)
+    f.previewOn = not f.previewOn
+    if f.previewOn then
+        SA_UpdateBuffBar(key)   -- previewOn 반영해서 정적 표시
+    else
+        f.previewing = false
+        f:Hide()
+    end
 end
 
 local function SA_HandleUnitDied(deadGUID)
@@ -1483,6 +1566,14 @@ local function SA_HandleUnitDied(deadGUID)
 
     local role = UnitGroupRolesAssigned(unitID)
     if SA_IsSecret(role) then role = nil end
+
+    -- 솔로/역할 미지정(NONE)이고 본인이면 특성(spec) 역할로 보정 → 아이콘 표시
+    if role ~= "TANK" and role ~= "HEALER" and role ~= "DAMAGER" then
+        local okSelf, isSelf = pcall(UnitIsUnit, unitID, "player")
+        if okSelf and isSelf then
+            role = SA_PlayerRoleForPreview()
+        end
+    end
 
     local _, classFile = UnitClass(unitID)
     if SA_IsSecret(classFile) then classFile = nil end
