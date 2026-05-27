@@ -76,13 +76,13 @@ local BUFF_DEFS = {
     {
         key = "BLOODLUST", name = "블러드",
         file = "블러드_ACallToArms.mp3",
-        color = { 1.00, 0.15, 0.15 },   -- 기본 빨강
+        color = { 1.00, 0.20, 0.20 },   -- 기본 빨강 (팔레트 빨강-중간)
         duration = 40, dy = 340,        -- 화면 위쪽 (clamp 안 걸리는 최대치)
     },
     {
         key = "POWERINFUSE", name = "마력 주입",
         file = "밀하우스_15초편집.mp3",
-        color = { 0.25, 0.55, 1.00 },   -- 기본 파랑
+        color = { 0.20, 0.50, 1.00 },   -- 기본 파랑 (팔레트 파랑-중간)
         duration = 15, dy = 290,        -- 지속 15초 고정, 블러드 바로 아래 (50px = 바 높이만큼 붙음)
     },
 }
@@ -375,40 +375,25 @@ local function SA_DeathThrottleAllow()
     return SA_DeathThrottle.count <= SA_DeathThrottle.max
 end
 
--- 색상 프리셋 (28색, 7x4). 와우 화면에서 잘 보이는 선명한 색 위주.
--- 색상환 순서 정렬: 열 = 같은 계열(빨/주/노/초/청/파/보), 행 = 밝기(선명→파스텔→진함), 마지막 행 = 무채색
--- 색상 팔레트 (7열×4행 = 28):
---  1~2행 = WoW 13직업 공식 색상(+검정), 3~4행 = 일반색(무지개+무채색)
--- 직업색은 게임 실제값(C_ClassColor) 우선, 실패 시 하드코딩값 폴백.
-local SA_CLASS_LIST = {
-    { "WARRIOR",     0.78, 0.61, 0.43 }, { "PALADIN",     0.96, 0.55, 0.73 },
-    { "HUNTER",      0.67, 0.83, 0.45 }, { "ROGUE",       1.00, 0.96, 0.41 },
-    { "PRIEST",      1.00, 1.00, 1.00 }, { "DEATHKNIGHT", 0.77, 0.12, 0.23 },
-    { "SHAMAN",      0.00, 0.44, 0.87 }, { "MAGE",        0.25, 0.78, 0.92 },
-    { "WARLOCK",     0.53, 0.53, 0.93 }, { "MONK",        0.00, 1.00, 0.60 },
-    { "DRUID",       1.00, 0.49, 0.04 }, { "DEMONHUNTER", 0.64, 0.19, 0.79 },
-    { "EVOKER",      0.20, 0.58, 0.50 },
+-- 색상 팔레트 (10열 × 4행 = 40): 체계적인 색상환 + 밝기 단계
+--  열(가로 10) = 빨 주 노 초 청 파 남 보 분 + 무채색
+--  행(세로 4) = 밝기 단계 (1행 연함 → 2행 중간 → 3행 진함 → 4행 어두움)
+--  → 세로로 내려가면 같은 색의 명암 단계, 가로로 가면 빨주노초파남보 무지개
+local SA_PALETTE_COLS = 10
+local SA_COLOR_PRESETS = {
+    -- 1행: 연함 (light)
+    {1.00,0.60,0.60},{1.00,0.80,0.55},{1.00,0.95,0.60},{0.70,1.00,0.60},{0.65,1.00,0.95},
+    {0.60,0.78,1.00},{0.72,0.72,1.00},{0.85,0.65,1.00},{1.00,0.75,0.88},{1.00,1.00,1.00},
+    -- 2행: 중간 (medium)
+    {1.00,0.20,0.20},{1.00,0.55,0.10},{1.00,0.85,0.10},{0.30,0.85,0.25},{0.15,0.85,0.80},
+    {0.20,0.50,1.00},{0.40,0.40,0.95},{0.65,0.35,0.95},{1.00,0.40,0.70},{0.72,0.72,0.72},
+    -- 3행: 진함 (deep)
+    {0.78,0.12,0.12},{0.82,0.40,0.05},{0.82,0.65,0.05},{0.15,0.58,0.15},{0.05,0.58,0.55},
+    {0.10,0.30,0.80},{0.25,0.20,0.72},{0.45,0.18,0.70},{0.82,0.15,0.50},{0.45,0.45,0.45},
+    -- 4행: 어두움 (dark)
+    {0.45,0.06,0.06},{0.50,0.25,0.03},{0.50,0.40,0.03},{0.08,0.32,0.08},{0.03,0.32,0.30},
+    {0.05,0.15,0.45},{0.12,0.10,0.42},{0.26,0.10,0.42},{0.48,0.08,0.28},{0.12,0.12,0.12},
 }
-local SA_COLOR_PRESETS = {}
-for _, ci in ipairs(SA_CLASS_LIST) do
-    local r, g, b = ci[2], ci[3], ci[4]
-    if C_ClassColor and C_ClassColor.GetClassColor then
-        local c = C_ClassColor.GetClassColor(ci[1])
-        if c then r, g, b = c.r, c.g, c.b end
-    end
-    SA_COLOR_PRESETS[#SA_COLOR_PRESETS + 1] = { r, g, b }
-end
-SA_COLOR_PRESETS[#SA_COLOR_PRESETS + 1] = { 0.10, 0.10, 0.10 }   -- 14번째: 검정
--- 3~4행: 일반색 14개
-local SA_GENERAL_COLORS = {
-    { 1.00, 1.00, 1.00 }, { 1.00, 0.15, 0.15 }, { 1.00, 0.55, 0.10 }, { 1.00, 0.90, 0.15 },
-    { 0.30, 0.90, 0.25 }, { 0.15, 0.90, 0.85 }, { 0.25, 0.55, 1.00 },
-    { 0.70, 0.40, 1.00 }, { 1.00, 0.35, 0.70 }, { 0.90, 0.20, 0.90 }, { 0.80, 0.80, 0.80 },
-    { 0.55, 0.55, 0.55 }, { 0.30, 0.30, 0.30 }, { 0.65, 0.35, 0.12 },
-}
-for _, g in ipairs(SA_GENERAL_COLORS) do
-    SA_COLOR_PRESETS[#SA_COLOR_PRESETS + 1] = g
-end
 
 -- =====================================================================
 -- 죽음 메시지 화면 표시 (이동 가능 프레임 + 페이드아웃)
@@ -679,7 +664,8 @@ local function SA_MakeNumberSlider(parent, sliderName, y, labelText, minV, maxV,
         if onChange then onChange() end
     end)
 
-    local function commit()
+    -- 값 적용 (포커스는 유지) — 탭/엔터 이동은 외부 체인에서 처리
+    local function applyValue()
         local v = tonumber(edit:GetText())
         if v then
             if v < minV then v = minV elseif v > maxV then v = maxV end
@@ -688,11 +674,12 @@ local function SA_MakeNumberSlider(parent, sliderName, y, labelText, minV, maxV,
             syncing = false
             edit:SetText(tostring(v))
         end
-        edit:ClearFocus()
     end
-    edit:SetScript("OnEnterPressed", commit)
+    edit.commit = applyValue
+    edit:SetScript("OnEnterPressed", function() applyValue(); edit:ClearFocus() end)
     edit:SetScript("OnEscapePressed", function() edit:ClearFocus() end)
-    edit:SetScript("OnEditFocusLost", commit)
+    edit:SetScript("OnEditFocusLost", applyValue)
+    s.edit = edit   -- 외부 탭/엔터 체인 연결용
 
     -- 외부에서 현재값으로 갱신할 때 사용
     s.SyncValue = function()
@@ -703,6 +690,20 @@ local function SA_MakeNumberSlider(parent, sliderName, y, labelText, minV, maxV,
         edit:SetText(tostring(math.floor(v + 0.5)))
     end
     return s
+end
+
+-- 입력칸들을 탭/엔터로 순환 연결 (마지막 → 첫번째로 wrap)
+local function SA_ChainTabEnter(boxes)
+    for i, e in ipairs(boxes) do
+        local nextE = boxes[i + 1] or boxes[1]
+        local function go()
+            if e.commit then e.commit() end
+            nextE:SetFocus()
+            if nextE.HighlightText then nextE:HighlightText() end
+        end
+        e:SetScript("OnTabPressed", go)
+        e:SetScript("OnEnterPressed", go)
+    end
 end
 
 -- 위치 X/Y 직접 입력 행 (중앙 = 0,0 / +x 오른쪽, -x 왼쪽 / +y 위, -y 아래)
@@ -741,16 +742,12 @@ local function SA_AddPosRow(parent, y, getX, setX, getY, setY, onChange)
     local ey = mkBox(getY, setY)
     ey:SetPoint("LEFT", lblY, "RIGHT", 8, 0)
 
-    -- 탭/엔터로 X↔Y 칸 이동
-    ex:SetScript("OnTabPressed", function() ex.commit(); ey:SetFocus(); ey:HighlightText() end)
-    ex:SetScript("OnEnterPressed", function() ex.commit(); ey:SetFocus(); ey:HighlightText() end)
-    ey:SetScript("OnTabPressed", function() ey.commit(); ex:SetFocus(); ex:HighlightText() end)
-    ey:SetScript("OnEnterPressed", function() ey.commit(); ey:ClearFocus() end)
-
-    return function()
+    -- 탭/엔터 칸 이동은 외부 SA_ChainTabEnter에서 처리 (ex, ey 반환)
+    local refresh = function()
         ex:SetText(tostring(math.floor((getX() or 0) + 0.5)))
         ey:SetText(tostring(math.floor((getY() or 0) + 0.5)))
     end
+    return refresh, ex, ey
 end
 
 local function SA_CreateDeathConfig()
@@ -776,20 +773,7 @@ local function SA_CreateDeathConfig()
     win:SetScript("OnDragStart", win.StartMoving)
     win:SetScript("OnDragStop", win.StopMovingOrSizing)
 
-    -- 설정창 닫으면: 자동 잠금 + 미리보기 끄기
-    win:SetScript("OnHide", function()
-        MimDiceDB.deathTrack.locked = true
-        local f = SA_DeathFrame
-        if f then
-            f.previewOn = false
-            f.previewing = false
-            f.fadeAnim:Stop()
-            f.bg:Hide()
-            f:SetBackdropBorderColor(1, 0.85, 0, 0)
-            f.text:SetText(""); f.icon:Hide(); f:SetAlpha(0); f:Hide()
-        end
-        if win.RefreshLockBtn then win.RefreshLockBtn() end
-    end)
+    -- (설정창을 닫아도 미리보기/편집 상태는 유지 → 블러드/마력주입/죽음 동시에 보며 위치 조정)
 
     local title = win:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOP", win, "TOP", 0, -12)
@@ -910,12 +894,12 @@ local function SA_CreateDeathConfig()
     colorLabel:SetTextColor(0.9, 0.9, 0.9)
 
     win.swatches = {}
-    local SWATCH = 26
+    local SWATCH = 24
     local GAP = 4
-    local startX, startY = 20, -242
+    local startX, startY = 18, -242
     for idx, rgb in ipairs(SA_COLOR_PRESETS) do
-        local colN = (idx - 1) % 7
-        local rowN = math.floor((idx - 1) / 7)
+        local colN = (idx - 1) % SA_PALETTE_COLS
+        local rowN = math.floor((idx - 1) / SA_PALETTE_COLS)
         local sw = CreateFrame("Button", nil, win)
         sw:SetSize(SWATCH, SWATCH)
         sw:SetPoint("TOPLEFT", win, "TOPLEFT", startX + colN * (SWATCH + GAP), startY - rowN * (SWATCH + GAP))
@@ -943,12 +927,16 @@ local function SA_CreateDeathConfig()
     end
 
     -- 위치 X/Y 직접 입력
-    win.posRefresh = SA_AddPosRow(win, -368,
+    local posRefresh, posX, posY = SA_AddPosRow(win, -368,
         function() return MimDiceDB.deathTrack.x end,
         function(v) MimDiceDB.deathTrack.x = v end,
         function() return MimDiceDB.deathTrack.y end,
         function(v) MimDiceDB.deathTrack.y = v end,
         function() SA_RefreshPreviewIfVisible() end)
+    win.posRefresh = posRefresh
+
+    -- 입력칸 탭/엔터 순환: 글씨 크기 → X → Y → (글씨 크기)
+    SA_ChainTabEnter({ win.sizeSlider.edit, posX, posY })
 
     -- 위치 잠금/해제 토글
     local lockBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
@@ -1080,14 +1068,7 @@ local function SA_CreateBuffConfig(key)
     win:SetScript("OnDragStop", win.StopMovingOrSizing)
     win.key = key
 
-    -- 설정창 닫으면: 자동 잠금 + 미리보기 끄기 (편집 모드/미리보기 바가 남지 않게)
-    win:SetScript("OnHide", function()
-        MimDiceDB.buffTrack[key].locked = true
-        local bar = SA_BuffBars[key]
-        if bar then bar.previewOn = false end
-        SA_UpdateBuffBar(key)
-        if win.RefreshLockBtn then win.RefreshLockBtn() end
-    end)
+    -- (설정창을 닫아도 미리보기/편집 상태는 유지 → 블러드/마력주입/죽음 동시에 보며 위치 조정)
 
     local title = win:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOP", win, "TOP", 0, -12)
@@ -1179,11 +1160,11 @@ local function SA_CreateBuffConfig(key)
     colorLabel:SetTextColor(0.9, 0.9, 0.9)
 
     win.swatches = {}
-    local SWATCH, GAP = 26, 4
-    local startX, startY = 20, -132
+    local SWATCH, GAP = 24, 4
+    local startX, startY = 18, -132
     for idx, rgb in ipairs(SA_COLOR_PRESETS) do
-        local colN = (idx - 1) % 7
-        local rowN = math.floor((idx - 1) / 7)
+        local colN = (idx - 1) % SA_PALETTE_COLS
+        local rowN = math.floor((idx - 1) / SA_PALETTE_COLS)
         local sw = CreateFrame("Button", nil, win)
         sw:SetSize(SWATCH, SWATCH)
         sw:SetPoint("TOPLEFT", win, "TOPLEFT", startX + colN * (SWATCH + GAP), startY - rowN * (SWATCH + GAP))
@@ -1215,12 +1196,16 @@ local function SA_CreateBuffConfig(key)
     win.aSlider = SA_AddBuffSlider(win, key, "MimDice_BuffA_" .. key, -418, "바 투명도 (%)", 10, 100, "alphaPct")
 
     -- 위치 X/Y 직접 입력
-    win.posRefresh = SA_AddPosRow(win, -464,
+    local posRefresh, posX, posY = SA_AddPosRow(win, -464,
         function() return MimDiceDB.buffTrack[key].x end,
         function(v) MimDiceDB.buffTrack[key].x = v end,
         function() return MimDiceDB.buffTrack[key].y end,
         function(v) MimDiceDB.buffTrack[key].y = v end,
         function() SA_UpdateBuffBar(key) end)
+    win.posRefresh = posRefresh
+
+    -- 입력칸 탭/엔터 순환: 가로 → 세로 → 글씨 → 투명도 → X → Y → (가로)
+    SA_ChainTabEnter({ win.wSlider.edit, win.hSlider.edit, win.tfSlider.edit, win.aSlider.edit, posX, posY })
 
     -- 위치 잠금/해제
     local lockBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
@@ -1341,6 +1326,7 @@ local function SA_ShowDeathMessage(name, role, classFile)
     f.previewing = false
     f.fadeAnim:Stop()
     f:SetAlpha(1)
+    f:Show()                       -- 설정창에서 숨겨진 상태여도 반드시 표시
     f.fade:SetStartDelay(dt.duration or 3)
     f.fadeAnim:Play()
 end
@@ -1508,6 +1494,9 @@ local function SA_StartBuffBar(key, duration, force)
     if not force and (not bt.enabled or not bt.barEnabled) then return end
     local f = SA_EnsureBuffBar(key)
     SA_UpdateBuffBar(key)
+    -- 실제 발동은 편집 테두리 없이 일반 모양으로 카운트다운
+    f:SetBackdropColor(0, 0, 0, 0.25)
+    f:SetBackdropBorderColor(0.4, 0.4, 0.4, 0.6)
     f.duration = duration
     f.endTime = GetTime() + duration
     f.previewing = false
