@@ -418,6 +418,8 @@ local function SA_EnsureDeathFrame()
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     f:SetFrameStrata("HIGH")
+    -- 우클릭(카메라 회전 등)은 아래 프레임으로 통과 - 좌클릭만 드래그용
+    if f.SetPropagateMouseClicks then f:SetPropagateMouseClicks(true) end
     -- 잠금 해제(편집 모드)일 때만 보이는 테두리 (평소엔 투명)
     f:SetBackdrop({ edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 18 })
     f:SetBackdropBorderColor(1, 0.85, 0, 0)
@@ -1362,6 +1364,8 @@ local function SA_EnsureBuffBar(key)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     f:SetFrameStrata("MEDIUM")
+    -- 우클릭(카메라 회전 등)은 아래 프레임으로 통과 - 좌클릭만 드래그용
+    if f.SetPropagateMouseClicks then f:SetPropagateMouseClicks(true) end
     f:SetBackdrop({
         bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
