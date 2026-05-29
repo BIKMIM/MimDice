@@ -1,8 +1,25 @@
-## Interface: 100005
+## Interface: 120000, 120001, 120005
 ## Title: MimDice
 ## Author: BIK
+## Notes: 밈주머니를 위한 주사위 애드온. 애기야 사랑해!!
 ## SavedVariables: MimDiceDB
-## Version: 1.0
+## Version: 1.7.91
+## IconTexture: Interface\AddOns\MimDice\img\Mim_minimap_icon.tga
+## OptionalDeps: LibStub, LibDataBroker-1.1, LibDBIcon-1.0 
 
-Libs\embeds.xml
+# --- Libraries (직접 Lua 파일 명시로 로드) ---
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
+
+# --- Sound Alert Module ---
+SoundAlert.lua
+
+# --- Core Lua Logic ---
+MimDice.lua
+
+
+
+# --- UI Layout and Definitions ---
 MimDice.xml

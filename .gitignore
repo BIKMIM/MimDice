@@ -1,0 +1,21 @@
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Backup / temp
+*.bak
+*.tmp
+*.orig
+*~
+
+# WoW 런타임 / 도구 로그
+WTF/
+Cache/
+Logs/

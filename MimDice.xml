@@ -1,9 +1,8 @@
 <Ui xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.blizzard.com/wow/ui/">
-	<Script file="MimDice.lua" />
 	<Frame name="MainWindow" inherits="InsetFrameTemplate3" hidden="true" movable="true" resizable="true">
-		<Size x="300" y="474" />
+		<Size x="300" y="518" />
 		<Anchors>
-			<Anchor x="456" y="-130" point="TOPLEFT" />
+			<Anchor x="456" y="-87" point="TOPLEFT" />
 		</Anchors>
 		<KeyValues>
 			<KeyValue key="backdropInfo" value="BACKDROP_DIALOG_32_32" keyType="string" type="global" />
@@ -17,30 +16,121 @@
 				<Texture name="DpsTexture" file="Interface\LFGFRAME\UI-LFG-ICON-ROLES">
 					<Size x="25" y="25" />
 					<Anchors>
-						<Anchor x="38" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="32" y="-58" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<TexCoords left="0.52" right="0.25" top="0.26" bottom="0.52" />
 				</Texture>
 				<Texture name="HealTexture" file="Interface\LFGFRAME\UI-LFG-ICON-ROLES">
 					<Size x="25" y="25" />
 					<Anchors>
-						<Anchor x="63" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="57" y="-58" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<TexCoords left="0.26" right="0.52" top="0" bottom="0.25" />
 				</Texture>
 				<Texture name="TankTexture" file="Interface\LFGFRAME\UI-LFG-ICON-ROLES">
 					<Size x="25" y="25" />
 					<Anchors>
-						<Anchor x="11" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="5" y="-58" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<TexCoords left="0" right="0.25" top="0.26" bottom="0.52" />
+				</Texture>
+				<Texture name="C_icon1" file="Interface\AddOns\MimDice\img\ClassIcon_Warrior">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
+				</Texture>
+				<Texture name="C_icon2" file="Interface\AddOns\MimDice\img\ClassIcon_Mage">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor x="20" y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
+				</Texture>
+				<Texture name="C_icon3" file="Interface\AddOns\MimDice\img\ClassIcon_Rogue">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor x="40" y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
+				</Texture>
+				<Texture name="C_icon4" file="Interface\AddOns\MimDice\img\ClassIcon_Druid">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor x="60" y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
+				</Texture>
+				<Texture name="C_icon5" file="Interface\AddOns\MimDice\img\ClassIcon_DeathKnight">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor x="80" y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
+				</Texture>
+				<Texture name="C_icon6" file="Interface\AddOns\MimDice\img\ClassIcon_Shaman">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor x="100" y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
+				</Texture>
+				<Texture name="C_icon7" file="Interface\AddOns\MimDice\img\ClassIcon_Priest">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor x="120" y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
+				</Texture>
+				<Texture name="C_icon8" file="Interface\AddOns\MimDice\img\ClassIcon_Warlock">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor x="140" y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
+				</Texture>
+				<Texture name="C_icon9" file="Interface\AddOns\MimDice\img\ClassIcon_Paladin">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor x="160" y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
+				</Texture>
+				<Texture name="C_icon10" file="Interface\AddOns\MimDice\img\ClassIcon_Monk">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor x="180" y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
+				</Texture>
+				<Texture name="C_icon11" file="Interface\AddOns\MimDice\img\ClassIcon_DemonHunter">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor x="200" y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
+				</Texture>
+				<Texture name="C_icon12" file="Interface\AddOns\MimDice\img\ClassIcon_Evoker">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor x="220" y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
+				</Texture>
+				<Texture name="C_icon13" file="Interface\AddOns\MimDice\img\ClassIcon_Hunter">
+					<Size x="20" y="20" />
+					<Anchors>
+						<Anchor x="240" y="-3" point="TOPLEFT" />
+					</Anchors>
+					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 			</Layer>
 			<Layer level="OVERLAY">
 				<FontString name="DiceString" inherits="" font="Fonts\2002.ttf" text="주사위">
 					<Size x="65" y="20" />
 					<Anchors>
-						<Anchor x="94" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="88" y="-58" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<FontHeight val="12" />
 					<Color r="1" g="0.82" />
@@ -55,14 +145,14 @@
 				<FontString name="Mim_Dice_Title" inherits="GameFontNormal" font="Fonts\2002.ttf" text="MIM DICE" justifyH="LEFT">
 					<Size x="150" y="20" />
 					<Anchors>
-						<Anchor x="7" y="-5" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="5" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<FontHeight val="16" />
 				</FontString>
 				<FontString name="SortTextHigh" inherits="" font="Fonts\2002.ttf" text="하이">
 					<Size x="43" y="20" />
 					<Anchors>
-						<Anchor x="155" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="149" y="-58" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<FontHeight val="12" />
 					<Color r="1" g="0.82" />
@@ -70,11 +160,20 @@
 				<FontString name="SortTextLow" inherits="" font="Fonts\2002.ttf" text="로우">
 					<Size x="60" y="20" />
 					<Anchors>
-						<Anchor x="184" y="-33" point="TOPLEFT" relativeTo="MainWindow" />
+						<Anchor x="178" y="-58" point="TOPLEFT" relativeTo="MainWindow" />
 					</Anchors>
 					<FontHeight val="12" />
 					<Color r="1" g="0.82" />
 				</FontString>
+				<FontString name="version" inherits="" font="Fonts\2002.ttf" text="v 1.7.8">
+					<Size x="45" y="20" />
+					<Anchors>
+						<Anchor x="94" y="-32" point="TOPLEFT" relativeTo="MainWindow" />
+					</Anchors>
+					<FontHeight val="8" />
+					<Color r="1" g="0.82" />
+				</FontString>
+				<!-- 자동팝업 FontString 제거됨 -->
 			</Layer>
 		</Layers>
 		<Frames>
@@ -98,25 +197,25 @@
 			<CheckButton name="TankCheckBox" inherits="UICheckButtonTemplate" text="CheckButton4">
 				<Size x="25" y="25" />
 				<Anchors>
-					<Anchor x="12" y="-56" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="6" y="-81" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 			</CheckButton>
 			<CheckButton name="HealCheckBox" inherits="UICheckButtonTemplate" text="CheckButton4">
 				<Size x="25" y="25" />
 				<Anchors>
-					<Anchor x="63" y="-56" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="57" y="-81" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 			</CheckButton>
 			<CheckButton name="DpsCheckBox" inherits="UICheckButtonTemplate" text="CheckButton4">
 				<Size x="25" y="25" />
 				<Anchors>
-					<Anchor x="38" y="-56" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="32" y="-81" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 			</CheckButton>
 			<EditBox name="DiceEditBox" inherits="NumericInputBoxTemplate" autoFocus="false">
 				<Size x="50" y="20" />
 				<Anchors>
-					<Anchor x="104" y="-56" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="98" y="-81" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 				<FontString inherits="ChatFontNormal" font="Fonts\ARIALN.ttf">
 					<FontHeight val="14" />
@@ -125,7 +224,7 @@
 			<CheckButton name="UpBtn" inherits="UIRadioButtonTemplate" text="CheckButton1">
 				<Size x="25" y="25" />
 				<Anchors>
-					<Anchor x="162" y="-56" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="156" y="-81" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 				<Scripts>
 					<OnClick>
@@ -136,7 +235,7 @@
 			<CheckButton name="DownBtn" inherits="UIRadioButtonTemplate" text="CheckButton1">
 				<Size x="25" y="25" />
 				<Anchors>
-					<Anchor x="204" y="-56" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="198" y="-81" point="TOPLEFT" relativeTo="MainWindow" />
 				</Anchors>
 				<Scripts>
 					<OnClick>
@@ -175,11 +274,12 @@
 			<Button name="Start_Button" inherits="UIPanelButtonTemplate" text="시작">
 				<Size x="60" y="40" />
 				<Anchors>
-					<Anchor x="-5" y="-41" point="TOPRIGHT" relativeTo="MainWindow" />
+					<Anchor x="-11" y="-66" point="TOPRIGHT" relativeTo="MainWindow" />
 				</Anchors>
 				<Scripts>
 					<OnClick>
 						Prefix()
+						MimDice_ClearRolls()
 					</OnClick>
 				</Scripts>
 				<ButtonText name="$parentText" font="Fonts\2002.ttf">
@@ -200,25 +300,18 @@
 			<EditBox name="MainEditBox" inherits="InputBoxTemplate" resizable="true" autoFocus="false">
 				<Size x="267" y="27" />
 				<Anchors>
-					<Anchor x="17" y="-87" point="TOPLEFT" relativeTo="MainWindow" />
-					<Anchor x="-16" y="-87" point="TOPRIGHT" relativeTo="MainWindow" />
+					<Anchor x="17" y="-107" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="-16" y="-107" point="TOPRIGHT" relativeTo="MainWindow" />
 				</Anchors>
 			</EditBox>
 			<ScrollFrame name="MimDiceScrollFrame" inherits="UIPanelScrollFrameTemplate" resizable="true">
-				<Size x="272" y="293" />
+				<Size x="272" y="321" />
 				<Anchors>
-					<Anchor y="-120" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor y="-140" point="TOPLEFT" relativeTo="MainWindow" />
 					<Anchor x="-28" y="61" point="BOTTOMRIGHT" relativeTo="MainWindow" />
 				</Anchors>
 				<Layers>
 					<Layer>
-						<Texture name="mimBackground" setAllPoints="true" alpha="0.2" file="Interface\AddOns\MimDice\img\mim.tga">
-							<Size x="283" y="290" />
-							<Anchors>
-								<Anchor x="5" y="-120" point="TOPLEFT" relativeTo="MainWindow" />
-								<Anchor x="-5" y="64" point="BOTTOMRIGHT" relativeTo="MainWindow" />
-							</Anchors>
-						</Texture>
 					</Layer>
 				</Layers>
 				<ScrollChild>
@@ -273,17 +366,17 @@
 					</OnClick>
 				</Scripts>
 			</Button>
+			<!-- AutopopupCheckBox 제거됨 - 옵션 창으로 이동 -->
 		</Frames>
 		<Scripts>
 			<OnLoad>
-				self:RegisterForDrag("LeftButton")
-				MimDice_OnLoad(self)
+				                self:RegisterForDrag("LeftButton")
 			</OnLoad>
 			<OnDragStart>
-				self:StartMoving()
+				                self:StartMoving()
 			</OnDragStart>
 			<OnDragStop>
-				self:StopMovingOrSizing()
+				                self:StopMovingOrSizing()
 			</OnDragStop>
 		</Scripts>
 	</Frame>
