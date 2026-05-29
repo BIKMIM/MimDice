@@ -481,7 +481,14 @@ local function SA_EnsureDeathFrame()
     fade:SetDuration(1)
     f.fadeAnim = ag
     f.fade = fade
-    ag:SetScript("OnFinished", function() f.text:SetText(""); f.icon:Hide(); f:SetAlpha(0) end)
+    -- 페이드 끝나면 프레임을 완전히 숨기고 마우스 비활성 → 빈 영역이 우클릭 가로채지 않도록
+    ag:SetScript("OnFinished", function()
+        f.text:SetText("")
+        f.icon:Hide()
+        f:SetAlpha(0)
+        f:EnableMouse(false)
+        f:Hide()
+    end)
 
     SA_DeathFrame = f
     return f
@@ -1300,6 +1307,7 @@ local function SA_ShowDeathMessage(name, role, classFile)
     local f = SA_EnsureDeathFrame()
     f.bg:Hide()                                  -- 실제 메시지엔 편집 배경/테두리 숨김
     f:SetBackdropBorderColor(1, 0.85, 0, 0)
+    f:EnableMouse(false)                         -- 실제 메시지는 마우스 안 가로채게 (우클릭 카메라 보호)
     f:ClearAllPoints()
     f:SetPoint("CENTER", UIParent, "CENTER", dt.x or 0, dt.y or 200)
 
