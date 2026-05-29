@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd.exe /c _test_xml_update.bat)",
+      "PowerShell(& cmd.exe /c \"d:\\\\Games\\\\World of Warcraft\\\\_retail_\\\\Interface\\\\AddOns\\\\MimDice\\\\_test_xml_update.bat\")",
+      "PowerShell($now = Get-Date; $ampm = if \\($now.Hour -lt 12\\) { \"오전\" } else { \"오후\" }; $stamp = $now.ToString\\(\"yyyy-MM-dd\"\\) + \" \" + $ampm + \" \" + $now.ToString\\(\"hh:mm:ss\"\\); Write-Output \"결과: -- Last Updated   : $stamp\")",
+      "PowerShell(& cmd.exe /c \"d:\\\\Games\\\\World of Warcraft\\\\_retail_\\\\Interface\\\\AddOns\\\\MimDice\\\\_test_lastupdated.bat\")",
+      "Bash(cd \"/d/Games/World of Warcraft/_retail_/Interface/AddOns/MimDice\" && rm -f _test_lastupdated.bat)",
+      "Bash(cd \"/d/Games/World of Warcraft/_retail_/Interface/AddOns/MimDice/sounds\" && ls -1 | grep -i \"왜죽\\\\|왜 죽\" 2>/dev/null; echo \"---전체 mp3/ogg 목록---\"; ls -1 *.mp3 *.ogg 2>/dev/null)",
+      "Read(//d/d/Games/World of Warcraft/_retail_/Interface/AddOns/MimDice/**)"
+    ],
+    "additionalDirectories": [
+      "d:\\d\\Games\\World of Warcraft\\_retail_\\Interface\\AddOns\\MimDice"
+    ]
+  }
+}
