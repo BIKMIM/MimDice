@@ -19,3 +19,6 @@ Desktop.ini
 WTF/
 Cache/
 Logs/
+
+# 배포 추천 메시지 (로컬 임시)
+.deploy-msg

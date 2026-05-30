@@ -7,7 +7,16 @@
       "PowerShell(& cmd.exe /c \"d:\\\\Games\\\\World of Warcraft\\\\_retail_\\\\Interface\\\\AddOns\\\\MimDice\\\\_test_lastupdated.bat\")",
       "Bash(cd \"/d/Games/World of Warcraft/_retail_/Interface/AddOns/MimDice\" && rm -f _test_lastupdated.bat)",
       "Bash(cd \"/d/Games/World of Warcraft/_retail_/Interface/AddOns/MimDice/sounds\" && ls -1 | grep -i \"왜죽\\\\|왜 죽\" 2>/dev/null; echo \"---전체 mp3/ogg 목록---\"; ls -1 *.mp3 *.ogg 2>/dev/null)",
-      "Read(//d/d/Games/World of Warcraft/_retail_/Interface/AddOns/MimDice/**)"
+      "Read(//d/d/Games/World of Warcraft/_retail_/Interface/AddOns/MimDice/**)",
+      "Bash(cd \"/d/Games/World of Warcraft/_retail_/Interface/AddOns/MimDice\")",
+      "Bash(echo \"=== sounds 폴더 ===\")",
+      "Bash(ls -1 sounds/)",
+      "Bash(echo \"\")",
+      "Bash(echo \"=== 코드가 참조하는 기본 사운드 파일 존재 확인 ===\")",
+      "Bash(find \"/d/Games/World of Warcraft/_retail_/Interface/AddOns\" -maxdepth 2 -iname \"배포하기.bat\" 2>/dev/null | grep -i bib; echo \"---또는 전체---\"; find \"/d/Games/World of Warcraft/_retail_/Interface/AddOns\" -maxdepth 2 -iname \"*.bat\" 2>/dev/null | grep -i bib)",
+      "Read(//d/Games/World of Warcraft/_retail_/Interface/AddOns/**)",
+      "Bash(grep -qx \".deploy-msg\" .gitignore)",
+      "Bash(printf '\\\\n# 배포 추천 메시지 \\(로컬 임시\\)\\\\n.deploy-msg\\\\n')"
     ],
     "additionalDirectories": [
       "d:\\d\\Games\\World of Warcraft\\_retail_\\Interface\\AddOns\\MimDice"

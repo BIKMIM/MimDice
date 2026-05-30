@@ -486,7 +486,7 @@ local function SA_EnsureDeathFrame()
         f.text:SetText("")
         f.icon:Hide()
         f:SetAlpha(0)
-        f:EnableMouse(false)
+        if not InCombatLockdown() then f:EnableMouse(false) end  -- 전투 중 보호 함수 차단 회피
         f:Hide()
     end)
 
@@ -560,7 +560,7 @@ function SA_UpdateDeathFrame()
     if dt.locked then
         f.bg:Hide()
         f:SetBackdropBorderColor(1, 0.85, 0, 0)   -- 테두리 숨김
-        f:EnableMouse(false)
+        if not InCombatLockdown() then f:EnableMouse(false) end  -- 전투 중 보호 함수 차단 회피
         -- 잠금 상태에서 (버튼 미리보기 아닌) 위치잡기 미리보기가 떠 있으면 지움
         if not f.fadeAnim:IsPlaying() and f.previewing and not f.previewOn then
             f.text:SetText("")
@@ -573,7 +573,7 @@ function SA_UpdateDeathFrame()
         f.bg:SetColorTexture(1, 0.85, 0, 0.35)
         f.bg:Show()
         f:SetBackdropBorderColor(1, 0.85, 0, 1)
-        f:EnableMouse(true)
+        if not InCombatLockdown() then f:EnableMouse(true) end  -- 전투 중 보호 함수 차단 회피
         f.fadeAnim:Stop()
         f:SetAlpha(1)
         f.previewing = true
@@ -1307,7 +1307,8 @@ local function SA_ShowDeathMessage(name, role, classFile)
     local f = SA_EnsureDeathFrame()
     f.bg:Hide()                                  -- 실제 메시지엔 편집 배경/테두리 숨김
     f:SetBackdropBorderColor(1, 0.85, 0, 0)
-    f:EnableMouse(false)                         -- 실제 메시지는 마우스 안 가로채게 (우클릭 카메라 보호)
+    -- 사망은 거의 항상 전투 중 → EnableMouse(protected)를 InCombatLockdown으로 가드
+    if not InCombatLockdown() then f:EnableMouse(false) end
     f:ClearAllPoints()
     f:SetPoint("CENTER", UIParent, "CENTER", dt.x or 0, dt.y or 200)
 
@@ -1592,6 +1593,8 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         for _, def in ipairs(BUFF_DEFS) do
             SA_EnsureBuffBar(def.key)
         end
+        -- 죽음 프레임도 미리 생성 (첫 사망=전투 중 생성 지연/위험 제거)
+        SA_EnsureDeathFrame()
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
         if unit ~= "player" then return end

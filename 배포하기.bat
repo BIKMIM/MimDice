@@ -40,9 +40,26 @@ if errorlevel 1 (
 rem Show last commit subject
 set LAST_COMMIT=
 for /f "delims=" %%i in ('git log -1 --format^=%%s 2^>nul') do set LAST_COMMIT=%%i
+
+rem === Compute suggested commit message ===
+rem 1st: .deploy-msg file (Claude writes a specific message after finishing work)
+rem 2nd: auto-generate from changed files ("Update SoundAlert.lua, MimDice.lua")
+set "SUGGESTED="
+if exist "%~dp0.deploy-msg" (
+    set /p SUGGESTED=<"%~dp0.deploy-msg"
+)
+if "!SUGGESTED!"=="" (
+    powershell -NoProfile -Command "$f = git status --short | ForEach-Object { ($_ -replace '^...','').Trim() } | Where-Object { $_ -match '\.(lua|xml|toc)$' } | ForEach-Object { Split-Path $_ -Leaf } | Select-Object -Unique; if ($f) { 'Update ' + ($f -join ', ') } | Out-File -Encoding utf8 '%TEMP%\mimdice_msg.txt' -NoNewline" 2>nul
+    if exist "%TEMP%\mimdice_msg.txt" (
+        set /p SUGGESTED=<"%TEMP%\mimdice_msg.txt"
+        del "%TEMP%\mimdice_msg.txt" >nul 2>&1
+    )
+)
+
 if not "!LAST_COMMIT!"=="" echo Last deploy  : !LAST_COMMIT!
 echo Current ver  : %CURRENT_VER%
 echo Next version : !SUGGESTED_VER!
+if not "!SUGGESTED!"=="" echo Suggested msg: !SUGGESTED!
 echo.
 
 rem === Version prompt ===
@@ -66,7 +83,19 @@ if errorlevel 1 (
 echo.
 
 rem === Commit message prompt ===
-set /p COMMIT_MSG=Commit message [example: add sound effect / Space = empty]:
+rem   Enter       = use suggested message (empty if none = vX.Y.Z only)
+rem   Space+Enter = empty message
+rem   any text    = use the typed text
+if not "!SUGGESTED!"=="" (
+    echo  ----- Suggested commit message -----
+    echo    !SUGGESTED!
+    echo  ------------------------------------
+    set /p COMMIT_MSG=Commit message [Enter = use suggested / Space = empty]:
+    if "!COMMIT_MSG!"=="" set COMMIT_MSG=!SUGGESTED!
+) else (
+    set /p COMMIT_MSG=Commit message [example: add sound effect / Space = empty]:
+)
+rem A single space means "empty message"
 if "!COMMIT_MSG!"==" " set COMMIT_MSG=
 echo.
 
@@ -179,6 +208,9 @@ if errorlevel 1 (
 )
 echo [3/3] Push done
 echo.
+
+rem Consume and delete suggestion file (avoid reuse on next deploy)
+if exist "%~dp0.deploy-msg" del "%~dp0.deploy-msg" >nul 2>&1
 
 echo ================================
 echo    Done^^!  v!NEW_VER!
