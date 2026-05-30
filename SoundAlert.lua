@@ -861,7 +861,13 @@ local function SA_CreateDeathConfig()
     enableLabel:SetText("화면에 죽음 메시지 표시")
     enableLabel:SetTextColor(0.9, 0.9, 0.9)
     enableCb:SetScript("OnClick", function(self)
-        MimDiceDB.deathTrack.showMessage = self:GetChecked() and true or false
+        local on = self:GetChecked() and true or false
+        MimDiceDB.deathTrack.showMessage = on
+        if on then
+            SA_DeathPreviewOn()    -- 켜면 위치/모양 확인용 미리보기 즉시 표시
+        else
+            SA_DeathPreviewOff()   -- 끄면 화면에서 즉시 숨김
+        end
     end)
     win.enableCb = enableCb
 
@@ -1155,7 +1161,19 @@ local function SA_CreateBuffConfig(key)
     barLabel:SetText("화면에 지속시간 바 표시")
     barLabel:SetTextColor(0.9, 0.9, 0.9)
     barCb:SetScript("OnClick", function(self)
-        MimDiceDB.buffTrack[key].barEnabled = self:GetChecked() and true or false
+        local on = self:GetChecked() and true or false
+        MimDiceDB.buffTrack[key].barEnabled = on
+        local f = SA_BuffBars[key]
+        if on then
+            -- 켜면 위치/모양 확인용으로 즉시 미리보기 표시
+            SA_BuffPreviewOn(key)
+        elseif f then
+            -- 끄면 화면에서 즉시 숨김 (미리보기/편집 바 포함)
+            f.previewOn = false
+            f.previewing = false
+            f.endTime = 0
+            f:Hide()
+        end
     end)
     win.barCb = barCb
 
@@ -1341,19 +1359,33 @@ local function SA_ShowDeathMessage(name, role, classFile)
 end
 
 -- 미리보기 (설정 팝업의 "미리보기" 버튼용) - 현재 접속 직업색으로 표시
+-- 미리보기 강제 켜기 ("죽음 메시지 표시" 체크 시 위치/모양 확인용)
+function SA_DeathPreviewOn()
+    local f = SA_EnsureDeathFrame()
+    f.previewOn = true
+    SA_RenderDeathPreview()
+end
+
+-- 미리보기 강제 끄기 (체크 해제 시 화면에서 즉시 숨김)
+function SA_DeathPreviewOff()
+    local f = SA_DeathFrame
+    if not f then return end
+    f.previewOn = false
+    f.previewing = false
+    f.fadeAnim:Stop()
+    f.text:SetText("")
+    f.icon:Hide()
+    f:SetAlpha(0)
+    f:Hide()
+end
+
 -- 미리보기 토글 (설정창 버튼) - 누르면 켜지고 다시 누르면 꺼짐
 function SA_DeathPreview()
     local f = SA_EnsureDeathFrame()
-    f.previewOn = not f.previewOn
     if f.previewOn then
-        SA_RenderDeathPreview()
+        SA_DeathPreviewOff()
     else
-        f.fadeAnim:Stop()
-        f.text:SetText("")
-        f.icon:Hide()
-        f.previewing = false
-        f:SetAlpha(0)
-        f:Hide()
+        SA_DeathPreviewOn()
     end
 end
 
@@ -1521,6 +1553,13 @@ local function SA_PlayBuff(key)
     local bt = MimDiceDB and MimDiceDB.buffTrack and MimDiceDB.buffTrack[key]
     if not bt or not bt.enabled then return end
     SA_PlaySound(bt)
+end
+
+-- 미리보기 강제 켜기 ("바 표시" 체크 시 위치/모양 확인용)
+function SA_BuffPreviewOn(key)
+    local f = SA_EnsureBuffBar(key)
+    f.previewOn = true
+    SA_UpdateBuffBar(key)
 end
 
 -- 미리보기 토글 (설정창 버튼) - 누르면 켜지고 다시 누르면 꺼짐. 정적 풀 바로 계속 표시.
