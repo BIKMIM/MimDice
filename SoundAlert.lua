@@ -90,8 +90,6 @@ local BUFF_DEF_BY_KEY = {}
 for _, d in ipairs(BUFF_DEFS) do BUFF_DEF_BY_KEY[d.key] = d end
 
 -- 블러드 감지용 디버프 (Sated/Exhaustion 계열 - 적용 시 블러드 직후로 간주)
--- ※ 리스트로 저장하고 == 비교로만 매칭. WoW의 secret value(보호된 aura.spellId)는
---    테이블 키로 쓸 수 없지만 == 비교는 안전하게 가능. (ActionSounds도 동일 방식)
 local BLOODLUST_DEBUFFS = {
     57723,  -- Exhaustion (Heroism)
     57724,  -- Sated (Bloodlust)
@@ -101,20 +99,39 @@ local BLOODLUST_DEBUFFS = {
     390435, -- Exhaustion (Fury of the Aspects)
 }
 
--- aura.spellId가 블러드 계열 디버프인지 확인 (secret value 안전 처리)
-local function SA_IsBloodlustAura(aura)
-    local sid = aura and aura.spellId
-    if not sid then return false end
+-- 마력 주입 (Power Infusion, 사제)
+local POWER_INFUSION_SPELL_ID = 10060
+
+-- 본인에게 특정 spellID 오라(버프/디버프)가 있는지 — "존재 유무"만 확인한다.
+-- ※ aura 객체의 필드(spellId 등)를 직접 읽지 않으므로, 구렁/던전 등 인스턴스에서
+--    그 필드가 secret value로 보호돼도 안전. (NPC 파티 포함 모든 상황에서 동작)
+--    이전 방식(aura.spellId == ID 비교)은 인스턴스에서 spellId가 secret이면
+--    항상 false가 되어 감지에 실패했다.
+local function SA_HasPlayerAura(spellID)
+    if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then return false end
+    local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
+    return ok and aura ~= nil
+end
+
+-- 블러드(Sated/Exhaustion) 디버프가 하나라도 있는지
+local function SA_HasBloodlustDebuff()
     for j = 1, #BLOODLUST_DEBUFFS do
-        if sid == BLOODLUST_DEBUFFS[j] then
-            return true
-        end
+        if SA_HasPlayerAura(BLOODLUST_DEBUFFS[j]) then return true end
     end
     return false
 end
 
--- 마력 주입 (Power Infusion, 사제)
-local POWER_INFUSION_SPELL_ID = 10060
+-- 버프 활성 상태 추적 ("없음 → 있음" 전이로 "방금 걸림"을 판단)
+local SA_piWasActive = false
+local SA_blWasActive = false
+
+-- 현재 버프 상태로 추적값 동기화 (로그인/월드진입/리로드 시 오발동 방지)
+-- 예: 블러드 후 Sated(10분)가 남은 채 /reload 하면, 이 동기화가 없으면
+--     리로드 직후 첫 UNIT_AURA에서 블러드가 잘못 재생됨.
+local function SA_SyncBuffStates()
+    SA_piWasActive = SA_HasPlayerAura(POWER_INFUSION_SPELL_ID)
+    SA_blWasActive = SA_HasBloodlustDebuff()
+end
 
 function SA_InitDB()
     if not MimDiceDB then MimDiceDB = {} end
@@ -1621,6 +1638,7 @@ end
 local SA_EventFrame = CreateFrame("Frame")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
+SA_EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")   -- 구렁/던전 진입 등에서 버프 상태 재동기화
 SA_EventFrame:RegisterEvent("UNIT_DIED")
 SA_EventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 
@@ -1634,6 +1652,10 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         end
         -- 죽음 프레임도 미리 생성 (첫 사망=전투 중 생성 지연/위험 제거)
         SA_EnsureDeathFrame()
+        SA_SyncBuffStates()   -- 현재 버프 상태로 초기화 (리로드 오발동 방지)
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        -- 구렁/던전 진입, 순간이동 등으로 월드가 바뀔 때 버프 추적 상태 재동기화
+        SA_SyncBuffStates()
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
         if unit ~= "player" then return end
@@ -1647,35 +1669,27 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
     elseif event == "UNIT_AURA" then
-        -- 다른 사람이 나에게 건 블러드/마력주입 감지
-        local unit, updateInfo = ...
-        if unit ~= "player" or not updateInfo or not updateInfo.addedAuras then return end
+        -- 본인에게 블러드/마력주입이 "새로 걸렸는지" 감지.
+        -- aura 객체의 spellId(인스턴스에서 secret value)를 읽지 않고, API로 존재 유무만
+        -- 확인한다 → 구렁/던전에서 NPC 파티와 함께여도 동작. full update(addedAuras 누락)와도 무관.
+        local unit = ...
+        if unit ~= "player" then return end
 
-        for i = 1, #updateInfo.addedAuras do
-            local aura = updateInfo.addedAuras[i]
-            -- aura 필드들이 secret value일 수 있어 pcall 로 감싼다.
-            -- 일부 personal/restricted aura는 spellId 등이 보호되어 직접 접근 시 에러 발생.
-            local ok, kind = pcall(function()
-                if SA_IsBloodlustAura(aura) then return "BLOODLUST" end
-                if aura and aura.spellId == POWER_INFUSION_SPELL_ID then return "POWERINFUSE" end
-                return nil
-            end)
-
-            if ok and kind == "BLOODLUST" then
-                -- Sated/Exhaustion 디버프는 10분(600초) 지속.
-                -- 막 적용된 직후(잔여 ≥ 560초)면 블러드가 방금 걸렸다는 뜻.
-                local okRem, remaining = pcall(function()
-                    return aura.expirationTime and (aura.expirationTime - GetTime()) or 0
-                end)
-                if okRem and remaining and remaining >= 560 then
-                    SA_PlayBuff("BLOODLUST")
-                    SA_StartBuffBar("BLOODLUST", BUFF_DEF_BY_KEY["BLOODLUST"].duration)  -- 블러드는 고정 40s
-                end
-            elseif ok and kind == "POWERINFUSE" then
-                SA_PlayBuff("POWERINFUSE")
-                SA_StartBuffBar("POWERINFUSE", BUFF_DEF_BY_KEY["POWERINFUSE"].duration)  -- 고정 15초
-            end
+        -- 마력 주입: 없다가 생기면 방금 걸린 것
+        local piActive = SA_HasPlayerAura(POWER_INFUSION_SPELL_ID)
+        if piActive and not SA_piWasActive then
+            SA_PlayBuff("POWERINFUSE")
+            SA_StartBuffBar("POWERINFUSE", BUFF_DEF_BY_KEY["POWERINFUSE"].duration)  -- 고정 15초
         end
+        SA_piWasActive = piActive
+
+        -- 블러드: Sated/Exhaustion 디버프가 없다가 생기면 블러드 직후
+        local blActive = SA_HasBloodlustDebuff()
+        if blActive and not SA_blWasActive then
+            SA_PlayBuff("BLOODLUST")
+            SA_StartBuffBar("BLOODLUST", BUFF_DEF_BY_KEY["BLOODLUST"].duration)  -- 블러드는 고정 40s
+        end
+        SA_blWasActive = blActive
     elseif event == "UNIT_DIED" then
         -- 파티/공대원/본인 사망 감지
         local deadGUID = ...
