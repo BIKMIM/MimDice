@@ -90,8 +90,6 @@ local BUFF_DEF_BY_KEY = {}
 for _, d in ipairs(BUFF_DEFS) do BUFF_DEF_BY_KEY[d.key] = d end
 
 -- 블러드 감지용 디버프 (Sated/Exhaustion 계열 - 적용 시 블러드 직후로 간주)
--- ※ 리스트로 저장하고 == 비교로만 매칭. WoW의 secret value(보호된 aura.spellId)는
---    테이블 키로 쓸 수 없지만 == 비교는 안전하게 가능. (ActionSounds도 동일 방식)
 local BLOODLUST_DEBUFFS = {
     57723,  -- Exhaustion (Heroism)
     57724,  -- Sated (Bloodlust)
@@ -101,20 +99,42 @@ local BLOODLUST_DEBUFFS = {
     390435, -- Exhaustion (Fury of the Aspects)
 }
 
--- aura.spellId가 블러드 계열 디버프인지 확인 (secret value 안전 처리)
-local function SA_IsBloodlustAura(aura)
-    local sid = aura and aura.spellId
-    if not sid then return false end
+-- 마력 주입 (Power Infusion, 사제)
+local POWER_INFUSION_SPELL_ID = 10060
+
+-- 본인에게 특정 spellID 오라(버프/디버프)가 있는지 — "존재 유무"만 확인한다.
+-- ※ aura 객체의 필드(spellId 등)를 직접 읽지 않으므로, 구렁/던전 등 인스턴스에서
+--    그 필드가 secret value로 보호돼도 안전. (NPC 파티 포함 모든 상황에서 동작)
+--    이전 방식(aura.spellId == ID 비교)은 인스턴스에서 spellId가 secret이면
+--    항상 false가 되어 감지에 실패했다.
+local function SA_HasPlayerAura(spellID)
+    if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then return false end
+    local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
+    return ok and aura ~= nil
+end
+
+-- 블러드(Sated/Exhaustion) 디버프가 하나라도 있는지
+local function SA_HasBloodlustDebuff()
     for j = 1, #BLOODLUST_DEBUFFS do
-        if sid == BLOODLUST_DEBUFFS[j] then
-            return true
-        end
+        if SA_HasPlayerAura(BLOODLUST_DEBUFFS[j]) then return true end
     end
     return false
 end
 
--- 마력 주입 (Power Infusion, 사제)
-local POWER_INFUSION_SPELL_ID = 10060
+-- 버프 활성 상태 추적 ("없음 → 있음" 전이로 "방금 걸림"을 판단)
+local SA_piWasActive = false
+local SA_blWasActive = false
+
+-- 존 전환(인스턴스 진입/퇴장) 직후 오라 정보가 서버에서 늦게 도착해
+-- UNIT_AURA가 "없다가 생겼다"로 오판하는 것을 막기 위한 타임스탬프.
+-- PLAYER_ENTERING_WORLD 이후 3초간 트리거를 억제하고 상태만 동기화한다.
+local SA_zoneSwitchTime = 0
+
+-- 현재 버프 상태로 추적값 동기화 (로그인/월드진입/리로드 시 오발동 방지)
+local function SA_SyncBuffStates()
+    SA_piWasActive = SA_HasPlayerAura(POWER_INFUSION_SPELL_ID)
+    SA_blWasActive = SA_HasBloodlustDebuff()
+end
 
 function SA_InitDB()
     if not MimDiceDB then MimDiceDB = {} end
@@ -486,7 +506,7 @@ local function SA_EnsureDeathFrame()
         f.text:SetText("")
         f.icon:Hide()
         f:SetAlpha(0)
-        f:EnableMouse(false)
+        if not InCombatLockdown() then f:EnableMouse(false) end  -- 전투 중 보호 함수 차단 회피
         f:Hide()
     end)
 
@@ -560,7 +580,7 @@ function SA_UpdateDeathFrame()
     if dt.locked then
         f.bg:Hide()
         f:SetBackdropBorderColor(1, 0.85, 0, 0)   -- 테두리 숨김
-        f:EnableMouse(false)
+        if not InCombatLockdown() then f:EnableMouse(false) end  -- 전투 중 보호 함수 차단 회피
         -- 잠금 상태에서 (버튼 미리보기 아닌) 위치잡기 미리보기가 떠 있으면 지움
         if not f.fadeAnim:IsPlaying() and f.previewing and not f.previewOn then
             f.text:SetText("")
@@ -573,7 +593,7 @@ function SA_UpdateDeathFrame()
         f.bg:SetColorTexture(1, 0.85, 0, 0.35)
         f.bg:Show()
         f:SetBackdropBorderColor(1, 0.85, 0, 1)
-        f:EnableMouse(true)
+        if not InCombatLockdown() then f:EnableMouse(true) end  -- 전투 중 보호 함수 차단 회피
         f.fadeAnim:Stop()
         f:SetAlpha(1)
         f.previewing = true
@@ -861,7 +881,13 @@ local function SA_CreateDeathConfig()
     enableLabel:SetText("화면에 죽음 메시지 표시")
     enableLabel:SetTextColor(0.9, 0.9, 0.9)
     enableCb:SetScript("OnClick", function(self)
-        MimDiceDB.deathTrack.showMessage = self:GetChecked() and true or false
+        local on = self:GetChecked() and true or false
+        MimDiceDB.deathTrack.showMessage = on
+        if on then
+            SA_DeathPreviewOn()    -- 켜면 위치/모양 확인용 미리보기 즉시 표시
+        else
+            SA_DeathPreviewOff()   -- 끄면 화면에서 즉시 숨김
+        end
     end)
     win.enableCb = enableCb
 
@@ -1155,7 +1181,19 @@ local function SA_CreateBuffConfig(key)
     barLabel:SetText("화면에 지속시간 바 표시")
     barLabel:SetTextColor(0.9, 0.9, 0.9)
     barCb:SetScript("OnClick", function(self)
-        MimDiceDB.buffTrack[key].barEnabled = self:GetChecked() and true or false
+        local on = self:GetChecked() and true or false
+        MimDiceDB.buffTrack[key].barEnabled = on
+        local f = SA_BuffBars[key]
+        if on then
+            -- 켜면 위치/모양 확인용으로 즉시 미리보기 표시
+            SA_BuffPreviewOn(key)
+        elseif f then
+            -- 끄면 화면에서 즉시 숨김 (미리보기/편집 바 포함)
+            f.previewOn = false
+            f.previewing = false
+            f.endTime = 0
+            f:Hide()
+        end
     end)
     win.barCb = barCb
 
@@ -1307,7 +1345,8 @@ local function SA_ShowDeathMessage(name, role, classFile)
     local f = SA_EnsureDeathFrame()
     f.bg:Hide()                                  -- 실제 메시지엔 편집 배경/테두리 숨김
     f:SetBackdropBorderColor(1, 0.85, 0, 0)
-    f:EnableMouse(false)                         -- 실제 메시지는 마우스 안 가로채게 (우클릭 카메라 보호)
+    -- 사망은 거의 항상 전투 중 → EnableMouse(protected)를 InCombatLockdown으로 가드
+    if not InCombatLockdown() then f:EnableMouse(false) end
     f:ClearAllPoints()
     f:SetPoint("CENTER", UIParent, "CENTER", dt.x or 0, dt.y or 200)
 
@@ -1340,19 +1379,33 @@ local function SA_ShowDeathMessage(name, role, classFile)
 end
 
 -- 미리보기 (설정 팝업의 "미리보기" 버튼용) - 현재 접속 직업색으로 표시
+-- 미리보기 강제 켜기 ("죽음 메시지 표시" 체크 시 위치/모양 확인용)
+function SA_DeathPreviewOn()
+    local f = SA_EnsureDeathFrame()
+    f.previewOn = true
+    SA_RenderDeathPreview()
+end
+
+-- 미리보기 강제 끄기 (체크 해제 시 화면에서 즉시 숨김)
+function SA_DeathPreviewOff()
+    local f = SA_DeathFrame
+    if not f then return end
+    f.previewOn = false
+    f.previewing = false
+    f.fadeAnim:Stop()
+    f.text:SetText("")
+    f.icon:Hide()
+    f:SetAlpha(0)
+    f:Hide()
+end
+
 -- 미리보기 토글 (설정창 버튼) - 누르면 켜지고 다시 누르면 꺼짐
 function SA_DeathPreview()
     local f = SA_EnsureDeathFrame()
-    f.previewOn = not f.previewOn
     if f.previewOn then
-        SA_RenderDeathPreview()
+        SA_DeathPreviewOff()
     else
-        f.fadeAnim:Stop()
-        f.text:SetText("")
-        f.icon:Hide()
-        f.previewing = false
-        f:SetAlpha(0)
-        f:Hide()
+        SA_DeathPreviewOn()
     end
 end
 
@@ -1522,6 +1575,13 @@ local function SA_PlayBuff(key)
     SA_PlaySound(bt)
 end
 
+-- 미리보기 강제 켜기 ("바 표시" 체크 시 위치/모양 확인용)
+function SA_BuffPreviewOn(key)
+    local f = SA_EnsureBuffBar(key)
+    f.previewOn = true
+    SA_UpdateBuffBar(key)
+end
+
 -- 미리보기 토글 (설정창 버튼) - 누르면 켜지고 다시 누르면 꺼짐. 정적 풀 바로 계속 표시.
 function SA_BuffPreview(key)
     local f = SA_EnsureBuffBar(key)
@@ -1581,6 +1641,7 @@ end
 local SA_EventFrame = CreateFrame("Frame")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
+SA_EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")   -- 구렁/던전 진입 등에서 버프 상태 재동기화
 SA_EventFrame:RegisterEvent("UNIT_DIED")
 SA_EventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 
@@ -1592,6 +1653,14 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         for _, def in ipairs(BUFF_DEFS) do
             SA_EnsureBuffBar(def.key)
         end
+        -- 죽음 프레임도 미리 생성 (첫 사망=전투 중 생성 지연/위험 제거)
+        SA_EnsureDeathFrame()
+        SA_SyncBuffStates()   -- 현재 버프 상태로 초기화 (리로드 오발동 방지)
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        -- 존 전환 타임스탬프 기록 (UNIT_AURA 오발동 억제용)
+        -- 주의: 이 시점엔 서버 오라가 아직 안 온 경우가 있어 SyncBuffStates()만으론 불충분.
+        SA_zoneSwitchTime = GetTime()
+        SA_SyncBuffStates()
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
         if unit ~= "player" then return end
@@ -1605,35 +1674,37 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
     elseif event == "UNIT_AURA" then
-        -- 다른 사람이 나에게 건 블러드/마력주입 감지
-        local unit, updateInfo = ...
-        if unit ~= "player" or not updateInfo or not updateInfo.addedAuras then return end
+        -- 본인에게 블러드/마력주입이 "새로 걸렸는지" 감지.
+        -- aura 객체의 spellId(인스턴스에서 secret value)를 읽지 않고, API로 존재 유무만
+        -- 확인한다 → 구렁/던전에서 NPC 파티와 함께여도 동작. full update(addedAuras 누락)와도 무관.
+        local unit = ...
+        if unit ~= "player" then return end
 
-        for i = 1, #updateInfo.addedAuras do
-            local aura = updateInfo.addedAuras[i]
-            -- aura 필드들이 secret value일 수 있어 pcall 로 감싼다.
-            -- 일부 personal/restricted aura는 spellId 등이 보호되어 직접 접근 시 에러 발생.
-            local ok, kind = pcall(function()
-                if SA_IsBloodlustAura(aura) then return "BLOODLUST" end
-                if aura and aura.spellId == POWER_INFUSION_SPELL_ID then return "POWERINFUSE" end
-                return nil
-            end)
+        local piActive = SA_HasPlayerAura(POWER_INFUSION_SPELL_ID)
+        local blActive = SA_HasBloodlustDebuff()
 
-            if ok and kind == "BLOODLUST" then
-                -- Sated/Exhaustion 디버프는 10분(600초) 지속.
-                -- 막 적용된 직후(잔여 ≥ 560초)면 블러드가 방금 걸렸다는 뜻.
-                local okRem, remaining = pcall(function()
-                    return aura.expirationTime and (aura.expirationTime - GetTime()) or 0
-                end)
-                if okRem and remaining and remaining >= 560 then
-                    SA_PlayBuff("BLOODLUST")
-                    SA_StartBuffBar("BLOODLUST", BUFF_DEF_BY_KEY["BLOODLUST"].duration)  -- 블러드는 고정 40s
-                end
-            elseif ok and kind == "POWERINFUSE" then
-                SA_PlayBuff("POWERINFUSE")
-                SA_StartBuffBar("POWERINFUSE", BUFF_DEF_BY_KEY["POWERINFUSE"].duration)  -- 고정 15초
-            end
+        -- 존 전환 후 3초 이내: 상태만 동기화하고 소리/바 트리거 억제.
+        -- PLAYER_ENTERING_WORLD 시 오라가 아직 미도착해 false로 잘못 동기화된 경우
+        -- UNIT_AURA가 뒤늦게 "없다→있다"로 오판하는 것을 방지.
+        if GetTime() - SA_zoneSwitchTime < 3 then
+            SA_piWasActive = piActive
+            SA_blWasActive = blActive
+            return
         end
+
+        -- 마력 주입: 없다가 생기면 방금 걸린 것
+        if piActive and not SA_piWasActive then
+            SA_PlayBuff("POWERINFUSE")
+            SA_StartBuffBar("POWERINFUSE", BUFF_DEF_BY_KEY["POWERINFUSE"].duration)  -- 고정 15초
+        end
+        SA_piWasActive = piActive
+
+        -- 블러드: Sated/Exhaustion 디버프가 없다가 생기면 블러드 직후
+        if blActive and not SA_blWasActive then
+            SA_PlayBuff("BLOODLUST")
+            SA_StartBuffBar("BLOODLUST", BUFF_DEF_BY_KEY["BLOODLUST"].duration)  -- 블러드는 고정 40s
+        end
+        SA_blWasActive = blActive
     elseif event == "UNIT_DIED" then
         -- 파티/공대원/본인 사망 감지
         local deadGUID = ...

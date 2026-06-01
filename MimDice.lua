@@ -1,7 +1,7 @@
 -- Author         : BIK
 -- Create Date    : 2023-02-02 오후 05:37:12
--- Last Updated   : 2026-05-28 오전 01:06:19
--- Version        : v1.7.92
+-- Last Updated   : 2026-05-30 오후 04:32:22
+-- Version        : v1.7.96
 
 ---@diagnostic disable: undefined-global, param-type-mismatch, undefined-field, cast-local-type -- 전역 함수 정의 에러, 매개변수 타입 불일치, 정의되지 않은 필드, 로컬 타입 캐스팅 무시
 
@@ -688,9 +688,13 @@ end
 
 -- GROUP_ROSTER_UPDATE 이벤트 핸들러
 function MimDice_GROUP_ROSTER_UPDATE()
-    GetPlayerList()
-    UpdateClassIconsBasedOnParty()
-    MimDice_UpdateList()
+    -- 전투 중에도 자주 발동(펫 소환/입퇴장/정신지배 등)하므로 pcall로 감싸
+    -- 예상 못한 secret value 등으로 인한 lua error를 차단 (다음 갱신 때 정상화)
+    pcall(function()
+        GetPlayerList()
+        UpdateClassIconsBasedOnParty()
+        MimDice_UpdateList()
+    end)
 end
 
 -- 애드온 초기 로딩 시 호출되는 함수
