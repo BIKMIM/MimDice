@@ -1960,11 +1960,11 @@ local function SA_CreateWindow()
     deathCfgBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
     deathCfgBtn:SetScript("OnClick", function() SA_ToggleDeathConfig() end)
 
-    -- ── << 블러드 / 마력주입 >> 섹션 (모든 직업 공용, 지속시간 바) ──────────────
+    -- ── << 블러드 >> 섹션 (모든 직업 공용, 지속시간 바) ──────────────
     local buffSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     buffSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -142)
     buffSectionLabel:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
-    buffSectionLabel:SetText("블러드 / 마력주입")
+    buffSectionLabel:SetText("블러드")
     buffSectionLabel:SetTextColor(1, 0.82, 0)
 
     local bloodCb = CreateFrame("CheckButton", "SA_BloodCheck", SA_OptionWindow, "UICheckButtonTemplate")
