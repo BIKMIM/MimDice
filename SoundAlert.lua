@@ -125,11 +125,6 @@ end
 local SA_piWasActive = false
 local SA_blWasActive = false
 
--- 존 전환(인스턴스 진입/퇴장) 직후 오라 정보가 서버에서 늦게 도착해
--- UNIT_AURA가 "없다가 생겼다"로 오판하는 것을 막기 위한 타임스탬프.
--- PLAYER_ENTERING_WORLD 이후 3초간 트리거를 억제하고 상태만 동기화한다.
-local SA_zoneSwitchTime = 0
-
 -- 현재 버프 상태로 추적값 동기화 (로그인/월드진입/리로드 시 오발동 방지)
 local function SA_SyncBuffStates()
     SA_piWasActive = SA_HasPlayerAura(POWER_INFUSION_SPELL_ID)
@@ -1657,9 +1652,8 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         SA_EnsureDeathFrame()
         SA_SyncBuffStates()   -- 현재 버프 상태로 초기화 (리로드 오발동 방지)
     elseif event == "PLAYER_ENTERING_WORLD" then
-        -- 존 전환 타임스탬프 기록 (UNIT_AURA 오발동 억제용)
-        -- 주의: 이 시점엔 서버 오라가 아직 안 온 경우가 있어 SyncBuffStates()만으론 불충분.
-        SA_zoneSwitchTime = GetTime()
+        -- 구렁/던전 진입, 순간이동 등 월드가 바뀔 때 상태 동기화 (safety net)
+        -- 실제 오발동 차단은 UNIT_AURA의 isFullUpdate 체크가 담당한다.
         SA_SyncBuffStates()
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
@@ -1676,17 +1670,17 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "UNIT_AURA" then
         -- 본인에게 블러드/마력주입이 "새로 걸렸는지" 감지.
         -- aura 객체의 spellId(인스턴스에서 secret value)를 읽지 않고, API로 존재 유무만
-        -- 확인한다 → 구렁/던전에서 NPC 파티와 함께여도 동작. full update(addedAuras 누락)와도 무관.
-        local unit = ...
+        -- 확인한다 → 구렁/던전에서 NPC 파티와 함께여도 동작.
+        local unit, updateInfo = ...
         if unit ~= "player" then return end
 
         local piActive = SA_HasPlayerAura(POWER_INFUSION_SPELL_ID)
         local blActive = SA_HasBloodlustDebuff()
 
-        -- 존 전환 후 3초 이내: 상태만 동기화하고 소리/바 트리거 억제.
-        -- PLAYER_ENTERING_WORLD 시 오라가 아직 미도착해 false로 잘못 동기화된 경우
-        -- UNIT_AURA가 뒤늦게 "없다→있다"로 오판하는 것을 방지.
-        if GetTime() - SA_zoneSwitchTime < 3 then
+        -- isFullUpdate = true는 존 전환/리로드 시 서버가 오라 전체를 재전송할 때 발생.
+        -- 이 시점엔 "새로 걸린" 오라가 아니므로 상태만 동기화하고 트리거 억제.
+        -- (이전의 3초 시간 기반 억제를 대체 — 시간 기반은 M+ 직후 빠른 PI를 막는 부작용이 있었음)
+        if updateInfo and updateInfo.isFullUpdate then
             SA_piWasActive = piActive
             SA_blWasActive = blActive
             return
