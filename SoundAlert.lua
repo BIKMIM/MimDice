@@ -71,19 +71,13 @@ local SYSTEM_ORDER = {}
 for i, def in ipairs(SYSTEM_ENTRIES) do SYSTEM_ORDER[def.spellID] = i end
 
 -- 공용 버프(지속시간 바) 정의 - 블러드/마력주입
--- duration: 효과 지속시간(초). 블러드는 고정 40s, 마력주입은 실제 오라값 우선 사용.
+-- duration: 효과 지속시간(초). 블러드는 고정 40s.
 local BUFF_DEFS = {
     {
         key = "BLOODLUST", name = "블러드",
         file = "블러드_ACallToArms.mp3",
-        color = { 1.00, 0.20, 0.20 },   -- 기본 빨강 (팔레트 빨강-중간)
-        duration = 40, dy = 340,        -- 화면 위쪽 (clamp 안 걸리는 최대치)
-    },
-    {
-        key = "POWERINFUSE", name = "마력 주입",
-        file = "밀하우스_15초편집.mp3",
-        color = { 0.20, 0.50, 1.00 },   -- 기본 파랑 (팔레트 파랑-중간)
-        duration = 15, dy = 290,        -- 지속 15초 고정, 블러드 바로 아래 (50px = 바 높이만큼 붙음)
+        color = { 1.00, 0.20, 0.20 },
+        duration = 40, dy = 340,
     },
 }
 local BUFF_DEF_BY_KEY = {}
@@ -98,9 +92,6 @@ local BLOODLUST_DEBUFFS = {
     264689, -- Fatigued (Primal Rage)
     390435, -- Exhaustion (Fury of the Aspects)
 }
-
--- 마력 주입 (Power Infusion, 사제)
-local POWER_INFUSION_SPELL_ID = 10060
 
 -- addedAuras에서 aura.spellId가 블러드 계열 디버프인지 확인 (pcall로 secret value 안전 처리)
 local function SA_IsBloodlustAura(aura)
@@ -1663,13 +1654,6 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
                 break
             end
 
-            -- 마력주입: spellId 직접 비교 (인스턴스에서 secret value면 pcall이 false 반환 → 무시)
-            local okPi, sid = pcall(function() return aura.spellId end)
-            if okPi and sid == POWER_INFUSION_SPELL_ID then
-                SA_PlayBuff("POWERINFUSE")
-                SA_StartBuffBar("POWERINFUSE", BUFF_DEF_BY_KEY["POWERINFUSE"].duration)
-                break
-            end
         end
     elseif event == "UNIT_DIED" then
         -- 파티/공대원/본인 사망 감지
@@ -2005,50 +1989,28 @@ local function SA_CreateWindow()
     bloodCfgBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
     bloodCfgBtn:SetScript("OnClick", function() SA_ToggleBuffConfig("BLOODLUST") end)
 
-    local piCb = CreateFrame("CheckButton", "SA_PICheck", SA_OptionWindow, "UICheckButtonTemplate")
-    piCb:SetSize(22, 22)
-    piCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -182)
-    piCb:SetChecked(MimDiceDB and MimDiceDB.buffTrack and MimDiceDB.buffTrack.POWERINFUSE and MimDiceDB.buffTrack.POWERINFUSE.enabled)
-    piCb:SetScript("OnClick", function(self)
-        if MimDiceDB and MimDiceDB.buffTrack and MimDiceDB.buffTrack.POWERINFUSE then
-            MimDiceDB.buffTrack.POWERINFUSE.enabled = self:GetChecked() and true or false
-        end
-    end)
-    local piLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    piLabel:SetPoint("LEFT", piCb, "RIGHT", 2, 0)
-    piLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
-    piLabel:SetText("마력 주입 (사운드 + 지속시간 바)")
-    piLabel:SetTextColor(0.9, 0.9, 0.9)
-
-    local piCfgBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
-    piCfgBtn:SetSize(50, 22)
-    piCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -182)
-    piCfgBtn:SetText("설정")
-    piCfgBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
-    piCfgBtn:SetScript("OnClick", function() SA_ToggleBuffConfig("POWERINFUSE") end)
-
     -- 구분선
     local divider = SA_OptionWindow:CreateTexture(nil, "ARTWORK")
     divider:SetSize(350, 1)
-    divider:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -212)
+    divider:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -192)
     divider:SetColorTexture(0.5, 0.5, 0.5, 0.6)
 
     -- ── << 스킬 사운드 알림 >> 섹션 ─────────────────
     local skillSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    skillSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -224)
+    skillSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -204)
     skillSectionLabel:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
     skillSectionLabel:SetText("스킬 사운드 알림 (직업별 저장)")
     skillSectionLabel:SetTextColor(1, 0.82, 0)
 
     local inputLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    inputLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -250)
+    inputLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -230)
     inputLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
     inputLabel:SetText("1. 추가할 스킬의 이름 또는 ID 입력 (꼭 띄어쓰기 지켜야 함)")
     inputLabel:SetTextColor(0.9, 0.9, 0.9)
 
     local inputBox = CreateFrame("EditBox", "SA_SpellInput", SA_OptionWindow, "InputBoxTemplate")
     inputBox:SetSize(200, 22)
-    inputBox:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 20, -270)
+    inputBox:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 20, -250)
     inputBox:SetAutoFocus(false)
     inputBox:SetFont("Fonts\\2002.ttf", 12, "")
 
@@ -2112,13 +2074,13 @@ local function SA_CreateWindow()
 
     -- ── 2. 목록 스크롤 프레임 ──────────────────────────────────────────
     local listTitle = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    listTitle:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -310)
+    listTitle:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -290)
     listTitle:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
     listTitle:SetText("2. 사운드 개별 설정")
     listTitle:SetTextColor(0.8, 0.8, 0.8)
 
     local scrollFrame = CreateFrame("ScrollFrame", "SA_ListScrollFrame", SA_OptionWindow, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 10, -330)
+    scrollFrame:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 10, -310)
     scrollFrame:SetPoint("BOTTOMRIGHT", SA_OptionWindow, "BOTTOMRIGHT", -30, 10)
 
     local scrollChild = CreateFrame("Frame", "SA_ListScrollChild", scrollFrame)
