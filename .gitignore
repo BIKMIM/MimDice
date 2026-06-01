@@ -9,6 +9,11 @@ Desktop.ini
 .vs/
 *.swp
 *.swo
+*.wowproj
+*.wowsln
+
+# 로컬 배포 스크립트
+*.bat
 
 # Claude Code
 .claude/
