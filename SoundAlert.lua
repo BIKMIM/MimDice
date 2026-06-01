@@ -1618,7 +1618,6 @@ local SA_EventFrame = CreateFrame("Frame")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
 SA_EventFrame:RegisterEvent("UNIT_DIED")
-SA_EventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 SA_EventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 
 SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
@@ -1650,6 +1649,7 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         if unit ~= "player" or not updateInfo or not updateInfo.addedAuras then return end
 
         for _, aura in ipairs(updateInfo.addedAuras) do
+            -- 블러드: Sated/Exhaustion 계열 디버프가 새로 추가되면 방금 블러드 사용됨
             local ok, isLust = pcall(SA_IsBloodlustAura, aura)
             if ok and isLust then
                 local ok2, remaining = pcall(function()
@@ -1662,16 +1662,14 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
                 end
                 break
             end
-        end
-    elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
-        -- 마력주입 감지: 12.0.5 이후 인스턴스에서 unit aura API로 PI를 읽을 수 없어
-        -- 전투 로그의 SPELL_AURA_APPLIED 이벤트로 우회 감지한다.
-        local _, subevent, _, _, _, _, _, destGUID, _, _, _, spellID = CombatLogGetCurrentEventInfo()
-        if subevent == "SPELL_AURA_APPLIED"
-           and spellID == POWER_INFUSION_SPELL_ID
-           and destGUID == UnitGUID("player") then
-            SA_PlayBuff("POWERINFUSE")
-            SA_StartBuffBar("POWERINFUSE", BUFF_DEF_BY_KEY["POWERINFUSE"].duration)
+
+            -- 마력주입: spellId 직접 비교 (인스턴스에서 secret value면 pcall이 false 반환 → 무시)
+            local okPi, sid = pcall(function() return aura.spellId end)
+            if okPi and sid == POWER_INFUSION_SPELL_ID then
+                SA_PlayBuff("POWERINFUSE")
+                SA_StartBuffBar("POWERINFUSE", BUFF_DEF_BY_KEY["POWERINFUSE"].duration)
+                break
+            end
         end
     elseif event == "UNIT_DIED" then
         -- 파티/공대원/본인 사망 감지
