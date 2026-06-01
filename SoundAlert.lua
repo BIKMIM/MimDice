@@ -102,33 +102,14 @@ local BLOODLUST_DEBUFFS = {
 -- 마력 주입 (Power Infusion, 사제)
 local POWER_INFUSION_SPELL_ID = 10060
 
--- 본인에게 특정 spellID 오라(버프/디버프)가 있는지 — "존재 유무"만 확인한다.
--- ※ aura 객체의 필드(spellId 등)를 직접 읽지 않으므로, 구렁/던전 등 인스턴스에서
---    그 필드가 secret value로 보호돼도 안전. (NPC 파티 포함 모든 상황에서 동작)
---    이전 방식(aura.spellId == ID 비교)은 인스턴스에서 spellId가 secret이면
---    항상 false가 되어 감지에 실패했다.
-local function SA_HasPlayerAura(spellID)
-    if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then return false end
-    local ok, aura = pcall(C_UnitAuras.GetPlayerAuraBySpellID, spellID)
-    return ok and aura ~= nil
-end
-
--- 블러드(Sated/Exhaustion) 디버프가 하나라도 있는지
-local function SA_HasBloodlustDebuff()
+-- addedAuras에서 aura.spellId가 블러드 계열 디버프인지 확인 (pcall로 secret value 안전 처리)
+local function SA_IsBloodlustAura(aura)
+    local sid = aura and aura.spellId
+    if not sid then return false end
     for j = 1, #BLOODLUST_DEBUFFS do
-        if SA_HasPlayerAura(BLOODLUST_DEBUFFS[j]) then return true end
+        if sid == BLOODLUST_DEBUFFS[j] then return true end
     end
     return false
-end
-
--- 버프 활성 상태 추적 ("없음 → 있음" 전이로 "방금 걸림"을 판단)
-local SA_piWasActive = false
-local SA_blWasActive = false
-
--- 현재 버프 상태로 추적값 동기화 (로그인/월드진입/리로드 시 오발동 방지)
-local function SA_SyncBuffStates()
-    SA_piWasActive = SA_HasPlayerAura(POWER_INFUSION_SPELL_ID)
-    SA_blWasActive = SA_HasBloodlustDebuff()
 end
 
 function SA_InitDB()
@@ -1636,8 +1617,8 @@ end
 local SA_EventFrame = CreateFrame("Frame")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
-SA_EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")   -- 구렁/던전 진입 등에서 버프 상태 재동기화
 SA_EventFrame:RegisterEvent("UNIT_DIED")
+SA_EventFrame:RegisterEvent("COMBAT_LOG_EVENT_UNFILTERED")
 SA_EventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 
 SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
@@ -1650,11 +1631,6 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         end
         -- 죽음 프레임도 미리 생성 (첫 사망=전투 중 생성 지연/위험 제거)
         SA_EnsureDeathFrame()
-        SA_SyncBuffStates()   -- 현재 버프 상태로 초기화 (리로드 오발동 방지)
-    elseif event == "PLAYER_ENTERING_WORLD" then
-        -- 구렁/던전 진입, 순간이동 등 월드가 바뀔 때 상태 동기화 (safety net)
-        -- 실제 오발동 차단은 UNIT_AURA의 isFullUpdate 체크가 담당한다.
-        SA_SyncBuffStates()
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
         if unit ~= "player" then return end
@@ -1668,37 +1644,35 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
     elseif event == "UNIT_AURA" then
-        -- 본인에게 블러드/마력주입이 "새로 걸렸는지" 감지.
-        -- aura 객체의 spellId(인스턴스에서 secret value)를 읽지 않고, API로 존재 유무만
-        -- 확인한다 → 구렁/던전에서 NPC 파티와 함께여도 동작.
+        -- 블러드 감지: addedAuras에서 직접 읽고 remaining >= 560 으로 신규 적용 확인.
+        -- (ActionSounds 참고 방식 — API 캐시 지연·isFullUpdate 오판 문제 없음)
         local unit, updateInfo = ...
-        if unit ~= "player" then return end
+        if unit ~= "player" or not updateInfo or not updateInfo.addedAuras then return end
 
-        local piActive = SA_HasPlayerAura(POWER_INFUSION_SPELL_ID)
-        local blActive = SA_HasBloodlustDebuff()
-
-        -- isFullUpdate = true는 존 전환/리로드 시 서버가 오라 전체를 재전송할 때 발생.
-        -- 이 시점엔 "새로 걸린" 오라가 아니므로 상태만 동기화하고 트리거 억제.
-        -- (이전의 3초 시간 기반 억제를 대체 — 시간 기반은 M+ 직후 빠른 PI를 막는 부작용이 있었음)
-        if updateInfo and updateInfo.isFullUpdate then
-            SA_piWasActive = piActive
-            SA_blWasActive = blActive
-            return
+        for _, aura in ipairs(updateInfo.addedAuras) do
+            local ok, isLust = pcall(SA_IsBloodlustAura, aura)
+            if ok and isLust then
+                local ok2, remaining = pcall(function()
+                    return aura.expirationTime and (aura.expirationTime - GetTime()) or 0
+                end)
+                -- 방금 걸린 Sated는 남은 시간이 ~600s. 560 미만이면 이미 있던 것(존 전환 재전송).
+                if ok2 and remaining >= 560 then
+                    SA_PlayBuff("BLOODLUST")
+                    SA_StartBuffBar("BLOODLUST", BUFF_DEF_BY_KEY["BLOODLUST"].duration)
+                end
+                break
+            end
         end
-
-        -- 마력 주입: 없다가 생기면 방금 걸린 것
-        if piActive and not SA_piWasActive then
+    elseif event == "COMBAT_LOG_EVENT_UNFILTERED" then
+        -- 마력주입 감지: 12.0.5 이후 인스턴스에서 unit aura API로 PI를 읽을 수 없어
+        -- 전투 로그의 SPELL_AURA_APPLIED 이벤트로 우회 감지한다.
+        local _, subevent, _, _, _, _, _, destGUID, _, _, _, spellID = CombatLogGetCurrentEventInfo()
+        if subevent == "SPELL_AURA_APPLIED"
+           and spellID == POWER_INFUSION_SPELL_ID
+           and destGUID == UnitGUID("player") then
             SA_PlayBuff("POWERINFUSE")
-            SA_StartBuffBar("POWERINFUSE", BUFF_DEF_BY_KEY["POWERINFUSE"].duration)  -- 고정 15초
+            SA_StartBuffBar("POWERINFUSE", BUFF_DEF_BY_KEY["POWERINFUSE"].duration)
         end
-        SA_piWasActive = piActive
-
-        -- 블러드: Sated/Exhaustion 디버프가 없다가 생기면 블러드 직후
-        if blActive and not SA_blWasActive then
-            SA_PlayBuff("BLOODLUST")
-            SA_StartBuffBar("BLOODLUST", BUFF_DEF_BY_KEY["BLOODLUST"].duration)  -- 블러드는 고정 40s
-        end
-        SA_blWasActive = blActive
     elseif event == "UNIT_DIED" then
         -- 파티/공대원/본인 사망 감지
         local deadGUID = ...
