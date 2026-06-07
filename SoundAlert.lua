@@ -273,14 +273,17 @@ function SA_InitDB()
 end
 
 -- 3가지 타입(preset, custom, id) 지원
-local function SA_PlaySound(entry)
+-- channel: 재생 사운드 채널 (기본 "Master"). 블러드/마력주입처럼 긴 사운드는 "Dialog"로 재생하면
+--          전투 효과음(SFX) 폭주 시 동시재생 제한에 밀려 끊기는 현상을 막는다.
+local function SA_PlaySound(entry, channel)
     if not entry or not entry.enabled then return end
+    channel = channel or "Master"
 
     if entry.soundType == "preset" and entry.soundKey then
         if type(entry.soundKey) == "number" and entry.soundKey > 500000 then
-            pcall(PlaySoundFile, entry.soundKey, "Master")
+            pcall(PlaySoundFile, entry.soundKey, channel)
         else
-            pcall(PlaySound, entry.soundKey, "Master")
+            pcall(PlaySound, entry.soundKey, channel)
         end
     elseif entry.soundType == "custom" then
         if not entry.soundFile or entry.soundFile == "" then
@@ -288,7 +291,7 @@ local function SA_PlaySound(entry)
             return
         end
         local path = "Interface\\AddOns\\MimDice\\sounds\\" .. entry.soundFile
-        local ok, handle = pcall(PlaySoundFile, path, "Master")
+        local ok, handle = pcall(PlaySoundFile, path, channel)
         if not ok or not handle then
             DEFAULT_CHAT_FRAME:AddMessage(
                 "|cffff0000[MimDice] 사운드 파일을 재생할 수 없습니다: " .. entry.soundFile .. "|r  "
@@ -300,9 +303,9 @@ local function SA_PlaySound(entry)
         local numericID = tonumber(entry.soundKey)
         if numericID then
             if numericID > 500000 then
-                pcall(PlaySoundFile, numericID, "Master")
+                pcall(PlaySoundFile, numericID, channel)
             else
-                pcall(PlaySound, numericID, "Master")
+                pcall(PlaySound, numericID, channel)
             end
         end
     end
@@ -1536,10 +1539,11 @@ local function SA_StartBuffBar(key, duration, force)
 end
 
 -- 버프 사운드 재생 (계정 공용, bt.enabled로 게이트)
+-- 블러드/마력주입은 길어서 "Dialog" 채널로 재생 → 전투 효과음 폭주에 밀려 끊기는 현상 방지
 local function SA_PlayBuff(key)
     local bt = MimDiceDB and MimDiceDB.buffTrack and MimDiceDB.buffTrack[key]
     if not bt or not bt.enabled then return end
-    SA_PlaySound(bt)
+    SA_PlaySound(bt, "Dialog")
 end
 
 -- 미리보기 강제 켜기 ("바 표시" 체크 시 위치/모양 확인용)
