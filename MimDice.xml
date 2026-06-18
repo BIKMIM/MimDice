@@ -1,5 +1,5 @@
 <Ui xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns="http://www.blizzard.com/wow/ui/">
-	<Frame name="MainWindow" inherits="InsetFrameTemplate3" hidden="true" movable="true" resizable="true">
+	<Frame name="MainWindow" inherits="InsetFrameTemplate3" hidden="true" movable="true" resizable="true" frameStrata="HIGH">
 		<Size x="300" y="518" />
 		<Anchors>
 			<Anchor x="456" y="-87" point="TOPLEFT" />

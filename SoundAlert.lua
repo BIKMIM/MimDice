@@ -1732,9 +1732,13 @@ local function SA_CreateWindow()
     if not mainWin then return end
 
     SA_OptionWindow = CreateFrame("Frame", "SA_OptionWindow", UIParent, "BackdropTemplate")
-    SA_OptionWindow:SetSize(380, 672)
+    -- 너비만 고정하고, 위/아래를 메인창에 앵커 → 옵션창 높이가 메인창 높이를 항상 따라감
+    -- (기본값이든 사용자가 리사이즈하든 좌우 창의 위/아래 끝이 항상 맞음)
+    SA_OptionWindow:SetWidth(380)
     SA_OptionWindow:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", 38, 0)
-    
+    SA_OptionWindow:SetPoint("BOTTOMLEFT", mainWin, "BOTTOMRIGHT", 38, 0)
+    SA_OptionWindow:SetFrameStrata("HIGH")   -- 메인창과 동일 레이어 → 자원/재사용바에 안 가리게
+
     -- 옵션창 드래그하면 메인창도 이동
     SA_OptionWindow:RegisterForDrag("LeftButton")
     SA_OptionWindow:SetScript("OnDragStart", function()
