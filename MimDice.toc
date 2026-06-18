@@ -1,9 +1,9 @@
-## Interface: 120000, 120001, 120005
+## Interface: 120000, 120001, 120005, 120007
 ## Title: MimDice
 ## Author: BIK
 ## Notes: 밈주머니를 위한 주사위 애드온. 애기야 사랑해!!
 ## SavedVariables: MimDiceDB
-## Version: 1.7.98
+## Version: 1.8.0
 ## IconTexture: Interface\AddOns\MimDice\img\Mim_minimap_icon.tga
 ## OptionalDeps: LibStub, LibDataBroker-1.1, LibDBIcon-1.0 
 

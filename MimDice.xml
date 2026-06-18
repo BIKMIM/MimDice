@@ -165,7 +165,7 @@
 					<FontHeight val="12" />
 					<Color r="1" g="0.82" />
 				</FontString>
-				<FontString name="version" inherits="" font="Fonts\2002.ttf" text="v 1.7.98">
+				<FontString name="version" inherits="" font="Fonts\2002.ttf" text="v 1.8.0">
 					<Size x="45" y="20" />
 					<Anchors>
 						<Anchor x="94" y="-32" point="TOPLEFT" relativeTo="MainWindow" />
