@@ -93,15 +93,10 @@ local BUFF_DEFS = {
 local BUFF_DEF_BY_KEY = {}
 for _, d in ipairs(BUFF_DEFS) do BUFF_DEF_BY_KEY[d.key] = d end
 
--- 전투부활(Combat Resurrection) 충전 추적 - 클래스별 전투부활 스킬 ID.
--- C_Spell.GetSpellCharges는 "본인이 가진 스킬" 기준이라, 전투부활 보유 클래스에서만 동작.
--- (전투부활 없는 클래스는 충전 조회 불가 → 지원 제외, 사용자 합의)
-local BATTLE_RES_SPELLS = {
-    DRUID       = 20484,   -- 환생 (Rebirth)
-    DEATHKNIGHT = 61999,   -- 동료 되살리기 (Raise Ally)
-    WARLOCK     = 20707,   -- 영혼석 (Soulstone)
-    PALADIN     = 391054,  -- 중재 (Intercession)
-}
+-- 전투부활(Combat Resurrection) 충전 추적.
+-- WoW는 레이드 공용 전투부활 충전 풀을 Rebirth(20484) ID로 관리하며,
+-- C_Spell.GetSpellCharges(20484)는 직업 무관하게 그룹 전체 충전 수를 반환한다.
+local BREZ_SPELL_ID = 20484   -- 환생 (Rebirth) — 레이드 공용 전투부활 풀 대표 ID
 
 -- 블러드 감지용 디버프 (Sated/Exhaustion 계열 - 적용 시 블러드 직후로 간주)
 local BLOODLUST_DEBUFFS = {
@@ -292,7 +287,7 @@ function SA_InitDB()
     end
 
     -- =================================================================
-    -- 전투부활 충전 알림: 계정 공용 (사운드만, 전투부활 보유 클래스에서만 동작)
+    -- 전투부활 충전 알림: 계정 공용 (사운드만, 모든 클래스 지원)
     -- =================================================================
     if not MimDiceDB.battleRes then MimDiceDB.battleRes = {} end
     local br = MimDiceDB.battleRes
@@ -1578,24 +1573,13 @@ local function SA_PlayBuff(key)
 end
 
 -- =====================================================================
--- 전투부활 충전 추적 (전투부활 보유 클래스 한정)
+-- 전투부활 충전 추적 (모든 클래스 지원)
 -- =====================================================================
-local SA_brSpellID = nil       -- 본인 클래스의 전투부활 spellID (false면 비보유 클래스)
 local SA_brLastCharges = nil   -- 마지막 충전 수 (증가 감지용)
 
-local function SA_BattleResSpellID()
-    if SA_brSpellID == nil then
-        local _, class = UnitClass("player")
-        SA_brSpellID = BATTLE_RES_SPELLS[class] or false
-    end
-    return SA_brSpellID or nil
-end
-
--- 현재 충전 수 조회 (없으면 nil) — C_Spell.GetSpellCharges는 본인 스킬 기준
+-- 현재 충전 수 조회 (없으면 nil) — 직업 무관하게 레이드 공용 풀 조회
 local function SA_GetBattleResCharges()
-    local id = SA_BattleResSpellID()
-    if not id then return nil end
-    local ok, info = pcall(C_Spell.GetSpellCharges, id)
+    local ok, info = pcall(C_Spell.GetSpellCharges, BREZ_SPELL_ID)
     if ok and info and info.currentCharges then return info.currentCharges end
     return nil
 end
@@ -2076,7 +2060,7 @@ local function SA_CreateWindow()
     bloodCfgBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
     bloodCfgBtn:SetScript("OnClick", function() SA_ToggleBuffConfig("BLOODLUST") end)
 
-    -- 전투부활 충전 줄 (사운드만, 전투부활 보유 클래스에서만 표시)
+    -- 전투부활 충전 줄 (사운드만, 모든 클래스 표시)
     local brCb = CreateFrame("CheckButton", nil, SA_OptionWindow, "UICheckButtonTemplate")
     brCb:SetSize(22, 22)
     brCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -182)
@@ -2195,15 +2179,6 @@ local function SA_CreateWindow()
         b.enabled = was
     end)
     brRefreshRow()
-
-    -- 전투부활 보유 클래스가 아니면 줄 숨김 + 안내
-    if not SA_BattleResSpellID() then
-        brCb:Hide(); brTypeBtn:Hide(); brSoundBox:Hide(); brDD:Hide(); brTestBtn:Hide()
-        brLabel:ClearAllPoints()
-        brLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 17, -185)
-        brLabel:SetText("전투부활 (이 직업은 전투부활 스킬 없음)")
-        brLabel:SetTextColor(0.5, 0.5, 0.5)
-    end
 
     -- 구분선
     local divider = SA_OptionWindow:CreateTexture(nil, "ARTWORK")
