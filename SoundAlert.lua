@@ -299,8 +299,8 @@ function SA_InitDB()
     if br.enabled == nil then br.enabled = false end             -- 마스터 on/off
     if br.soundType == nil then br.soundType = "preset" end      -- 기본: 내장
     if br.soundFile == nil then br.soundFile = "" end
-    if br.soundName == nil then br.soundName = "사운드 선택..." end
-    -- soundKey: 내장 미선택 시 nil, 내장 선택/ID 모드에서 값 저장
+    if br.soundKey == nil then br.soundKey = 573086 end          -- 기본 내장음: 어째서 포기하지 않죠?
+    if br.soundName == nil then br.soundName = "어째서 포기하지 않죠?" end
 end
 
 -- 3가지 타입(preset, custom, id) 지원
