@@ -83,6 +83,16 @@ local BUFF_DEFS = {
 local BUFF_DEF_BY_KEY = {}
 for _, d in ipairs(BUFF_DEFS) do BUFF_DEF_BY_KEY[d.key] = d end
 
+-- 전투부활(Combat Resurrection) 충전 추적 - 클래스별 전투부활 스킬 ID.
+-- C_Spell.GetSpellCharges는 "본인이 가진 스킬" 기준이라, 전투부활 보유 클래스에서만 동작.
+-- (전투부활 없는 클래스는 충전 조회 불가 → 지원 제외, 사용자 합의)
+local BATTLE_RES_SPELLS = {
+    DRUID       = 20484,   -- 환생 (Rebirth)
+    DEATHKNIGHT = 61999,   -- 동료 되살리기 (Raise Ally)
+    WARLOCK     = 20707,   -- 영혼석 (Soulstone)
+    PALADIN     = 391054,  -- 중재 (Intercession)
+}
+
 -- 블러드 감지용 디버프 (Sated/Exhaustion 계열 - 적용 시 블러드 직후로 간주)
 local BLOODLUST_DEBUFFS = {
     57723,  -- Exhaustion (Heroism)
@@ -270,6 +280,17 @@ function SA_InitDB()
         if bt.timeFontSize == nil then bt.timeFontSize = 40 end  -- 글씨 크기 (라벨+남은시간 공통)
         if bt.alphaPct == nil then bt.alphaPct = 50 end          -- 바 채움 투명도 (%)
     end
+
+    -- =================================================================
+    -- 전투부활 충전 알림: 계정 공용 (사운드만, 전투부활 보유 클래스에서만 동작)
+    -- =================================================================
+    if not MimDiceDB.battleRes then MimDiceDB.battleRes = {} end
+    local br = MimDiceDB.battleRes
+    if br.enabled == nil then br.enabled = false end             -- 마스터 on/off
+    if br.soundType == nil then br.soundType = "preset" end      -- 기본: 내장
+    if br.soundFile == nil then br.soundFile = "" end
+    if br.soundName == nil then br.soundName = "사운드 선택..." end
+    -- soundKey: 내장 미선택 시 nil, 내장 선택/ID 모드에서 값 저장
 end
 
 -- 3가지 타입(preset, custom, id) 지원
@@ -1546,6 +1567,46 @@ local function SA_PlayBuff(key)
     SA_PlaySound(bt, "Dialog")
 end
 
+-- =====================================================================
+-- 전투부활 충전 추적 (전투부활 보유 클래스 한정)
+-- =====================================================================
+local SA_brSpellID = nil       -- 본인 클래스의 전투부활 spellID (false면 비보유 클래스)
+local SA_brLastCharges = nil   -- 마지막 충전 수 (증가 감지용)
+
+local function SA_BattleResSpellID()
+    if SA_brSpellID == nil then
+        local _, class = UnitClass("player")
+        SA_brSpellID = BATTLE_RES_SPELLS[class] or false
+    end
+    return SA_brSpellID or nil
+end
+
+-- 현재 충전 수 조회 (없으면 nil) — C_Spell.GetSpellCharges는 본인 스킬 기준
+local function SA_GetBattleResCharges()
+    local id = SA_BattleResSpellID()
+    if not id then return nil end
+    local ok, info = pcall(C_Spell.GetSpellCharges, id)
+    if ok and info and info.currentCharges then return info.currentCharges end
+    return nil
+end
+
+-- 추적 기준값을 현재 충전으로 동기화 (로그인/인스턴스 진입 시 오발동 방지)
+local function SA_SyncBattleResCharges()
+    SA_brLastCharges = SA_GetBattleResCharges()
+end
+
+-- 충전 변화 확인 → 늘었으면 사운드 (SPELL_UPDATE_CHARGES에서 호출)
+local function SA_CheckBattleResCharge()
+    local br = MimDiceDB and MimDiceDB.battleRes
+    if not br or not br.enabled then return end
+    local cur = SA_GetBattleResCharges()
+    if cur == nil then return end
+    if SA_brLastCharges ~= nil and cur > SA_brLastCharges then
+        SA_PlaySound(br, "Dialog")   -- 충전이 늘어남 = 전투부활 충전됨
+    end
+    SA_brLastCharges = cur
+end
+
 -- 미리보기 강제 켜기 ("바 표시" 체크 시 위치/모양 확인용)
 function SA_BuffPreviewOn(key)
     local f = SA_EnsureBuffBar(key)
@@ -1612,7 +1673,9 @@ end
 local SA_EventFrame = CreateFrame("Frame")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
+SA_EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")   -- 인스턴스 진입 시 전투부활 충전 기준값 동기화
 SA_EventFrame:RegisterEvent("UNIT_DIED")
+SA_EventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")     -- 전투부활 충전 변화 감지
 SA_EventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 
 SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
@@ -1625,6 +1688,12 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         end
         -- 죽음 프레임도 미리 생성 (첫 사망=전투 중 생성 지연/위험 제거)
         SA_EnsureDeathFrame()
+        SA_SyncBattleResCharges()   -- 전투부활 충전 기준값 초기화 (오발동 방지)
+    elseif event == "PLAYER_ENTERING_WORLD" then
+        -- 인스턴스 진입/이동 시 충전 기준값 재동기화 (진입 직후 충전 변화 오발동 방지)
+        SA_SyncBattleResCharges()
+    elseif event == "SPELL_UPDATE_CHARGES" then
+        SA_CheckBattleResCharge()
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
         if unit ~= "player" then return end
@@ -1972,7 +2041,7 @@ local function SA_CreateWindow()
     local buffSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     buffSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -142)
     buffSectionLabel:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
-    buffSectionLabel:SetText("블러드")
+    buffSectionLabel:SetText("블러드 / 전투부활")
     buffSectionLabel:SetTextColor(1, 0.82, 0)
 
     local bloodCb = CreateFrame("CheckButton", "SA_BloodCheck", SA_OptionWindow, "UICheckButtonTemplate")
@@ -1997,28 +2066,157 @@ local function SA_CreateWindow()
     bloodCfgBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
     bloodCfgBtn:SetScript("OnClick", function() SA_ToggleBuffConfig("BLOODLUST") end)
 
+    -- 전투부활 충전 줄 (사운드만, 전투부활 보유 클래스에서만 표시)
+    local brCb = CreateFrame("CheckButton", nil, SA_OptionWindow, "UICheckButtonTemplate")
+    brCb:SetSize(22, 22)
+    brCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -182)
+    brCb:SetChecked(MimDiceDB and MimDiceDB.battleRes and MimDiceDB.battleRes.enabled)
+    brCb:SetScript("OnClick", function(self)
+        if MimDiceDB.battleRes then MimDiceDB.battleRes.enabled = self:GetChecked() and true or false end
+    end)
+    local brLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    brLabel:SetPoint("LEFT", brCb, "RIGHT", 2, 0)
+    brLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    brLabel:SetText("전투부활")
+    brLabel:SetTextColor(0.9, 0.9, 0.9)
+
+    local brTypeBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    brTypeBtn:SetSize(46, 22)
+    brTypeBtn:SetPoint("LEFT", brLabel, "RIGHT", 6, 0)
+    brTypeBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+
+    -- 내장 사운드 선택용 드롭다운
+    local brDD = CreateFrame("Frame", "SA_BR_DD", SA_OptionWindow, "UIDropDownMenuTemplate")
+    brDD:SetPoint("LEFT", brTypeBtn, "RIGHT", -12, -2)
+    UIDropDownMenu_SetWidth(brDD, 92)
+
+    -- 커스텀 파일명 / ID 입력칸
+    local brSoundBox = CreateFrame("EditBox", nil, SA_OptionWindow, "InputBoxTemplate")
+    brSoundBox:SetSize(108, 22)
+    brSoundBox:SetPoint("LEFT", brTypeBtn, "RIGHT", 10, 0)
+    brSoundBox:SetAutoFocus(false)
+    brSoundBox:SetFont("Fonts\\2002.ttf", 11, "")
+
+    local brTestBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    brTestBtn:SetSize(24, 22)
+    brTestBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -12, -182)
+    brTestBtn:SetText("▶")
+
+    -- 내장 사운드 드롭다운 메뉴 (SOUND_CATEGORIES → 카테고리 → 사운드)
+    UIDropDownMenu_Initialize(brDD, function(_, level, menuList)
+        local b = MimDiceDB.battleRes
+        level = level or 1
+        local info = UIDropDownMenu_CreateInfo()
+        if level == 1 then
+            for catIdx, cat in ipairs(SOUND_CATEGORIES) do
+                info.text = cat.name
+                info.hasArrow = true
+                info.menuList = "CAT_" .. catIdx
+                info.notCheckable = true
+                UIDropDownMenu_AddButton(info, level)
+            end
+        elseif level == 2 and type(menuList) == "string" and menuList:find("CAT_") then
+            local catIdx = tonumber(menuList:match("CAT_(%d+)"))
+            local cat = SOUND_CATEGORIES[catIdx]
+            if cat then
+                for _, snd in ipairs(cat.sounds) do
+                    info.text = snd.name
+                    info.notCheckable = false
+                    info.checked = (b.soundKey ~= nil and b.soundKey == snd.id)
+                    info.func = function()
+                        b.soundKey = snd.id
+                        b.soundName = snd.name
+                        UIDropDownMenu_SetText(brDD, snd.name)
+                        CloseDropDownMenus()
+                        SA_PlaySound(b, "Dialog")
+                    end
+                    UIDropDownMenu_AddButton(info, level)
+                end
+            end
+        end
+    end)
+
+    local function brRefreshRow()
+        local b = MimDiceDB.battleRes
+        local label = "내장"
+        if b.soundType == "custom" then label = "커스텀" end
+        if b.soundType == "id" then label = "ID" end
+        brTypeBtn:SetText(label)
+        if b.soundType == "preset" then
+            brDD:Show(); brSoundBox:Hide()
+            UIDropDownMenu_SetText(brDD, b.soundName or "사운드 선택...")
+        else
+            brDD:Hide(); brSoundBox:Show()
+            if b.soundType == "id" then
+                brSoundBox:SetText(b.soundKey and tostring(b.soundKey) or "")
+            else
+                brSoundBox:SetText(b.soundFile or "")
+            end
+        end
+    end
+    -- 토글: 내장 → 커스텀 → ID → 내장
+    brTypeBtn:SetScript("OnClick", function()
+        local b = MimDiceDB.battleRes
+        if b.soundType == "preset" then
+            b.soundType = "custom"; b.soundFile = ""
+        elseif b.soundType == "custom" then
+            b.soundType = "id"; b.soundKey = ""
+        else
+            b.soundType = "preset"; b.soundKey = nil; b.soundName = "사운드 선택..."
+        end
+        brRefreshRow()
+    end)
+    brSoundBox:SetScript("OnTextChanged", function(self, userInput)
+        if not userInput then return end
+        local b = MimDiceDB.battleRes
+        if b.soundType == "id" then
+            b.soundKey = tonumber(self:GetText()) or self:GetText()
+        else
+            b.soundFile = self:GetText()
+            b.soundName = self:GetText()
+        end
+    end)
+    brSoundBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    brTestBtn:SetScript("OnClick", function()
+        local b = MimDiceDB.battleRes
+        local was = b.enabled
+        b.enabled = true
+        SA_PlaySound(b, "Dialog")
+        b.enabled = was
+    end)
+    brRefreshRow()
+
+    -- 전투부활 보유 클래스가 아니면 줄 숨김 + 안내
+    if not SA_BattleResSpellID() then
+        brCb:Hide(); brTypeBtn:Hide(); brSoundBox:Hide(); brDD:Hide(); brTestBtn:Hide()
+        brLabel:ClearAllPoints()
+        brLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 17, -185)
+        brLabel:SetText("전투부활 (이 직업은 전투부활 스킬 없음)")
+        brLabel:SetTextColor(0.5, 0.5, 0.5)
+    end
+
     -- 구분선
     local divider = SA_OptionWindow:CreateTexture(nil, "ARTWORK")
     divider:SetSize(350, 1)
-    divider:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -192)
+    divider:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -214)
     divider:SetColorTexture(0.5, 0.5, 0.5, 0.6)
 
     -- ── << 스킬 사운드 알림 >> 섹션 ─────────────────
     local skillSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    skillSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -204)
+    skillSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -226)
     skillSectionLabel:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
     skillSectionLabel:SetText("스킬 사운드 알림 (직업별 저장)")
     skillSectionLabel:SetTextColor(1, 0.82, 0)
 
     local inputLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    inputLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -230)
+    inputLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -252)
     inputLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
     inputLabel:SetText("1. 추가할 스킬의 이름 또는 ID 입력 (꼭 띄어쓰기 지켜야 함)")
     inputLabel:SetTextColor(0.9, 0.9, 0.9)
 
     local inputBox = CreateFrame("EditBox", "SA_SpellInput", SA_OptionWindow, "InputBoxTemplate")
     inputBox:SetSize(200, 22)
-    inputBox:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 20, -250)
+    inputBox:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 20, -272)
     inputBox:SetAutoFocus(false)
     inputBox:SetFont("Fonts\\2002.ttf", 12, "")
 
@@ -2082,13 +2280,13 @@ local function SA_CreateWindow()
 
     -- ── 2. 목록 스크롤 프레임 ──────────────────────────────────────────
     local listTitle = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    listTitle:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -290)
+    listTitle:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -312)
     listTitle:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
     listTitle:SetText("2. 사운드 개별 설정")
     listTitle:SetTextColor(0.8, 0.8, 0.8)
 
     local scrollFrame = CreateFrame("ScrollFrame", "SA_ListScrollFrame", SA_OptionWindow, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 10, -310)
+    scrollFrame:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 10, -332)
     scrollFrame:SetPoint("BOTTOMRIGHT", SA_OptionWindow, "BOTTOMRIGHT", -30, 10)
 
     local scrollChild = CreateFrame("Frame", "SA_ListScrollChild", scrollFrame)
