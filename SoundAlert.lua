@@ -48,6 +48,7 @@ local SOUND_CATEGORIES = {
             { name = "거기서 봐요 삼촌", id = 635496 },
             { name = "드디어 제가 바라던 모습을 보여주네요", id = 635498 },
             { name = "미안하지만 당신은 눈에 띄어요", id = 635562 },
+            { name = "또~ 죽지마세요", id = 563125 },
         }
     }
 }
@@ -2489,6 +2490,12 @@ end
 local function SA_CreateWindow()
     local mainWin = _G["MainWindow"]
     if not mainWin then return end
+
+    -- ESC 키로 닫기: 메인창을 UISpecialFrames에 등록 → ESC 시 메인 닫힘 →
+    -- OnHide 연동으로 옵션창·죽음/블러드/전투부활 설정창까지 전부 연쇄로 닫힘
+    local alreadyReg = false
+    for _, n in ipairs(UISpecialFrames) do if n == "MainWindow" then alreadyReg = true break end end
+    if not alreadyReg then tinsert(UISpecialFrames, "MainWindow") end
 
     SA_OptionWindow = CreateFrame("Frame", "SA_OptionWindow", UIParent, "BackdropTemplate")
     -- 너비만 고정하고, 위/아래를 메인창에 앵커 → 옵션창 높이가 메인창 높이를 항상 따라감
