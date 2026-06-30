@@ -96,6 +96,10 @@ for _, d in ipairs(BUFF_DEFS) do BUFF_DEF_BY_KEY[d.key] = d end
 -- 전투부활(Combat Resurrection) 충전 추적.
 -- WoW는 레이드 공용 전투부활 충전 풀을 Rebirth(20484) ID로 관리하며,
 -- C_Spell.GetSpellCharges(20484)는 직업 무관하게 그룹 전체 충전 수를 반환한다.
+-- ★ 설계 결정: 직업별 스킬 ID나 기계공학 부활 아이템을 개별 추적하지 않는다.
+--   인스턴스에서 어떤 소스(직업 스킬/엔지니어링 아이템)로 부활하든 전부 이 '하나의 공용 풀'을
+--   깎으므로, 20484의 충전 변화만 보면 모든 소스가 자동 커버된다. (매 시즌 추가 아이템 추적 불필요)
+--   외부 API 호출은 전부 pcall 로 감싸 어떤 직업/상황에서도 lua 에러가 안 나게만 한다.
 local BREZ_SPELL_ID = 20484   -- 환생 (Rebirth) — 레이드 공용 전투부활 풀 대표 ID
 
 -- 블러드 감지용 디버프 (Sated/Exhaustion 계열 - 적용 시 블러드 직후로 간주)
@@ -296,6 +300,12 @@ function SA_InitDB()
     if br.soundFile == nil then br.soundFile = "" end
     if br.soundKey == nil then br.soundKey = 573086 end          -- 기본 내장음: 어째서 포기하지 않죠?
     if br.soundName == nil then br.soundName = "어째서 포기하지 않죠?" end
+    -- 전투부활 아이콘(충전 수 + 재충전 스와이프) 표시 옵션 (기본 OFF: 다른 애드온과 중복 방지)
+    if br.iconEnabled == nil then br.iconEnabled = false end
+    if br.iconX == nil then br.iconX = 0 end
+    if br.iconY == nil then br.iconY = -160 end
+    if br.iconSize == nil then br.iconSize = 40 end
+    if br.iconLocked == nil then br.iconLocked = true end
 end
 
 -- 3가지 타입(preset, custom, id) 지원
@@ -608,6 +618,11 @@ end
 -- (SA_DeathConfig 는 위 죽음 프레임 근처에서 미리 선언됨)
 local SA_BuffConfigs = {}   -- 버프별 설정창(블러드/마력주입). 상호 닫기용으로 미리 선언.
 local SA_BuffBars = {}      -- 버프 바 프레임. 설정창 OnHide에서 참조하므로 미리 선언.
+
+-- 전투부활 아이콘 관련(프레임/설정창/티커) — 다른 설정창의 상호 닫기에서 참조하므로 미리 선언
+local SA_BattleResIcon = nil
+local SA_BattleResIconConfig = nil
+local SA_brIconTicker = nil
 
 -- 죽음 미리보기를 현재 설정으로 그림 (토글 아님, 페이드 없이 계속 표시)
 local function SA_RenderDeathPreview()
@@ -1050,6 +1065,7 @@ function SA_ToggleDeathConfig()
         win:Hide()
     else
         for _, w in pairs(SA_BuffConfigs) do if w:IsShown() then w:Hide() end end  -- 겹침 방지
+        if SA_BattleResIconConfig and SA_BattleResIconConfig:IsShown() then SA_BattleResIconConfig:Hide() end
         -- 열 때마다 옵션창 우측 기본 위치로 초기화 (화면 밖으로 사라져도 복구됨)
         win:ClearAllPoints()
         win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
@@ -1325,6 +1341,7 @@ function SA_ToggleBuffConfig(key)
         -- 다른 설정창들 닫기 (같은 위치에 겹침 방지)
         for k, w in pairs(SA_BuffConfigs) do if k ~= key and w:IsShown() then w:Hide() end end
         if SA_DeathConfig and SA_DeathConfig:IsShown() then SA_DeathConfig:Hide() end
+        if SA_BattleResIconConfig and SA_BattleResIconConfig:IsShown() then SA_BattleResIconConfig:Hide() end
         -- 열 때마다 옵션창 우측 기본 위치로 초기화 (화면 밖으로 사라져도 복구됨)
         win:ClearAllPoints()
         win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
@@ -1601,6 +1618,365 @@ local function SA_CheckBattleResCharge()
     SA_brLastCharges = cur
 end
 
+-- =====================================================================
+-- 전투부활 아이콘 (충전 수 + 재충전 스와이프) — 모든 클래스 공용, 옵션 ON/OFF
+-- 참고 애드온(asBattleRes) 아이디어 차용 + MimDice DB/설정 구조에 맞춰 재구성.
+-- (SA_BattleResIcon / SA_BattleResIconConfig / SA_brIconTicker 는 위에서 미리 선언)
+-- =====================================================================
+
+-- 아이콘 프레임 생성 (1회). 전투 중 생성 회피 위해 로그인 시 미리 만든다.
+local function SA_EnsureBattleResIcon()
+    if SA_BattleResIcon then return SA_BattleResIcon end
+    local br = MimDiceDB.battleRes
+    local size = (br and br.iconSize) or 40
+
+    local f = CreateFrame("Frame", "MimDice_BattleResIcon", UIParent, "BackdropTemplate")
+    f:SetSize(size, size)
+    f:SetMovable(true)
+    f:SetClampedToScreen(true)
+    f:SetFrameStrata("MEDIUM")
+
+    -- 스킬 아이콘 텍스처 (가장자리 살짝 잘라 깔끔하게)
+    local icon = f:CreateTexture(nil, "ARTWORK")
+    icon:SetPoint("TOPLEFT", 2, -2)
+    icon:SetPoint("BOTTOMRIGHT", -2, 2)
+    icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+    f.icon = icon
+
+    -- 어두운 테두리
+    f:SetBackdrop({
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 12,
+        insets = { left = 2, right = 2, top = 2, bottom = 2 }
+    })
+    f:SetBackdropBorderColor(0, 0, 0, 1)
+
+    -- 재충전 스와이프 (쿨다운 프레임)
+    local cd = CreateFrame("Cooldown", "MimDice_BattleResIconCD", f, "CooldownFrameTemplate")
+    cd:SetAllPoints(icon)
+    cd:SetHideCountdownNumbers(false)
+    cd:SetDrawSwipe(true)
+    cd:SetDrawEdge(false)
+    f.cd = cd
+
+    -- 충전 수 텍스트 (우하단)
+    local count = f:CreateFontString(nil, "OVERLAY")
+    count:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -3, 3)
+    count:SetFont("Fonts\\2002.ttf", 14, "OUTLINE")
+    count:SetShadowColor(0, 0, 0, 1); count:SetShadowOffset(1, -1)
+    count:SetJustifyH("RIGHT")
+    f.count = count
+
+    -- 아이콘 텍스처 적용 (환생 20484) — 로그인 직후 미캐시면 RefreshState에서 재시도
+    local okInfo, info = pcall(C_Spell.GetSpellInfo, BREZ_SPELL_ID)
+    if okInfo and info and info.iconID then icon:SetTexture(info.iconID); f.iconSet = true end
+
+    -- 드래그(잠금 해제 시) — 위치 저장
+    local function savePos(self)
+        local x, y = self:GetCenter(); local cx, cy = UIParent:GetCenter()
+        if x and cx then
+            MimDiceDB.battleRes.iconX = x - cx
+            MimDiceDB.battleRes.iconY = y - cy
+        end
+        local cfg = SA_BattleResIconConfig
+        if cfg and cfg:IsShown() and cfg.posRefresh then cfg.posRefresh() end
+    end
+    f:RegisterForDrag("LeftButton")
+    f:SetScript("OnDragStart", function(self)
+        local b = MimDiceDB.battleRes
+        if b and not b.iconLocked then self:StartMoving() end
+    end)
+    f:SetScript("OnDragStop", function(self) self:StopMovingOrSizing(); savePos(self) end)
+
+    -- 마우스 호버 툴팁 (클릭은 통과시키되, 올리면 전투부활 정보만 표시) — 전부 pcall 보호
+    f:SetScript("OnEnter", function(self)
+        pcall(function()
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:AddLine("전투부활", 1, 0.82, 0)
+            local ok, info = pcall(C_Spell.GetSpellCharges, BREZ_SPELL_ID)
+            if ok and info and info.currentCharges then
+                local mx = info.maxCharges and ("/" .. info.maxCharges) or ""
+                GameTooltip:AddLine("남은 충전: " .. info.currentCharges .. mx, 1, 1, 1)
+                if info.maxCharges and info.currentCharges < info.maxCharges
+                   and info.cooldownDuration and info.cooldownDuration > 0 then
+                    local remain = (info.cooldownStartTime or 0) + info.cooldownDuration - GetTime()
+                    if remain > 0 then
+                        GameTooltip:AddLine(string.format("다음 충전까지: %.0f초", remain), 0.7, 0.7, 0.7)
+                    end
+                end
+            else
+                GameTooltip:AddLine("파티/공대에서 표시됩니다", 0.7, 0.7, 0.7)
+            end
+            GameTooltip:Show()
+        end)
+    end)
+    f:SetScript("OnLeave", function() pcall(GameTooltip.Hide, GameTooltip) end)
+
+    f:Hide()
+    SA_BattleResIcon = f
+    return f
+end
+
+-- 마우스 모드 설정 (전부 pcall — 전투 중 호출돼도 taint/에러 안 나게)
+--   clickable=false(잠금/표시중): 클릭은 통과(아래 UI·월드 클릭 방해 안 함) + 모션만 받아 툴팁
+--   clickable=true (편집중): 클릭/드래그 허용
+local function SA_SetBattleResIconMouse(f, clickable)
+    pcall(function()
+        f:EnableMouse(true)
+        if f.SetMouseClickEnabled then f:SetMouseClickEnabled(clickable) end
+        if f.SetMouseMotionEnabled then f:SetMouseMotionEnabled(true) end
+    end)
+end
+
+-- 크기/위치/글씨 레이아웃만 적용 (표시 여부와 무관, 재귀 없음)
+local function SA_ApplyBattleResIconLayout(f, br)
+    local size = br.iconSize or 40
+    f:SetSize(size, size)
+    f:ClearAllPoints()
+    f:SetPoint("CENTER", UIParent, "CENTER", br.iconX or 0, br.iconY or -160)
+    f.count:SetFont("Fonts\\2002.ttf", math.max(8, math.floor(size * 0.4)), "OUTLINE")
+end
+
+-- 편집/미리보기용 정적 표시 (그룹 무관, 충전 3개 가정)
+local function SA_ShowBattleResIconStatic(f)
+    f.icon:SetDesaturated(false)
+    f.count:SetText("3")
+    f.cd:Clear()
+    f:SetAlpha(1)
+    f:Show()
+end
+
+-- 아이콘 상태 갱신 (티커/이벤트/설정변경에서 호출) — 전역
+-- 표시 우선순위:
+--   1) 잠금 해제(편집 중)         → 그룹 무관 정적 표시 + 노란 테두리 + 드래그 가능
+--   2) 켜짐 + 그룹 안 + 풀 읽힘    → 실제 충전 수/스와이프 라이브 표시
+--   3) 미리보기 강제(설정창 열림 중) → 그룹 무관 정적 표시 (솔로 위치잡기용)
+--   4) 그 외                        → 숨김
+function SA_RefreshBattleResIconState()
+    local br = MimDiceDB and MimDiceDB.battleRes
+    if not br then return end
+    local f = SA_BattleResIcon
+
+    local editing = not br.iconLocked
+    -- previewForced 는 설정창이 열려 있는 동안에만 인정 (닫으면 자동 무효 → 라이브에 안 끼임)
+    local cfgOpen = SA_BattleResIconConfig and SA_BattleResIconConfig:IsShown()
+    local previewing = f and f.previewForced and cfgOpen
+
+    -- 아무 표시 조건도 아니면 숨김
+    if not (editing or previewing or br.iconEnabled) then
+        if f then f:Hide() end
+        return
+    end
+
+    f = SA_EnsureBattleResIcon()
+    SA_ApplyBattleResIconLayout(f, br)
+
+    -- 로그인 직후 아이콘이 미캐시였으면 지금 다시 시도
+    if not f.iconSet then
+        local okS, sinfo = pcall(C_Spell.GetSpellInfo, BREZ_SPELL_ID)
+        if okS and sinfo and sinfo.iconID then f.icon:SetTexture(sinfo.iconID); f.iconSet = true end
+    end
+
+    -- 편집 모드면 노란 강조 테두리 + 클릭(드래그) 허용, 아니면 검은 테두리 + 클릭 통과(호버 툴팁만)
+    if editing then
+        f:SetBackdropBorderColor(1, 0.85, 0, 1)
+        SA_SetBattleResIconMouse(f, true)
+        SA_ShowBattleResIconStatic(f)
+        return
+    end
+    f:SetBackdropBorderColor(0, 0, 0, 1)
+    SA_SetBattleResIconMouse(f, false)
+
+    -- 켜짐 + 그룹 안이면 라이브 표시 (미리보기보다 우선 → previewForced 가 라이브를 막지 않음)
+    if br.iconEnabled and IsInGroup() then
+        local ok, info = pcall(C_Spell.GetSpellCharges, BREZ_SPELL_ID)
+        local cur = ok and info and info.currentCharges
+        if cur ~= nil then
+            f.count:SetText(tostring(cur))
+            f.icon:SetDesaturated(cur <= 0)
+            if info.maxCharges and cur < info.maxCharges and info.cooldownDuration and info.cooldownDuration > 0 then
+                f.cd:SetCooldown(info.cooldownStartTime or 0, info.cooldownDuration)
+            else
+                f.cd:Clear()
+            end
+            f:SetAlpha(1)
+            f:Show()
+            return
+        end
+        -- 풀 정보 못 읽음: 미리보기 중이면 정적, 아니면 숨김
+    end
+
+    if previewing then
+        SA_ShowBattleResIconStatic(f)
+    else
+        f:Hide()
+    end
+end
+
+-- 설정 변경 시 즉시 반영 (전역: 설정창에서 호출)
+function SA_UpdateBattleResIcon()
+    SA_RefreshBattleResIconState()
+end
+
+-- 미리보기 토글 (설정창 버튼) — 그룹 밖/솔로에서도 위치 잡을 수 있게 정적 표시
+function SA_BattleResIconPreview()
+    local f = SA_EnsureBattleResIcon()
+    f.previewForced = not f.previewForced
+    SA_RefreshBattleResIconState()
+end
+
+-- ── 전투부활 아이콘 설정창 ────────────────────────────────────────────
+function SA_CreateBattleResIconConfig()
+    if SA_BattleResIconConfig then return SA_BattleResIconConfig end
+
+    local win = CreateFrame("Frame", "MimDice_BRIconConfig", UIParent, "BackdropTemplate")
+    win:SetSize(340, 300)
+    win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
+    win:SetFrameStrata("DIALOG")
+    win:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    win:SetBackdropColor(0, 0, 0, 0.5)
+    win:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+    win:EnableMouse(true)
+    win:SetMovable(true)
+    win:SetClampedToScreen(true)
+    win:RegisterForDrag("LeftButton")
+    win:SetScript("OnDragStart", win.StartMoving)
+    win:SetScript("OnDragStop", win.StopMovingOrSizing)
+    -- 설정창을 닫으면 솔로 미리보기 즉시 해제 (그룹 정책대로 복귀)
+    win:SetScript("OnHide", function()
+        if SA_BattleResIcon then SA_BattleResIcon.previewForced = false end
+        SA_RefreshBattleResIconState()
+    end)
+
+    local title = win:CreateFontString(nil, "OVERLAY")
+    title:SetPoint("TOP", win, "TOP", 0, -12)
+    title:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
+    title:SetText("전투부활 아이콘 설정 (공용)")
+    title:SetTextColor(1, 0.82, 0)
+
+    local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
+    closeBtn:SetScript("OnClick", function() win:Hide() end)
+
+    -- ON/OFF 체크박스
+    local enCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
+    enCb:SetSize(24, 24)
+    enCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -40)
+    local enLabel = win:CreateFontString(nil, "OVERLAY")
+    enLabel:SetPoint("LEFT", enCb, "RIGHT", 2, 0)
+    enLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    enLabel:SetText("전투부활 아이콘 표시 (다른 애드온 쓰면 끄기)")
+    enLabel:SetTextColor(0.9, 0.9, 0.9)
+    enCb:SetScript("OnClick", function(self)
+        local on = self:GetChecked() and true or false
+        MimDiceDB.battleRes.iconEnabled = on
+        if on then
+            -- 켜면 위치 확인용으로 즉시 미리보기 표시 (솔로여도 보이게)
+            local f = SA_EnsureBattleResIcon()
+            f.previewForced = true
+        elseif SA_BattleResIcon then
+            SA_BattleResIcon.previewForced = false
+        end
+        SA_RefreshBattleResIconState()
+    end)
+    win.enCb = enCb
+
+    -- 아이콘 크기 슬라이더
+    win.sizeSlider = SA_MakeNumberSlider(win, "MimDice_BRIconSize", -78, "아이콘 크기", 16, 128,
+        function() return MimDiceDB.battleRes.iconSize end,
+        function(v) MimDiceDB.battleRes.iconSize = v end,
+        function() SA_UpdateBattleResIcon() end)
+
+    -- 위치 X/Y 직접 입력
+    local posRefresh, posX, posY = SA_AddPosRow(win, -128,
+        function() return MimDiceDB.battleRes.iconX end,
+        function(v) MimDiceDB.battleRes.iconX = v end,
+        function() return MimDiceDB.battleRes.iconY end,
+        function(v) MimDiceDB.battleRes.iconY = v end,
+        function() SA_UpdateBattleResIcon() end)
+    win.posRefresh = posRefresh
+    SA_ChainTabEnter({ win.sizeSlider.edit, posX, posY })
+
+    -- 안내문
+    local hint = win:CreateFontString(nil, "OVERLAY")
+    hint:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -168)
+    hint:SetFont("Fonts\\2002.ttf", 10, "")
+    hint:SetTextColor(0.7, 0.7, 0.7)
+    hint:SetWidth(310); hint:SetJustifyH("LEFT")
+    hint:SetText("· 아이콘은 파티/공대에 있을 때만 표시됩니다.\n· '위치 잠금 해제' 후 아이콘을 드래그해 옮기세요.")
+
+    -- 위치 잠금/해제
+    local lockBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    lockBtn:SetSize(120, 24)
+    lockBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 14)
+    lockBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+    lockBtn:SetScript("OnClick", function()
+        local b = MimDiceDB.battleRes
+        b.iconLocked = not b.iconLocked
+        SA_RefreshBattleResIconState()
+        win.RefreshLockBtn()
+    end)
+    win.lockBtn = lockBtn
+    function win.RefreshLockBtn()
+        lockBtn:SetText(MimDiceDB.battleRes.iconLocked and "위치 잠금 해제" or "위치 잠금(드래그끝)")
+    end
+
+    -- 미리보기 토글
+    local previewBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    previewBtn:SetSize(80, 24)
+    previewBtn:SetPoint("BOTTOM", win, "BOTTOM", 0, 14)
+    previewBtn:SetText("미리보기")
+    previewBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    previewBtn:SetScript("OnClick", function() SA_BattleResIconPreview() end)
+
+    -- 기본값 초기화
+    local resetBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    resetBtn:SetSize(70, 24)
+    resetBtn:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 14)
+    resetBtn:SetText("기본값")
+    resetBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    resetBtn:SetScript("OnClick", function()
+        local b = MimDiceDB.battleRes
+        b.iconSize, b.iconX, b.iconY, b.iconLocked = 40, 0, -160, true
+        if SA_BattleResIcon then SA_BattleResIcon.previewForced = false end
+        SA_RefreshBattleResIconState()
+        win.Refresh()
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[MimDice]|r 전투부활 아이콘 설정 초기화됨")
+    end)
+
+    -- 위젯에 현재값 반영
+    function win.Refresh()
+        local b = MimDiceDB.battleRes
+        enCb:SetChecked(b.iconEnabled)
+        win.sizeSlider.SyncValue()
+        win.posRefresh()
+        win.RefreshLockBtn()
+    end
+
+    win:Hide()
+    SA_BattleResIconConfig = win
+    return win
+end
+
+function SA_ToggleBattleResIconConfig()
+    local win = SA_CreateBattleResIconConfig()
+    if win:IsShown() then
+        win:Hide()
+    else
+        -- 다른 설정창 닫기 (같은 위치 겹침 방지)
+        for _, w in pairs(SA_BuffConfigs) do if w:IsShown() then w:Hide() end end
+        if SA_DeathConfig and SA_DeathConfig:IsShown() then SA_DeathConfig:Hide() end
+        win:ClearAllPoints()
+        win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
+        win.Refresh()
+        win:Show()
+    end
+end
+
 -- 미리보기 강제 켜기 ("바 표시" 체크 시 위치/모양 확인용)
 function SA_BuffPreviewOn(key)
     local f = SA_EnsureBuffBar(key)
@@ -1683,11 +2059,19 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         -- 죽음 프레임도 미리 생성 (첫 사망=전투 중 생성 지연/위험 제거)
         SA_EnsureDeathFrame()
         SA_SyncBattleResCharges()   -- 전투부활 충전 기준값 초기화 (오발동 방지)
+        -- 전투부활 아이콘 미리 생성 + 0.5초 주기 갱신 티커 시작
+        SA_EnsureBattleResIcon()
+        SA_RefreshBattleResIconState()
+        if not SA_brIconTicker then
+            SA_brIconTicker = C_Timer.NewTicker(0.5, SA_RefreshBattleResIconState)
+        end
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- 인스턴스 진입/이동 시 충전 기준값 재동기화 (진입 직후 충전 변화 오발동 방지)
         SA_SyncBattleResCharges()
+        SA_RefreshBattleResIconState()
     elseif event == "SPELL_UPDATE_CHARGES" then
         SA_CheckBattleResCharge()
+        SA_RefreshBattleResIconState()   -- 충전 변화 즉시 아이콘 반영
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
         if unit ~= "player" then return end
@@ -2179,6 +2563,14 @@ local function SA_CreateWindow()
         b.enabled = was
     end)
     brRefreshRow()
+
+    -- 전투부활 아이콘 설정 버튼 (▶ 테스트 버튼 왼쪽)
+    local brIconBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    brIconBtn:SetSize(52, 22)
+    brIconBtn:SetPoint("RIGHT", brTestBtn, "LEFT", -6, 0)
+    brIconBtn:SetText("아이콘")
+    brIconBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+    brIconBtn:SetScript("OnClick", function() SA_ToggleBattleResIconConfig() end)
 
     -- 구분선
     local divider = SA_OptionWindow:CreateTexture(nil, "ARTWORK")
