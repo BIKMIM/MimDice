@@ -296,8 +296,17 @@ function SA_InitDB()
     if br.enabled == nil then br.enabled = false end             -- 마스터 on/off
     if br.soundType == nil then br.soundType = "preset" end      -- 기본: 내장
     if br.soundFile == nil then br.soundFile = "" end
-    if br.soundKey == nil then br.soundKey = 573086 end          -- 기본 내장음: 어째서 포기하지 않죠?
-    if br.soundName == nil then br.soundName = "어째서 포기하지 않죠?" end
+    if br.soundKey == nil then br.soundKey = 563125 end          -- 기본 내장음: 또~ 죽지마세요
+    if br.soundName == nil then br.soundName = "또~ 죽지마세요" end
+    -- 기본음 변경(573086 → 563125) 1회 반영: 예전 기본값 그대로였던 사용자만 갱신.
+    -- (직접 다른 사운드로 바꾼 사용자는 건드리지 않음)
+    if not MimDiceDB.brDefaultV2 then
+        if br.soundType == "preset" and br.soundKey == 573086 then
+            br.soundKey = 563125
+            br.soundName = "또~ 죽지마세요"
+        end
+        MimDiceDB.brDefaultV2 = true
+    end
     -- 전투부활 아이콘(충전 수 + 재충전 스와이프) 표시 옵션 (기본 OFF: 다른 애드온과 중복 방지)
     if br.iconEnabled == nil then br.iconEnabled = false end
     if br.iconX == nil then br.iconX = 0 end
@@ -819,6 +828,61 @@ local function SA_AddPosRow(parent, y, getX, setX, getY, setY, onChange)
     return refresh, ex, ey
 end
 
+-- 재생 타입 3종 선택 버튼 (내장 / 커스텀 / ID) — 순환 토글 대신 셋을 나란히 보여주고
+-- 선택된 것만 금색으로 강조(라디오처럼). onPick(t)=버튼 클릭 시 호출, refresh()=강조 갱신.
+-- 첫 버튼 왼쪽 위치 = (x, y). 전체 폭 약 136px.
+local function SA_MakeTypeSelector(parent, x, y, getType, onPick)
+    local defs = { { t = "preset", label = "내장" }, { t = "custom", label = "커스텀" }, { t = "id", label = "ID" } }
+    local btns = {}
+    for i, d in ipairs(defs) do
+        local b = CreateFrame("Button", nil, parent, "UIPanelButtonTemplate")
+        b:SetSize(44, 22)
+        b:SetPoint("TOPLEFT", parent, "TOPLEFT", x + (i - 1) * 46, y)
+        b:SetText(d.label)
+        b:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+        b.stype = d.t
+        b:SetScript("OnClick", function() onPick(d.t) end)
+        btns[i] = b
+    end
+    local function refresh()
+        local cur = getType()
+        for _, b in ipairs(btns) do
+            if b.stype == cur then
+                b:LockHighlight()
+                b:GetFontString():SetTextColor(1, 0.82, 0)        -- 금색 = 선택됨
+            else
+                b:UnlockHighlight()
+                b:GetFontString():SetTextColor(0.55, 0.55, 0.55)  -- 회색 = 미선택
+            end
+        end
+    end
+    return refresh, btns
+end
+
+-- 입력칸 플레이스홀더(회색 안내문) 동작 연결. box.placeholder 를 참조해 포커스/빈값 시 표시.
+-- "여기에 직접 타이핑" 을 직관적으로 알려주는 용도.
+local function SA_WirePlaceholder(box)
+    box:HookScript("OnEditFocusGained", function(self)
+        if self:GetText() == (self.placeholder or "") then
+            self:SetText(""); self:SetTextColor(1, 1, 1)
+        end
+    end)
+    box:HookScript("OnEditFocusLost", function(self)
+        if self:GetText() == "" then
+            self:SetText(self.placeholder or ""); self:SetTextColor(0.5, 0.5, 0.5)
+        end
+    end)
+end
+-- RefreshSoundRow 에서 호출: 현재 값이 있으면 흰색으로, 없으면 회색 플레이스홀더로 표시.
+local function SA_SetBoxValue(box, value, placeholder)
+    box.placeholder = placeholder
+    if value ~= nil and value ~= "" then
+        box:SetText(tostring(value)); box:SetTextColor(1, 1, 1)
+    else
+        box:SetText(placeholder); box:SetTextColor(0.5, 0.5, 0.5)
+    end
+end
+
 local function SA_CreateDeathConfig()
     if SA_DeathConfig then return SA_DeathConfig end
 
@@ -858,26 +922,27 @@ local function SA_CreateDeathConfig()
     local soundLabel = win:CreateFontString(nil, "OVERLAY")
     soundLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -36)
     soundLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
-    soundLabel:SetText("재생 사운드 (내장 / 커스텀: 파일명 / ID: 숫자)")
+    soundLabel:SetText("재생 사운드 — 아래 3개 중 하나 선택")
     soundLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    local typeBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-    typeBtn:SetSize(48, 22)
-    typeBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 20, -56)
-    typeBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
-    win.typeBtn = typeBtn
+    -- 3종 타입 선택 버튼 (내장 / 커스텀 / ID)
+    win.typeRefresh = SA_MakeTypeSelector(win, 15, -56,
+        function() return MimDiceDB.deathTrack.soundType end,
+        function(t) MimDiceDB.deathTrack.soundType = t; win.RefreshSoundRow() end)
 
+    -- 커스텀/ID 입력칸 (직접 타이핑) — 플레이스홀더로 안내
     local soundBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
-    soundBox:SetSize(175, 22)
-    soundBox:SetPoint("LEFT", typeBtn, "RIGHT", 12, 0)
+    soundBox:SetSize(135, 22)
+    soundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
     soundBox:SetAutoFocus(false)
     soundBox:SetFont("Fonts\\2002.ttf", 11, "")
     win.soundBox = soundBox
+    SA_WirePlaceholder(soundBox)
 
-    -- "내장" 선택 시: 사운드 선택 팝업 버튼 (soundBox와 같은 자리, 토글로 교체 표시)
+    -- 내장 선택 시: 사운드 선택 팝업 버튼 (soundBox 자리, 토글로 교체 표시)
     local soundSelectBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-    soundSelectBtn:SetSize(175, 22)
-    soundSelectBtn:SetPoint("LEFT", typeBtn, "RIGHT", 12, 0)
+    soundSelectBtn:SetSize(135, 22)
+    soundSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
     do
         local fs = soundSelectBtn:GetFontString()
         fs:SetFont("Fonts\\2002.ttf", 10, "")
@@ -899,7 +964,7 @@ local function SA_CreateDeathConfig()
 
     local soundTestBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     soundTestBtn:SetSize(24, 22)
-    soundTestBtn:SetPoint("LEFT", soundBox, "RIGHT", 6, 0)
+    soundTestBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -56)
     soundTestBtn:SetText("▶")
     soundTestBtn:SetScript("OnClick", function()
         local dt = MimDiceDB.deathTrack
@@ -911,31 +976,22 @@ local function SA_CreateDeathConfig()
 
     function win.RefreshSoundRow()
         local dt = MimDiceDB.deathTrack
-        local label = "내장"
-        if dt.soundType == "custom" then label = "커스텀" end
-        if dt.soundType == "id" then label = "ID" end
-        typeBtn:SetText(label)
+        win.typeRefresh()
         if dt.soundType == "preset" then
+            soundLabel:SetText("내장: 아래에서 사운드 선택 (▶ 미리듣기)")
             soundSelectBtn:Show(); soundBox:Hide()
             soundSelectBtn:SetText(dt.soundName or "사운드 선택...")
-        else
+        elseif dt.soundType == "id" then
+            soundLabel:SetText("ID: 사운드 숫자 ID를 직접 입력")
             soundSelectBtn:Hide(); soundBox:Show()
-            if dt.soundType == "id" then
-                soundBox:SetText(dt.soundID and tostring(dt.soundID) or "")
-            else
-                soundBox:SetText(dt.soundFile or "")
-            end
+            SA_SetBoxValue(soundBox, dt.soundID, "예: 567439")
+        else
+            soundLabel:SetText("커스텀: sounds폴더 파일명 그대로 입력 (대소문자·확장자 구분)")
+            soundSelectBtn:Hide(); soundBox:Show()
+            SA_SetBoxValue(soundBox, dt.soundFile, "예: MySound.mp3")
         end
     end
 
-    typeBtn:SetScript("OnClick", function()
-        local dt = MimDiceDB.deathTrack
-        -- 타입만 전환하고 각 타입의 저장값은 보존 (다시 돌아와도 유지)
-        if dt.soundType == "preset" then dt.soundType = "custom"
-        elseif dt.soundType == "custom" then dt.soundType = "id"
-        else dt.soundType = "preset" end
-        win.RefreshSoundRow()
-    end)
     soundBox:SetScript("OnTextChanged", function(self, userInput)
         if not userInput then return end
         local dt = MimDiceDB.deathTrack
@@ -1194,25 +1250,27 @@ local function SA_CreateBuffConfig(key)
     local soundLabel = win:CreateFontString(nil, "OVERLAY")
     soundLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -36)
     soundLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
-    soundLabel:SetText("재생 사운드 (내장 / 커스텀: 파일명 / ID: 숫자)")
+    soundLabel:SetText("재생 사운드 — 아래 3개 중 하나 선택")
     soundLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    local typeBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-    typeBtn:SetSize(48, 22)
-    typeBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 20, -56)
-    typeBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+    -- 3종 타입 선택 버튼 (내장 / 커스텀 / ID)
+    win.typeRefresh = SA_MakeTypeSelector(win, 15, -56,
+        function() return MimDiceDB.buffTrack[key].soundType end,
+        function(t) MimDiceDB.buffTrack[key].soundType = t; win.RefreshSoundRow() end)
 
+    -- 커스텀/ID 입력칸 (직접 타이핑)
     local soundBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
-    soundBox:SetSize(175, 22)
-    soundBox:SetPoint("LEFT", typeBtn, "RIGHT", 12, 0)
+    soundBox:SetSize(135, 22)
+    soundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
     soundBox:SetAutoFocus(false)
     soundBox:SetFont("Fonts\\2002.ttf", 11, "")
     win.soundBox = soundBox
+    SA_WirePlaceholder(soundBox)
 
-    -- "내장" 선택 시: 사운드 선택 팝업 버튼 (soundBox와 같은 자리, 토글로 교체 표시)
+    -- 내장 선택 시: 사운드 선택 팝업 버튼 (soundBox 자리, 토글로 교체 표시)
     local soundSelectBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-    soundSelectBtn:SetSize(175, 22)
-    soundSelectBtn:SetPoint("LEFT", typeBtn, "RIGHT", 12, 0)
+    soundSelectBtn:SetSize(135, 22)
+    soundSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
     do
         local fs = soundSelectBtn:GetFontString()
         fs:SetFont("Fonts\\2002.ttf", 10, "")
@@ -1234,7 +1292,7 @@ local function SA_CreateBuffConfig(key)
 
     local soundTestBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     soundTestBtn:SetSize(24, 22)
-    soundTestBtn:SetPoint("LEFT", soundBox, "RIGHT", 6, 0)
+    soundTestBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -56)
     soundTestBtn:SetText("▶")
     soundTestBtn:SetScript("OnClick", function()
         local bt = MimDiceDB.buffTrack[key]
@@ -1246,31 +1304,22 @@ local function SA_CreateBuffConfig(key)
 
     function win.RefreshSoundRow()
         local bt = MimDiceDB.buffTrack[key]
-        local label = "내장"
-        if bt.soundType == "custom" then label = "커스텀" end
-        if bt.soundType == "id" then label = "ID" end
-        typeBtn:SetText(label)
+        win.typeRefresh()
         if bt.soundType == "preset" then
+            soundLabel:SetText("내장: 아래에서 사운드 선택 (▶ 미리듣기)")
             soundSelectBtn:Show(); soundBox:Hide()
             soundSelectBtn:SetText(bt.soundName or "사운드 선택...")
-        else
+        elseif bt.soundType == "id" then
+            soundLabel:SetText("ID: 사운드 숫자 ID를 직접 입력")
             soundSelectBtn:Hide(); soundBox:Show()
-            if bt.soundType == "id" then
-                soundBox:SetText(bt.soundID and tostring(bt.soundID) or "")
-            else
-                soundBox:SetText(bt.soundFile or "")
-            end
+            SA_SetBoxValue(soundBox, bt.soundID, "예: 567439")
+        else
+            soundLabel:SetText("커스텀: sounds폴더 파일명 그대로 입력 (대소문자·확장자 구분)")
+            soundSelectBtn:Hide(); soundBox:Show()
+            SA_SetBoxValue(soundBox, bt.soundFile, "예: MySound.mp3")
         end
     end
 
-    typeBtn:SetScript("OnClick", function()
-        local bt = MimDiceDB.buffTrack[key]
-        -- 타입만 전환하고 각 타입의 저장값은 보존 (다시 돌아와도 유지)
-        if bt.soundType == "preset" then bt.soundType = "custom"
-        elseif bt.soundType == "custom" then bt.soundType = "id"
-        else bt.soundType = "preset" end
-        win.RefreshSoundRow()
-    end)
     soundBox:SetScript("OnTextChanged", function(self, userInput)
         if not userInput then return end
         local bt = MimDiceDB.buffTrack[key]
@@ -2113,71 +2162,68 @@ function SA_CreateBattleResIconConfig()
     soundLabel:SetText("충전 시 재생 사운드")
     soundLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    local typeBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-    typeBtn:SetSize(48, 22)
-    typeBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 18, -60)
-    typeBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+    -- 3종 타입 선택 버튼 (내장 / 커스텀 / ID)
+    win.typeRefresh = SA_MakeTypeSelector(win, 15, -60,
+        function() return MimDiceDB.battleRes.soundType end,
+        function(t) MimDiceDB.battleRes.soundType = t; win.RefreshSoundRow() end)
 
-    -- "내장" 선택 시: 사운드 선택 팝업을 여는 버튼 (각 항목 옆 ▶ 미리듣기)
+    -- 커스텀/ID 입력칸 (직접 타이핑)
+    local soundBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    soundBox:SetSize(135, 22)
+    soundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -60)
+    soundBox:SetAutoFocus(false)
+    soundBox:SetFont("Fonts\\2002.ttf", 11, "")
+    SA_WirePlaceholder(soundBox)
+
+    -- 내장 선택 시: 사운드 선택 팝업 버튼 (soundBox 자리, 토글로 교체 표시)
     local soundSelectBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-    soundSelectBtn:SetSize(150, 22)
-    soundSelectBtn:SetPoint("LEFT", typeBtn, "RIGHT", 8, 0)
+    soundSelectBtn:SetSize(135, 22)
+    soundSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -60)
     do
         local fs = soundSelectBtn:GetFontString()
         fs:SetFont("Fonts\\2002.ttf", 10, "")
         fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
-        fs:ClearAllPoints()
-        fs:SetPoint("LEFT", 6, 0); fs:SetPoint("RIGHT", -6, 0)
+        fs:ClearAllPoints(); fs:SetPoint("LEFT", 6, 0); fs:SetPoint("RIGHT", -6, 0)
     end
-
-    local soundBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
-    soundBox:SetSize(120, 22)
-    soundBox:SetPoint("LEFT", typeBtn, "RIGHT", 10, 0)
-    soundBox:SetAutoFocus(false)
-    soundBox:SetFont("Fonts\\2002.ttf", 11, "")
-
-    local testBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-    testBtn:SetSize(24, 22)
-    testBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -60)
-    testBtn:SetText("▶")
-
     soundSelectBtn:SetScript("OnClick", function()
         SA_OpenSoundPicker(soundSelectBtn,
             function() return MimDiceDB.battleRes.soundKey end,
             function(snd)
                 local b = MimDiceDB.battleRes
-                b.soundKey = snd.id; b.soundName = snd.name
+                b.soundType = "preset"; b.soundKey = snd.id; b.soundName = snd.name
                 win.RefreshSoundRow()
                 SA_PlaySound(b, "Dialog")   -- 선택 시 한 번 들려줌
             end)
     end)
 
+    local testBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    testBtn:SetSize(24, 22)
+    testBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -60)
+    testBtn:SetText("▶")
+    testBtn:SetScript("OnClick", function()
+        local b = MimDiceDB.battleRes
+        local was = b.enabled; b.enabled = true
+        SA_PlaySound(b, "Dialog"); b.enabled = was
+    end)
+
     function win.RefreshSoundRow()
         local b = MimDiceDB.battleRes
-        local label = "내장"
-        if b.soundType == "custom" then label = "커스텀" end
-        if b.soundType == "id" then label = "ID" end
-        typeBtn:SetText(label)
+        win.typeRefresh()
         if b.soundType == "preset" then
+            soundLabel:SetText("내장: 아래에서 사운드 선택 (▶ 미리듣기)")
             soundSelectBtn:Show(); soundBox:Hide()
             soundSelectBtn:SetText(b.soundName or "사운드 선택...")
-        else
+        elseif b.soundType == "id" then
+            soundLabel:SetText("ID: 사운드 숫자 ID를 직접 입력")
             soundSelectBtn:Hide(); soundBox:Show()
-            if b.soundType == "id" then
-                soundBox:SetText(b.soundID and tostring(b.soundID) or "")
-            else
-                soundBox:SetText(b.soundFile or "")
-            end
+            SA_SetBoxValue(soundBox, b.soundID, "예: 567439")
+        else
+            soundLabel:SetText("커스텀: sounds폴더 파일명 그대로 입력 (대소문자·확장자 구분)")
+            soundSelectBtn:Hide(); soundBox:Show()
+            SA_SetBoxValue(soundBox, b.soundFile, "예: MySound.mp3")
         end
     end
-    typeBtn:SetScript("OnClick", function()
-        local b = MimDiceDB.battleRes
-        -- 타입만 전환하고 각 타입의 저장값은 보존 (다시 돌아와도 유지)
-        if b.soundType == "preset" then b.soundType = "custom"
-        elseif b.soundType == "custom" then b.soundType = "id"
-        else b.soundType = "preset" end
-        win.RefreshSoundRow()
-    end)
+
     soundBox:SetScript("OnTextChanged", function(self, userInput)
         if not userInput then return end
         local b = MimDiceDB.battleRes
@@ -2185,11 +2231,6 @@ function SA_CreateBattleResIconConfig()
         else b.soundFile = self:GetText() end   -- soundName 은 내장(preset) 표시 전용이라 안 건드림
     end)
     soundBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-    testBtn:SetScript("OnClick", function()
-        local b = MimDiceDB.battleRes
-        local was = b.enabled; b.enabled = true
-        SA_PlaySound(b, "Dialog"); b.enabled = was
-    end)
 
     -- ── 아이콘 표시 ON/OFF ──
     local enCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
@@ -2929,6 +2970,16 @@ function SA_RefreshList()
             typeBtn:SetPoint("LEFT", spellText, "RIGHT", 5, 0)
             typeBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
             row.typeBtn = typeBtn
+            -- 클릭으로 타입 순환한다는 걸 알리는 툴팁 (좁은 행이라 세그먼트 버튼 대신 안내)
+            typeBtn:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine("클릭: 사운드 타입 전환", 1, 0.82, 0)
+                GameTooltip:AddLine("내장 → 커스텀 → ID 순환", 0.9, 0.9, 0.9)
+                GameTooltip:AddLine("커스텀: sounds폴더 파일명 그대로(대소문자·확장자)", 0.7, 0.7, 0.7)
+                GameTooltip:AddLine("ID: 사운드 숫자 ID 입력", 0.7, 0.7, 0.7)
+                GameTooltip:Show()
+            end)
+            typeBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
             local soundSelectBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
             soundSelectBtn:SetSize(100, 20)
