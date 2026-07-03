@@ -320,7 +320,7 @@ function SA_InitDB()
     -- =================================================================
     if not MimDiceDB.partyAlert then MimDiceDB.partyAlert = {} end
     local pa = MimDiceDB.partyAlert
-    if pa.enabled == nil then pa.enabled = false end             -- 마스터 on/off
+    if pa.enabled == nil then pa.enabled = true end              -- 마스터 on/off (기본 ON)
     if pa.soundType == nil then pa.soundType = "preset" end
     if pa.soundFile == nil then pa.soundFile = "" end
     if pa.soundKey == nil then pa.soundKey = 3049656 end         -- 기본 내장음: 아 결국 오실 줄 알았어요
@@ -350,6 +350,11 @@ function SA_InitDB()
             pa.soundName = "아 결국 오실 줄 알았어요"
         end
         pa.soundMigrated = true
+    end
+    -- 기본값 OFF→ON 변경 1회 반영: 초기 배포(기본 OFF) 때 설치해 false 가 저장된 사용자를 ON 으로
+    if not pa.enabledMigrated then
+        pa.enabled = true
+        pa.enabledMigrated = true
     end
 
     -- ── ID 타입 1회 마이그레이션 ──
