@@ -2591,8 +2591,32 @@ local function SA_PartyPreviewText()
         end
     end
     local stats = {}
-    if pa.showItemLevel then stats[#stats+1] = "템렙620" end
-    if pa.showScore then stats[#stats+1] = "쐐기 2450 점" end
+    if pa.showItemLevel then
+        -- 본인 실제 장착 템렙 (조회 실패 시 620)
+        local il = 620
+        local okI, _overall, equipped = pcall(GetAverageItemLevel)
+        if okI and type(equipped) == "number" and equipped > 0 then il = math.floor(equipped) end
+        stats[#stats+1] = "템렙" .. il
+    end
+    if pa.showScore then
+        -- 본인 실제 쐐기점수 (조회 실패 시 2450)
+        local sc
+        local okS, summary = pcall(function()
+            return C_PlayerInfo and C_PlayerInfo.GetPlayerMythicPlusRatingSummary
+               and C_PlayerInfo.GetPlayerMythicPlusRatingSummary("player")
+        end)
+        if okS and summary and type(summary.currentSeasonScore) == "number" then
+            sc = summary.currentSeasonScore
+        end
+        if not sc then
+            local okC, s2 = pcall(function()
+                return C_ChallengeMode and C_ChallengeMode.GetOverallDungeonScore
+                   and C_ChallengeMode.GetOverallDungeonScore()
+            end)
+            if okC and type(s2) == "number" then sc = s2 end
+        end
+        stats[#stats+1] = "쐐기 " .. math.floor(sc or 2450) .. " 점"
+    end
     local segs = {}
     if specStr ~= "" then segs[#segs+1] = (specStr:gsub("%s+$", "")) end
     if pa.showName ~= false then segs[#segs+1] = disp end
