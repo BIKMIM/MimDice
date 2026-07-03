@@ -1456,12 +1456,9 @@ function FactoryReset()
     MimDiceDB.fontName = fontName
     MimDiceDB.fontHeight = fontHeight
 
-    -- 전투부활 아이콘도 화면 정중앙으로 위치 초기화 (메인창과 함께 리셋)
-    if MimDiceDB.battleRes then
-        MimDiceDB.battleRes.iconX = 0
-        MimDiceDB.battleRes.iconY = 0
-        if SA_RefreshBattleResIconState then SA_RefreshBattleResIconState() end
-    end
+    -- (주의) 여기서는 메인 창 위치/크기만 초기화한다.
+    -- 전투부활 아이콘·죽음 메시지·버프 바·파티 알림 등 세부 알림 위치/설정은
+    -- 각 설정창의 [기본값] 버튼으로만 초기화 (미니맵 우클릭이 알림 위치를 건드리면 안 됨)
 end
 
 -- 자동 팝업 체크박스 클릭 시 호출되는 함수

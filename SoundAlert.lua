@@ -326,10 +326,10 @@ function SA_InitDB()
     if pa.soundKey == nil then pa.soundKey = 3049656 end         -- 기본 내장음: 아 결국 오실 줄 알았어요
     if pa.soundName == nil then pa.soundName = "아 결국 오실 줄 알았어요" end
     if pa.prefix == nil then pa.prefix = "새 파티 신청!" end     -- 사용자 정의 문구
-    if pa.fontSize == nil then pa.fontSize = 40 end
+    if pa.fontSize == nil then pa.fontSize = 30 end
     if pa.color == nil then pa.color = { r = 0.3, g = 1, b = 0.3 } end
     if pa.x == nil then pa.x = 0 end
-    if pa.y == nil then pa.y = -80 end                           -- 화면 중앙 약간 아래
+    if pa.y == nil then pa.y = 400 end                           -- 화면 위쪽
     if pa.locked == nil then pa.locked = true end
     if pa.duration == nil then pa.duration = 4 end
     if pa.showClass == nil then pa.showClass = true end          -- 직업 표시
@@ -2542,7 +2542,7 @@ local function SA_PartyApplicantText()
         local okS, _sid, sname, _desc, sicon = pcall(GetSpecializationInfoByID, specID)
         if okS and sname then
             if sicon then
-                local isz = math.floor((pa.fontSize or 40) * 0.7 + 0.5)
+                local isz = math.floor((pa.fontSize or 30) * 0.7 + 0.5)
                 specStr = "|T" .. sicon .. ":" .. isz .. ":" .. isz .. ":0:0:64:64:5:59:5:59|t "
             end
             specStr = specStr .. sname .. " "
@@ -2583,7 +2583,7 @@ local function SA_PartyPreviewText()
             local _sid, sname, _desc, sicon = GetSpecializationInfo(si)
             if sname then
                 if sicon then
-                    local isz = math.floor((pa.fontSize or 40) * 0.7 + 0.5)
+                    local isz = math.floor((pa.fontSize or 30) * 0.7 + 0.5)
                     specStr = "|T" .. sicon .. ":" .. isz .. ":" .. isz .. ":0:0:64:64:5:59:5:59|t "
                 end
                 specStr = specStr .. sname .. " "
@@ -2720,8 +2720,8 @@ local function SA_ShowPartyAlert(preview)
     f:SetEditBorder(false)
     if not InCombatLockdown() then f:EnableMouse(false) end
     f:ClearAllPoints()
-    f:SetPoint("CENTER", UIParent, "CENTER", pa.x or 0, pa.y or -80)
-    f.text:SetFont("Fonts\\2002.ttf", pa.fontSize or 40, "THICKOUTLINE")
+    f:SetPoint("CENTER", UIParent, "CENTER", pa.x or 0, pa.y or 400)
+    f.text:SetFont("Fonts\\2002.ttf", pa.fontSize or 30, "THICKOUTLINE")
 
     local col = pa.color or { r = 0.3, g = 1, b = 0.3 }
     local hex = string.format("%02x%02x%02x", (col.r or 0.3)*255, (col.g or 1)*255, (col.b or 0.3)*255)
@@ -2756,8 +2756,8 @@ local function SA_RenderPartyPreview()
     f.bg:SetColorTexture(0, 0, 0, pa.bgAlpha or 0.5); f.bg:Show()
     f:SetEditBorder(true)
     f:ClearAllPoints()
-    f:SetPoint("CENTER", UIParent, "CENTER", pa.x or 0, pa.y or -80)
-    f.text:SetFont("Fonts\\2002.ttf", pa.fontSize or 40, "THICKOUTLINE")
+    f:SetPoint("CENTER", UIParent, "CENTER", pa.x or 0, pa.y or 400)
+    f.text:SetFont("Fonts\\2002.ttf", pa.fontSize or 30, "THICKOUTLINE")
     local col = pa.color or { r = 0.3, g = 1, b = 0.3 }
     local hex = string.format("%02x%02x%02x", (col.r or 0.3)*255, (col.g or 1)*255, (col.b or 0.3)*255)
     local info = SA_PartyPreviewText()
@@ -3204,7 +3204,7 @@ local function SA_CreatePartyConfig()
     resetBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
     resetBtn:SetScript("OnClick", function()
         local pa = MimDiceDB.partyAlert
-        pa.fontSize, pa.x, pa.y = 40, 0, -80
+        pa.fontSize, pa.x, pa.y = 30, 0, 400
         pa.color = { r = 0.3, g = 1, b = 0.3 }
         pa.prefix = "새 파티 신청!"
         pa.showName, pa.showSpec, pa.showItemLevel, pa.showScore = true, true, true, true
