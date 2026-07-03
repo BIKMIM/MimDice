@@ -49,6 +49,7 @@ local SOUND_CATEGORIES = {
             { name = "드디어 제가 바라던 모습을 보여주네요", id = 635498 },
             { name = "미안하지만 당신은 눈에 띄어요", id = 635562 },
             { name = "또~ 죽지마세요", id = 563125 },
+            { name = "아 결국 오실 줄 알았어요", id = 3049656 },
         }
     }
 }
@@ -314,6 +315,43 @@ function SA_InitDB()
     if br.iconSize == nil then br.iconSize = 40 end
     if br.iconLocked == nil then br.iconLocked = true end
 
+    -- =================================================================
+    -- 파티 신청 알림: 계정 공용 (파티 모집 시 신청 오면 화면 메시지 + 사운드)
+    -- =================================================================
+    if not MimDiceDB.partyAlert then MimDiceDB.partyAlert = {} end
+    local pa = MimDiceDB.partyAlert
+    if pa.enabled == nil then pa.enabled = false end             -- 마스터 on/off
+    if pa.soundType == nil then pa.soundType = "preset" end
+    if pa.soundFile == nil then pa.soundFile = "" end
+    if pa.soundKey == nil then pa.soundKey = 3049656 end         -- 기본 내장음: 아 결국 오실 줄 알았어요
+    if pa.soundName == nil then pa.soundName = "아 결국 오실 줄 알았어요" end
+    if pa.prefix == nil then pa.prefix = "새 파티 신청!" end     -- 사용자 정의 문구
+    if pa.fontSize == nil then pa.fontSize = 40 end
+    if pa.color == nil then pa.color = { r = 0.3, g = 1, b = 0.3 } end
+    if pa.x == nil then pa.x = 0 end
+    if pa.y == nil then pa.y = -80 end                           -- 화면 중앙 약간 아래
+    if pa.locked == nil then pa.locked = true end
+    if pa.duration == nil then pa.duration = 4 end
+    if pa.showClass == nil then pa.showClass = true end          -- 직업 표시
+    if pa.showSpec == nil then pa.showSpec = true end            -- 특성 표시
+    if pa.showItemLevel == nil then pa.showItemLevel = true end  -- 아이템레벨 표시
+    if pa.showScore == nil then pa.showScore = true end          -- 쐐기점수 표시
+    if pa.showName == nil then pa.showName = true end            -- 닉네임(이름) 표시
+    if pa.bgAlpha == nil then pa.bgAlpha = 0.5 end               -- 배경 반투명도(0~1)
+    -- 반복 알림: "once"=신청 올 때 1회 / "repeat"=대기 신청자 있는 동안 repeatInterval초마다 재알림
+    if pa.repeatMode == nil then pa.repeatMode = "once" end
+    if pa.repeatInterval == nil then pa.repeatInterval = 5 end
+    -- 표시 지속: "fade"=duration초 뒤 페이드아웃 / "stay"=대기 신청자 없어질 때까지 계속 표시
+    if pa.displayMode == nil then pa.displayMode = "fade" end
+    -- 기본음 변경(알람 567458 → 3049656) 1회 반영: 예전 기본값 그대로였던(테스트 중 저장된) 사용자만 갱신
+    if not pa.soundMigrated then
+        if pa.soundType == "preset" and pa.soundKey == 567458 then
+            pa.soundKey = 3049656
+            pa.soundName = "아 결국 오실 줄 알았어요"
+        end
+        pa.soundMigrated = true
+    end
+
     -- ── ID 타입 1회 마이그레이션 ──
     -- 예전엔 ID 값을 soundKey 에 저장했는데 내장(preset)과 같은 칸이라 서로 덮어쓰는 문제가 있었다.
     -- ID 전용 칸 soundID 로 분리하고, 기존 id-type 항목의 soundKey 값을 soundID 로 옮긴다.
@@ -340,6 +378,7 @@ function SA_InitDB()
     end
     SA_FixSoundFields(MimDiceDB.battleRes)
     SA_FixSoundFields(MimDiceDB.deathTrack)
+    SA_FixSoundFields(MimDiceDB.partyAlert)
     if MimDiceDB.buffTrack then
         for _, bt in pairs(MimDiceDB.buffTrack) do SA_FixSoundFields(bt) end
     end
@@ -901,10 +940,18 @@ local function SA_CreateDeathConfig()
     win:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
     win:EnableMouse(true)
     win:SetMovable(true)
-    win:SetClampedToScreen(true)   -- 화면 밖으로 못 나가게
+    -- (화면 클램프 없음: 메인창처럼 화면 밖으로도 이동 가능 — 번들로 함께 이동)
     win:RegisterForDrag("LeftButton")
-    win:SetScript("OnDragStart", win.StartMoving)
-    win:SetScript("OnDragStop", win.StopMovingOrSizing)
+    -- 설정창을 잡고 끌면 본체(MainWindow)를 움직임 → 옵션창·설정창이 앵커로 붙어 하나로 뭉쳐 이동
+    win:SetScript("OnDragStart", function()
+        local mw = _G.MainWindow
+        if mw and mw:IsMovable() then mw:StartMoving() end
+    end)
+    win:SetScript("OnDragStop", function()
+        local mw = _G.MainWindow
+        if mw then mw:StopMovingOrSizing() end
+        if MimDice_SaveAnchors then MimDice_SaveAnchors() end
+    end)
 
     -- (설정창을 닫아도 미리보기/편집 상태는 유지 → 블러드/마력주입/죽음 동시에 보며 위치 조정)
 
@@ -1140,14 +1187,25 @@ local function SA_CreateDeathConfig()
         DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[MimDice]|r 죽음 메시지 설정 초기화됨")
     end)
 
-    -- 미리보기(테스트) 버튼
+    -- 테스트: 실제처럼 메시지(페이드로 사라짐) + 사운드 확인 (마스터 off여도 재생)
     local testBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     testBtn:SetSize(90, 24)
     testBtn:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 14)
-    testBtn:SetText("미리보기")
+    testBtn:SetText("테스트")
     testBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
     testBtn:SetScript("OnClick", function()
-        SA_DeathPreview()
+        local dt = MimDiceDB.deathTrack
+        local hadPreview = SA_DeathFrame and SA_DeathFrame.previewOn  -- 상시 미리보기('표시' 체크) 중이면 유지
+        SA_RenderDeathPreview()                    -- 본인 이름/직업색으로 즉시 표시
+        if not hadPreview then
+            local f = SA_DeathFrame
+            if f then
+                f.fade:SetStartDelay(dt.duration or 3) -- 실제 메시지와 동일한 유지시간 후 페이드
+                f.fadeAnim:Play()
+            end
+        end
+        local was = dt.enabled; dt.enabled = true  -- 테스트는 마스터 off여도 강제 재생
+        SA_PlaySound(dt); dt.enabled = was
     end)
 
     win:Hide()  -- 생성 직후 숨김 (CreateFrame 기본은 표시 상태 → 첫 클릭에 닫히는 문제 방지)
@@ -1187,6 +1245,7 @@ function SA_ToggleDeathConfig()
     else
         for _, w in pairs(SA_BuffConfigs) do if w:IsShown() then w:Hide() end end  -- 겹침 방지
         if SA_BattleResIconConfig and SA_BattleResIconConfig:IsShown() then SA_BattleResIconConfig:Hide() end
+        if _G.MimDice_PartyConfig and _G.MimDice_PartyConfig:IsShown() then _G.MimDice_PartyConfig:Hide() end
         -- 열 때마다 옵션창 우측 기본 위치로 초기화 (화면 밖으로 사라져도 복구됨)
         win:ClearAllPoints()
         win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
@@ -1228,10 +1287,18 @@ local function SA_CreateBuffConfig(key)
     win:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
     win:EnableMouse(true)
     win:SetMovable(true)
-    win:SetClampedToScreen(true)   -- 화면 밖으로 못 나가게
+    -- (화면 클램프 없음: 메인창처럼 화면 밖으로도 이동 가능 — 번들로 함께 이동)
     win:RegisterForDrag("LeftButton")
-    win:SetScript("OnDragStart", win.StartMoving)
-    win:SetScript("OnDragStop", win.StopMovingOrSizing)
+    -- 설정창을 잡고 끌면 본체(MainWindow)를 움직임 → 옵션창·설정창이 앵커로 붙어 하나로 뭉쳐 이동
+    win:SetScript("OnDragStart", function()
+        local mw = _G.MainWindow
+        if mw and mw:IsMovable() then mw:StartMoving() end
+    end)
+    win:SetScript("OnDragStop", function()
+        local mw = _G.MainWindow
+        if mw then mw:StopMovingOrSizing() end
+        if MimDice_SaveAnchors then MimDice_SaveAnchors() end
+    end)
     win.key = key
 
     -- (설정창을 닫아도 미리보기/편집 상태는 유지 → 블러드/마력주입/죽음 동시에 보며 위치 조정)
@@ -1446,13 +1513,13 @@ local function SA_CreateBuffConfig(key)
         DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[MimDice]|r " .. d.name .. " 바 설정 초기화됨")
     end)
 
-    -- 미리보기
+    -- 테스트: 실제 발동처럼 사운드 + (바 표시 설정 시) 실제 지속시간 카운트다운 (블러드 40초 → 0.0)
     local previewBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     previewBtn:SetSize(90, 24)
     previewBtn:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 14)
-    previewBtn:SetText("미리보기")
+    previewBtn:SetText("테스트")
     previewBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
-    previewBtn:SetScript("OnClick", function() SA_BuffPreview(key) end)
+    previewBtn:SetScript("OnClick", function() SA_BuffTest(key) end)
 
     -- 현재 설정값을 위젯에 반영
     function win.Refresh()
@@ -1490,6 +1557,7 @@ function SA_ToggleBuffConfig(key)
         for k, w in pairs(SA_BuffConfigs) do if k ~= key and w:IsShown() then w:Hide() end end
         if SA_DeathConfig and SA_DeathConfig:IsShown() then SA_DeathConfig:Hide() end
         if SA_BattleResIconConfig and SA_BattleResIconConfig:IsShown() then SA_BattleResIconConfig:Hide() end
+        if _G.MimDice_PartyConfig and _G.MimDice_PartyConfig:IsShown() then _G.MimDice_PartyConfig:Hide() end
         -- 열 때마다 옵션창 우측 기본 위치로 초기화 (화면 밖으로 사라져도 복구됨)
         win:ClearAllPoints()
         win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
@@ -1737,6 +1805,22 @@ local function SA_PlayBuff(key)
     SA_PlaySound(bt, "Dialog")
 end
 
+-- 테스트 (설정창 버튼용, 전역): 실제 발동과 동일하게
+-- 사운드 + (바 표시 설정 시) 실제 지속시간(블러드 40초) 카운트다운을 0.0까지 표시
+function SA_BuffTest(key)
+    local bt = MimDiceDB and MimDiceDB.buffTrack and MimDiceDB.buffTrack[key]
+    if not bt then return end
+    local def = BUFF_DEF_BY_KEY[key]
+    local dur = (def and def.duration) or 40
+    if bt.barEnabled then
+        SA_StartBuffBar(key, dur, true)   -- force: 마스터 off여도 테스트는 표시
+        -- 카운트다운 끝난 뒤 표시 정책 복구 ('바 표시' 상시 미리보기/편집 중이면 다시 표시)
+        C_Timer.After(dur + 0.2, function() SA_UpdateBuffBar(key) end)
+    end
+    local was = bt.enabled; bt.enabled = true  -- 테스트는 마스터 off여도 강제 재생
+    SA_PlaySound(bt, "Dialog"); bt.enabled = was
+end
+
 -- =====================================================================
 -- 전투부활 충전 추적 (모든 클래스 지원)
 -- =====================================================================
@@ -1863,7 +1947,7 @@ local function SA_EnsureBattleResIcon()
                     end
                 end
             else
-                GameTooltip:AddLine("파티/공대에서 표시됩니다", 0.7, 0.7, 0.7)
+                GameTooltip:AddLine("충전 정보는 파티/공대에서 표시됩니다", 0.7, 0.7, 0.7)
             end
             GameTooltip:Show()
         end)
@@ -1909,7 +1993,7 @@ end
 -- 표시 규칙:
 --   * 마스터(전투부활 br.enabled) 꺼짐 → 무조건 숨김 (전투부활 자체를 안 씀)
 --   * 편집(잠금해제) 또는 설정창 열림 → 그룹 무관 정적 표시 (위치잡기용, 별도 미리보기 불필요)
---   * 잠금 + 아이콘 ON + 그룹 안 + 풀 읽힘 → 실제 충전 수/스와이프 라이브 표시
+--   * 잠금 + 아이콘 ON → 항상 표시 (풀 읽히면 충전 수/스와이프 라이브, 아니면 아이콘만)
 --   * 그 외 → 숨김
 function SA_RefreshBattleResIconState()
     local br = MimDiceDB and MimDiceDB.battleRes
@@ -1958,8 +2042,9 @@ function SA_RefreshBattleResIconState()
         return
     end
 
-    -- 잠금 + 아이콘 ON + 그룹 안이면 라이브 표시
-    if br.iconEnabled and IsInGroup() then
+    -- 잠금 + 아이콘 ON이면 항상 표시 (그룹/장소 무관)
+    --   충전 풀이 읽히면 충전 수/스와이프 라이브, 안 읽히면(야외 등) 숫자 없이 아이콘만
+    if br.iconEnabled then
         local ok, info = pcall(C_Spell.GetSpellCharges, BREZ_SPELL_ID)
         local cur = ok and info and info.currentCharges
         if cur ~= nil then
@@ -1970,10 +2055,15 @@ function SA_RefreshBattleResIconState()
             else
                 f.cd:Clear()
             end
-            f:SetAlpha(1)
-            f:Show()
-            return
+        else
+            -- 야외/그룹 밖 등 충전 정보 없음: 아이콘만 표시
+            f.count:SetText("")
+            f.icon:SetDesaturated(false)
+            f.cd:Clear()
         end
+        f:SetAlpha(1)
+        f:Show()
+        return
     end
     f:Hide()
 end
@@ -2135,10 +2225,18 @@ function SA_CreateBattleResIconConfig()
     win:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
     win:EnableMouse(true)
     win:SetMovable(true)
-    win:SetClampedToScreen(true)
+    -- (화면 클램프 없음: 메인창처럼 화면 밖으로도 이동 가능 — 번들로 함께 이동)
     win:RegisterForDrag("LeftButton")
-    win:SetScript("OnDragStart", win.StartMoving)
-    win:SetScript("OnDragStop", win.StopMovingOrSizing)
+    -- 설정창을 잡고 끌면 본체(MainWindow)를 움직임 → 옵션창·설정창이 앵커로 붙어 하나로 뭉쳐 이동
+    win:SetScript("OnDragStart", function()
+        local mw = _G.MainWindow
+        if mw and mw:IsMovable() then mw:StartMoving() end
+    end)
+    win:SetScript("OnDragStop", function()
+        local mw = _G.MainWindow
+        if mw then mw:StopMovingOrSizing() end
+        if MimDice_SaveAnchors then MimDice_SaveAnchors() end
+    end)
     -- 설정창을 닫으면 그룹 정책대로 복귀 (정적 미리보기 해제) + 사운드 팝업도 닫기
     win:SetScript("OnHide", function()
         if SA_SoundPicker then SA_SoundPicker:Hide() end
@@ -2324,10 +2422,12 @@ function SA_ToggleBattleResIconConfig()
         -- 다른 설정창 닫기 (같은 위치 겹침 방지)
         for _, w in pairs(SA_BuffConfigs) do if w:IsShown() then w:Hide() end end
         if SA_DeathConfig and SA_DeathConfig:IsShown() then SA_DeathConfig:Hide() end
+        if _G.MimDice_PartyConfig and _G.MimDice_PartyConfig:IsShown() then _G.MimDice_PartyConfig:Hide() end
         win:ClearAllPoints()
         win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
         win.Refresh()
         win:Show()
+        SA_RefreshBattleResIconState()   -- 창 열자마자 위치확인용 아이콘 즉시 표시 (티커 0.5초 대기 제거)
     end
 end
 
@@ -2394,12 +2494,769 @@ local function SA_HandleUnitDied(deadGUID)
     SA_ShowDeathMessage(name, role, classFile)
 end
 
+-- =====================================================================
+-- 파티 신청 알림 (LFG 모집 중 신청 오면 화면 메시지 + 사운드)
+-- =====================================================================
+local SA_PartyFrame = nil
+local SA_PartyConfig = nil   -- 설정창 (아래에서 생성). 드래그 시 참조용 미리 선언.
+local SA_paLastCount = 0     -- 직전 신청자 수 (증가 감지용)
+local SA_partyRepeatTicker = nil  -- 반복 알림 티커 (repeat 모드)
+local SA_partyRepeatInterval = nil  -- 현재 티커 간격(초) — 설정 변경 감지용
+
+-- 최근 신청자 정보 문자열 ([특성아이콘 특성명] 직업색이름  아이템렙  쐐기점수). 전부 pcall 보호.
+-- GetApplicantMemberInfo 반환값 순서(확인됨): 1 name, 2 class, 3 locClass, 4 level,
+--   5 itemLevel, 6 honor, 7 tank, 8 healer, 9 damager, 10 role, 11 rel, 12 dungeonScore,
+--   13 pvpIlvl, 14 ?, 15 ?, 16 specID, ...  (pcall로 감싸면 인덱스가 +1 밀림)
+local function SA_PartyApplicantText()
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa or not C_LFGList then return "" end
+    local ok, apps = pcall(C_LFGList.GetApplicants)
+    if not ok or type(apps) ~= "table" or #apps == 0 then return "" end
+    local appID = apps[#apps]   -- 가장 최근 신청
+    local r = { pcall(C_LFGList.GetApplicantMemberInfo, appID, 1) }
+    if not r[1] then return "" end              -- r[1] = pcall ok
+    local name  = r[2]
+    if not name or SA_IsSecret(name) then return "" end
+    local class = r[3]
+    local ilvl  = r[6]      -- 반환 5 (itemLevel)
+    local score = r[13]     -- 반환 12 (dungeonScore, 전체 쐐기점수)
+    local specID = r[17]    -- 반환 16 (specID)
+
+    -- 이름 + 서버 (현재 서버가 아니면 서버 표시)
+    local realm = (GetRealmName and GetRealmName()) or ""
+    local shortName, srv = name, nil
+    local di = name:find("%-")
+    if di then shortName = name:sub(1, di - 1); srv = name:sub(di + 1) end
+    local nameDisp = shortName
+    if srv and srv ~= "" and srv ~= realm then nameDisp = shortName .. "-" .. srv end
+    local disp = nameDisp
+    if class and not SA_IsSecret(class) and C_ClassColor then
+        local c = C_ClassColor.GetClassColor(class)
+        if c then disp = "|c" .. c:GenerateHexColor() .. nameDisp .. "|r" end
+    end
+
+    -- 특성 아이콘(작게 + 여백 크롭) + 특성명
+    -- (secret value 방어: SA_IsSecret 를 비교/연산 앞에 둬서 and 단락으로 secret 값 비교를 회피)
+    local specStr = ""
+    if pa.showSpec and type(specID) == "number" and not SA_IsSecret(specID) and specID > 0 and GetSpecializationInfoByID then
+        local okS, _sid, sname, _desc, sicon = pcall(GetSpecializationInfoByID, specID)
+        if okS and sname then
+            if sicon then
+                local isz = math.floor((pa.fontSize or 40) * 0.7 + 0.5)
+                specStr = "|T" .. sicon .. ":" .. isz .. ":" .. isz .. ":0:0:64:64:5:59:5:59|t "
+            end
+            specStr = specStr .. sname .. " "
+        end
+    end
+
+    -- 이름  템렙620 / 쐐기 2450 점
+    local stats = {}
+    if pa.showItemLevel and type(ilvl) == "number" and not SA_IsSecret(ilvl) and ilvl > 0 then
+        stats[#stats+1] = "템렙" .. math.floor(ilvl)
+    end
+    if pa.showScore and type(score) == "number" and not SA_IsSecret(score) and score > 0 then
+        stats[#stats+1] = "쐐기 " .. score .. " 점"
+    end
+    -- 세그먼트 조립: [특성아이콘+특성명] [이름] [스탯] — 닉네임 숨김 옵션 반영
+    local segs = {}
+    if specStr ~= "" then segs[#segs+1] = (specStr:gsub("%s+$", "")) end
+    if pa.showName ~= false then segs[#segs+1] = disp end
+    if #stats > 0 then segs[#segs+1] = table.concat(stats, " / ") end
+    return table.concat(segs, "  ")
+end
+
+-- 미리보기용: 본인 정보 + 현재 표시항목 설정 반영 (실제와 동일한 형식)
+local function SA_PartyPreviewText()
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa then return "" end
+    local nm = UnitName("player") or "밈주머니"
+    local _, cls = UnitClass("player")
+    local disp = nm
+    if cls and C_ClassColor then
+        local c = C_ClassColor.GetClassColor(cls)
+        if c then disp = "|c" .. c:GenerateHexColor() .. nm .. "|r" end
+    end
+    local specStr = ""
+    if pa.showSpec and GetSpecialization then
+        local si = GetSpecialization()
+        if si then
+            local _sid, sname, _desc, sicon = GetSpecializationInfo(si)
+            if sname then
+                if sicon then
+                    local isz = math.floor((pa.fontSize or 40) * 0.7 + 0.5)
+                    specStr = "|T" .. sicon .. ":" .. isz .. ":" .. isz .. ":0:0:64:64:5:59:5:59|t "
+                end
+                specStr = specStr .. sname .. " "
+            end
+        end
+    end
+    local stats = {}
+    if pa.showItemLevel then stats[#stats+1] = "템렙620" end
+    if pa.showScore then stats[#stats+1] = "쐐기 2450 점" end
+    local segs = {}
+    if specStr ~= "" then segs[#segs+1] = (specStr:gsub("%s+$", "")) end
+    if pa.showName ~= false then segs[#segs+1] = disp end
+    if #stats > 0 then segs[#segs+1] = table.concat(stats, " / ") end
+    return table.concat(segs, "  ")
+end
+
+local function SA_EnsurePartyFrame()
+    if SA_PartyFrame then return SA_PartyFrame end
+    local f = CreateFrame("Frame", "MimDice_PartyAlertFrame", UIParent)
+    f:SetSize(600, 60)
+    f:SetFrameStrata("HIGH")
+    f:SetMovable(true)
+    f:SetClampedToScreen(true)
+    if f.SetPropagateMouseClicks then f:SetPropagateMouseClicks(true) end
+
+    local function savePos(self)
+        local x, y = self:GetCenter(); local cx, cy = UIParent:GetCenter()
+        if x and cx and MimDiceDB.partyAlert then
+            MimDiceDB.partyAlert.x = x - cx
+            MimDiceDB.partyAlert.y = y - cy
+        end
+        if SA_PartyConfig and SA_PartyConfig:IsShown() and SA_PartyConfig.posRefresh then
+            SA_PartyConfig.posRefresh()
+        end
+    end
+    f:SetScript("OnMouseDown", function(self, btn)
+        if btn == "LeftButton" and MimDiceDB.partyAlert and not MimDiceDB.partyAlert.locked then
+            self:StartMoving(); self.moving = true
+        end
+    end)
+    f:SetScript("OnMouseUp", function(self) self:StopMovingOrSizing(); self.moving = false; savePos(self) end)
+    f:SetScript("OnUpdate", function(self) if self.moving then savePos(self) end end)
+
+    local fs = f:CreateFontString(nil, "OVERLAY")
+    fs:SetPoint("CENTER")
+    fs:SetShadowColor(0, 0, 0, 1); fs:SetShadowOffset(2, -2)
+    f.text = fs
+
+    -- 배경: 텍스트 크기에 맞춰 전체를 감싸는 반투명 검정 (가독성). 항상 표시.
+    local bg = f:CreateTexture(nil, "BACKGROUND")
+    bg:SetPoint("TOPLEFT", fs, "TOPLEFT", -14, 8)
+    bg:SetPoint("BOTTOMRIGHT", fs, "BOTTOMRIGHT", 14, -8)
+    bg:SetColorTexture(0, 0, 0, 0.5)
+    f.bg = bg
+
+    -- 프레임(드래그 판정 영역)을 배경 박스와 일치시킴 — 텍스트 변경 후마다 호출
+    -- (프레임이 고정 600x60이면 글자가 길 때 가운데만 드래그되는 버그처럼 보임)
+    function f.FitToText()
+        local w = (fs:GetStringWidth() or 0) + 28   -- bg 좌우 여백 14+14
+        local h = (fs:GetStringHeight() or 0) + 16  -- bg 상하 여백 8+8
+        f:SetSize(math.max(w, 40), math.max(h, 24))
+    end
+
+    -- 편집(위치잡기)용 노란 "테두리"만 (내부 채움 없음). 평소엔 숨김. bg 둘레 4변.
+    local T = 3
+    local eb = {}
+    for _, k in ipairs({ "top", "bottom", "left", "right" }) do
+        local t = f:CreateTexture(nil, "OVERLAY")
+        t:SetColorTexture(1, 0.82, 0, 1)
+        t:Hide()
+        eb[k] = t
+    end
+    eb.top:SetPoint("TOPLEFT", bg, "TOPLEFT", -2, 2)
+    eb.top:SetPoint("TOPRIGHT", bg, "TOPRIGHT", 2, 2); eb.top:SetHeight(T)
+    eb.bottom:SetPoint("BOTTOMLEFT", bg, "BOTTOMLEFT", -2, -2)
+    eb.bottom:SetPoint("BOTTOMRIGHT", bg, "BOTTOMRIGHT", 2, -2); eb.bottom:SetHeight(T)
+    eb.left:SetPoint("TOPLEFT", bg, "TOPLEFT", -2, 2)
+    eb.left:SetPoint("BOTTOMLEFT", bg, "BOTTOMLEFT", -2, -2); eb.left:SetWidth(T)
+    eb.right:SetPoint("TOPRIGHT", bg, "TOPRIGHT", 2, 2)
+    eb.right:SetPoint("BOTTOMRIGHT", bg, "BOTTOMRIGHT", 2, -2); eb.right:SetWidth(T)
+    f.editBorder = eb
+    function f.SetEditBorder(_, shown)
+        for _, t in pairs(eb) do if shown then t:Show() else t:Hide() end end
+    end
+
+    local ag = f:CreateAnimationGroup()
+    local fade = ag:CreateAnimation("Alpha")
+    fade:SetFromAlpha(1); fade:SetToAlpha(0); fade:SetDuration(1)
+    f.fadeAnim = ag; f.fade = fade
+    ag:SetScript("OnFinished", function()
+        f.text:SetText(""); f:SetAlpha(0)
+        if not InCombatLockdown() then f:EnableMouse(false) end
+        f:Hide()
+    end)
+
+    f:Hide()   -- 로그인 시 미리 생성되므로 명시적으로 숨김 (표시는 Show 경로에서만)
+    SA_PartyFrame = f
+    return f
+end
+
+-- 화면에 파티 신청 알림 표시 (+사운드). preview=true면 마스터 off여도 미리보기
+local function SA_ShowPartyAlert(preview)
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa then return end
+    if not preview and not pa.enabled then return end
+
+    local f = SA_EnsurePartyFrame()
+    -- 실제 알림 배경: 검정 반투명 (사용자 지정 알파). 알파 0이면 사실상 배경 없음. 편집 테두리는 숨김
+    f.bg:SetColorTexture(0, 0, 0, pa.bgAlpha or 0.5); f.bg:Show()
+    f:SetEditBorder(false)
+    if not InCombatLockdown() then f:EnableMouse(false) end
+    f:ClearAllPoints()
+    f:SetPoint("CENTER", UIParent, "CENTER", pa.x or 0, pa.y or -80)
+    f.text:SetFont("Fonts\\2002.ttf", pa.fontSize or 40, "THICKOUTLINE")
+
+    local col = pa.color or { r = 0.3, g = 1, b = 0.3 }
+    local hex = string.format("%02x%02x%02x", (col.r or 0.3)*255, (col.g or 1)*255, (col.b or 0.3)*255)
+    local msg = "|cff" .. hex .. (pa.prefix or "새 파티 신청!") .. "|r"
+    local info = preview and SA_PartyPreviewText() or SA_PartyApplicantText()
+    if info and info ~= "" then msg = msg .. "  " .. info end
+    f.text:SetText(msg)
+    f.FitToText()
+
+    f.fadeAnim:Stop(); f:SetAlpha(1); f:Show()
+    -- 표시 지속: "stay"(실제 알림) 이면 페이드 없이 계속 표시 (대기 신청자 0되면 SA_CheckPartyApplicants가 숨김)
+    -- preview(테스트)는 화면에 남지 않도록 항상 페이드
+    if preview or pa.displayMode ~= "stay" then
+        f.fade:SetStartDelay(pa.duration or 4); f.fadeAnim:Play()
+    end
+
+    -- 사운드 (preview면 강제 재생)
+    if preview then
+        local was = pa.enabled; pa.enabled = true
+        SA_PlaySound(pa, "Dialog"); pa.enabled = was
+    else
+        SA_PlaySound(pa, "Dialog")
+    end
+end
+
+-- 위치 편집용 정적 미리보기 (페이드 없이 계속 표시)
+local function SA_RenderPartyPreview()
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa then return end
+    local f = SA_EnsurePartyFrame()
+    -- 편집(위치잡기): 실제 배경(검정 반투명, 알파 그대로)은 유지 + 노란 테두리만 둘러 이동가능 표시
+    f.bg:SetColorTexture(0, 0, 0, pa.bgAlpha or 0.5); f.bg:Show()
+    f:SetEditBorder(true)
+    f:ClearAllPoints()
+    f:SetPoint("CENTER", UIParent, "CENTER", pa.x or 0, pa.y or -80)
+    f.text:SetFont("Fonts\\2002.ttf", pa.fontSize or 40, "THICKOUTLINE")
+    local col = pa.color or { r = 0.3, g = 1, b = 0.3 }
+    local hex = string.format("%02x%02x%02x", (col.r or 0.3)*255, (col.g or 1)*255, (col.b or 0.3)*255)
+    local info = SA_PartyPreviewText()
+    local msg = "|cff" .. hex .. (pa.prefix or "새 파티 신청!") .. "|r"
+    if info and info ~= "" then msg = msg .. "  " .. info end
+    f.text:SetText(msg)
+    f.FitToText()
+    f.fadeAnim:Stop(); f:SetAlpha(1); f:Show()
+end
+
+-- 위치 잠금 상태 반영 (잠금해제=편집 정적표시+드래그, 잠금=숨김)
+local function SA_UpdatePartyFrame()
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa then return end
+    local f = SA_EnsurePartyFrame()
+    if not pa.locked then
+        SA_RenderPartyPreview()
+        if not InCombatLockdown() then f:EnableMouse(true) end
+    else
+        f:SetEditBorder(false)   -- 잠금 시 편집 테두리 제거
+        if not InCombatLockdown() then f:EnableMouse(false) end
+        if not f.fadeAnim:IsPlaying() then f.text:SetText(""); f:Hide() end
+    end
+end
+
+-- 설정 변경 시: 잠금해제(편집) 중이면 미리보기 즉시 갱신
+local function SA_PartyRefreshPreview()
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if pa and not pa.locked then SA_RenderPartyPreview() end
+end
+
+-- 파티 알림 프레임 즉시 숨김 (stay 모드 잔상 제거용)
+local function SA_HidePartyFrame()
+    local f = SA_PartyFrame
+    if f then f.fadeAnim:Stop(); f.text:SetText(""); f:Hide() end
+end
+
+-- 반복 알림 티커 중지
+local function SA_StopPartyRepeat()
+    if SA_partyRepeatTicker then SA_partyRepeatTicker:Cancel(); SA_partyRepeatTicker = nil end
+    SA_partyRepeatInterval = nil
+end
+
+-- 반복 알림 티커 상태 재평가 (신청자 변화·설정 변경 시 호출)
+-- repeat 모드 + 대기 신청자 있음 → repeatInterval초마다 재알림. 아니면 중지.
+local function SA_UpdatePartyRepeat()
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa or not pa.enabled or pa.repeatMode ~= "repeat" or not C_LFGList then
+        SA_StopPartyRepeat(); return
+    end
+    local ok, count = pcall(C_LFGList.GetNumApplicants)
+    if not ok or type(count) ~= "number" or count <= 0 then SA_StopPartyRepeat(); return end
+    local interval = math.max(1, pa.repeatInterval or 5)
+    if SA_partyRepeatTicker and SA_partyRepeatInterval == interval then return end  -- 이미 동일 간격 동작 중
+    SA_StopPartyRepeat()
+    SA_partyRepeatInterval = interval
+    SA_partyRepeatTicker = C_Timer.NewTicker(interval, function()
+        local p = MimDiceDB and MimDiceDB.partyAlert
+        if not p or not p.enabled or p.repeatMode ~= "repeat" or not C_LFGList then SA_StopPartyRepeat(); return end
+        local ok2, c2 = pcall(C_LFGList.GetNumApplicants)
+        if not ok2 or type(c2) ~= "number" or c2 <= 0 then
+            SA_StopPartyRepeat()
+            if p.locked ~= false then SA_HidePartyFrame() end   -- 대기 신청자 없어짐 → 잔상 제거
+            return
+        end
+        SA_ShowPartyAlert(false)   -- 재알림 (글자 + 사운드)
+    end)
+end
+
+-- LFG 신청자 수 증가 감지 (파티 리더/모집자일 때만)
+local function SA_CheckPartyApplicants()
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa or not pa.enabled then SA_StopPartyRepeat(); return end
+    if not C_LFGList then return end
+    local ok, count = pcall(C_LFGList.GetNumApplicants)
+    if not ok or type(count) ~= "number" then return end
+    if count > SA_paLastCount then
+        SA_ShowPartyAlert(false)
+    end
+    SA_paLastCount = count
+    if count <= 0 then
+        -- 대기 신청자 없음: 반복 중지 + (편집중이 아니면) stay 잔상 숨김
+        SA_StopPartyRepeat()
+        if pa.locked ~= false then SA_HidePartyFrame() end
+    else
+        SA_UpdatePartyRepeat()   -- 반복 모드면 티커 유지/시작
+    end
+end
+
+-- 임시 테스트/토글 슬래시 (옵션창 UI 통합 전 검증용): /밈파티 , /밈파티 test
+SLASH_MIMPARTY1 = "/밈파티"
+SLASH_MIMPARTY2 = "/mimparty"
+SlashCmdList["MIMPARTY"] = function(msg)
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa then return end
+    if msg == "test" then
+        SA_ShowPartyAlert(true)   -- 미리보기 (마스터 off여도 표시)
+        return
+    end
+    if msg == "dump" then
+        -- 진단: 최근 신청자의 GetApplicantMemberInfo 전체 반환값 출력
+        -- (특성 specID / 던전별 단수 필드가 있는지 확인용)
+        if not C_LFGList then DEFAULT_CHAT_FRAME:AddMessage("[MimDice] C_LFGList 없음") return end
+        local ok, apps = pcall(C_LFGList.GetApplicants)
+        if not ok or type(apps) ~= "table" or #apps == 0 then
+            DEFAULT_CHAT_FRAME:AddMessage("[MimDice] 신청자 없음 (파티 모집 중 신청 받은 상태에서 실행하세요)")
+            return
+        end
+        local id = apps[#apps]
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[MimDice] 신청자 정보 덤프|r (appID " .. tostring(id) .. ")")
+        local okD, dump = pcall(function()
+            return strjoin(" | ", tostringall(C_LFGList.GetApplicantMemberInfo(id, 1)))
+        end)
+        DEFAULT_CHAT_FRAME:AddMessage(okD and tostring(dump) or "덤프 실패(secret value 등)")
+        -- 활동(모집 던전) 정보도 함께
+        local okA, aid = pcall(function()
+            local e = C_LFGList.GetActiveEntryInfo and C_LFGList.GetActiveEntryInfo()
+            return e and e.activityID
+        end)
+        if okA and aid then DEFAULT_CHAT_FRAME:AddMessage("[MimDice] 내 모집 activityID: " .. tostring(aid)) end
+        return
+    end
+    pa.enabled = not pa.enabled
+    if not pa.enabled then
+        -- 끌 때 정리: 반복 티커 중지 + (편집중 아니면) 계속표시(stay) 잔상 제거
+        SA_StopPartyRepeat()
+        if pa.locked ~= false then SA_HidePartyFrame() end
+    end
+    DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[MimDice]|r 파티 신청 알림: " .. (pa.enabled and "켜짐" or "꺼짐"))
+end
+
+-- =====================================================================
+-- 파티 신청 알림 설정창 (죽음 알림 패턴 복제 + 표시항목 체크)
+-- =====================================================================
+local function SA_CreatePartyConfig()
+    if SA_PartyConfig then return SA_PartyConfig end
+
+    local win = CreateFrame("Frame", "MimDice_PartyConfig", UIParent, "BackdropTemplate")
+    win:SetSize(340, 580)
+    win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
+    win:SetFrameStrata("DIALOG")
+    win:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    win:SetBackdropColor(0, 0, 0, 0.5)
+    win:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+    win:EnableMouse(true); win:SetMovable(true)   -- 클램프 없음: 메인창처럼 화면 밖 이동 가능
+    win:RegisterForDrag("LeftButton")
+    -- 설정창을 잡고 끌면 본체(MainWindow)를 움직임 → 옵션창·설정창이 앵커로 붙어 하나로 뭉쳐 이동
+    win:SetScript("OnDragStart", function()
+        local mw = _G.MainWindow
+        if mw and mw:IsMovable() then mw:StartMoving() end
+    end)
+    win:SetScript("OnDragStop", function()
+        local mw = _G.MainWindow
+        if mw then mw:StopMovingOrSizing() end
+        if MimDice_SaveAnchors then MimDice_SaveAnchors() end
+    end)
+    win:SetScript("OnHide", function()
+        if SA_SoundPicker then SA_SoundPicker:Hide() end
+    end)
+
+    local title = win:CreateFontString(nil, "OVERLAY")
+    title:SetPoint("TOP", win, "TOP", 0, -12)
+    title:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
+    title:SetText("파티 신청 알림 설정 (공용)")
+    title:SetTextColor(1, 0.82, 0)
+
+    local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
+    closeBtn:SetScript("OnClick", function() win:Hide() end)
+
+    -- ── 재생 사운드 ─────────────────────────
+    local soundLabel = win:CreateFontString(nil, "OVERLAY")
+    soundLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -36)
+    soundLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    soundLabel:SetText("재생 사운드 — 아래 3개 중 하나 선택")
+    soundLabel:SetTextColor(0.9, 0.9, 0.9)
+
+    win.typeRefresh = SA_MakeTypeSelector(win, 15, -56,
+        function() return MimDiceDB.partyAlert.soundType end,
+        function(t) MimDiceDB.partyAlert.soundType = t; win.RefreshSoundRow() end)
+
+    local soundBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    soundBox:SetSize(135, 22)
+    soundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
+    soundBox:SetAutoFocus(false); soundBox:SetFont("Fonts\\2002.ttf", 11, "")
+    win.soundBox = soundBox
+    SA_WirePlaceholder(soundBox)
+
+    local soundSelectBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    soundSelectBtn:SetSize(135, 22)
+    soundSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
+    do
+        local fs = soundSelectBtn:GetFontString()
+        fs:SetFont("Fonts\\2002.ttf", 10, ""); fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
+        fs:ClearAllPoints(); fs:SetPoint("LEFT", 6, 0); fs:SetPoint("RIGHT", -6, 0)
+    end
+    win.soundSelectBtn = soundSelectBtn
+    soundSelectBtn:SetScript("OnClick", function()
+        SA_OpenSoundPicker(soundSelectBtn,
+            function() return MimDiceDB.partyAlert.soundKey end,
+            function(snd)
+                local pa = MimDiceDB.partyAlert
+                pa.soundType = "preset"; pa.soundKey = snd.id; pa.soundName = snd.name
+                win.RefreshSoundRow()
+                local was = pa.enabled; pa.enabled = true
+                SA_PlaySound(pa, "Dialog"); pa.enabled = was
+            end)
+    end)
+
+    local soundTestBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    soundTestBtn:SetSize(24, 22)
+    soundTestBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -56)
+    soundTestBtn:SetText("▶")
+    soundTestBtn:SetScript("OnClick", function()
+        local pa = MimDiceDB.partyAlert
+        local was = pa.enabled; pa.enabled = true
+        SA_PlaySound(pa, "Dialog"); pa.enabled = was
+    end)
+
+    function win.RefreshSoundRow()
+        local pa = MimDiceDB.partyAlert
+        win.typeRefresh()
+        if pa.soundType == "preset" then
+            soundLabel:SetText("내장: 아래에서 사운드 선택 (▶ 미리듣기)")
+            soundSelectBtn:Show(); soundBox:Hide()
+            soundSelectBtn:SetText(pa.soundName or "사운드 선택...")
+        elseif pa.soundType == "id" then
+            soundLabel:SetText("ID: 사운드 숫자 ID를 직접 입력")
+            soundSelectBtn:Hide(); soundBox:Show()
+            SA_SetBoxValue(soundBox, pa.soundID, "예: 567458")
+        else
+            soundLabel:SetText("커스텀: sounds폴더 파일명 그대로 입력")
+            soundSelectBtn:Hide(); soundBox:Show()
+            SA_SetBoxValue(soundBox, pa.soundFile, "예: MySound.mp3")
+        end
+    end
+    soundBox:SetScript("OnTextChanged", function(self, userInput)
+        if not userInput then return end
+        local pa = MimDiceDB.partyAlert
+        if pa.soundType == "id" then pa.soundID = tonumber(self:GetText()) or self:GetText()
+        else pa.soundFile = self:GetText() end
+    end)
+    soundBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+
+    -- ── 문구 입력 (prefix) ──
+    local prefixLabel = win:CreateFontString(nil, "OVERLAY")
+    prefixLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -84)
+    prefixLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    prefixLabel:SetText("화면 문구 (예: 새 파티 신청!)")
+    prefixLabel:SetTextColor(0.9, 0.9, 0.9)
+    local prefixBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    prefixBox:SetSize(200, 22)
+    prefixBox:SetPoint("TOPLEFT", win, "TOPLEFT", 20, -104)
+    prefixBox:SetAutoFocus(false); prefixBox:SetFont("Fonts\\2002.ttf", 12, "")
+    prefixBox:SetScript("OnTextChanged", function(self, userInput)
+        if userInput then MimDiceDB.partyAlert.prefix = self:GetText(); SA_PartyRefreshPreview() end
+    end)
+    prefixBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    win.prefixBox = prefixBox
+
+    -- ── 표시 항목 체크 (특성 / 아이템렙 / 쐐기점수) ──
+    local itemLabel = win:CreateFontString(nil, "OVERLAY")
+    itemLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -132)
+    itemLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    itemLabel:SetText("표시 항목")
+    itemLabel:SetTextColor(0.9, 0.9, 0.9)
+
+    local function mkShowCb(x, field, text)
+        local cb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
+        cb:SetSize(22, 22)
+        cb:SetPoint("TOPLEFT", win, "TOPLEFT", x, -148)
+        cb:SetScript("OnClick", function(self)
+            MimDiceDB.partyAlert[field] = self:GetChecked() and true or false
+            SA_PartyRefreshPreview()
+        end)
+        local lb = win:CreateFontString(nil, "OVERLAY")
+        lb:SetPoint("LEFT", cb, "RIGHT", 0, 0)
+        lb:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+        lb:SetText(text); lb:SetTextColor(0.9, 0.9, 0.9)
+        return cb
+    end
+    win.nameCb  = mkShowCb(15,  "showName",      "닉네임")
+    win.specCb  = mkShowCb(85,  "showSpec",      "특성")
+    win.ilvlCb  = mkShowCb(140, "showItemLevel", "아이템렙")
+    win.scoreCb = mkShowCb(225, "showScore",     "쐐기점수")
+
+    -- ── 글씨 크기 ──
+    win.sizeSlider = SA_MakeNumberSlider(win, "MimDice_PartySizeSlider", -180, "글씨 크기", 12, 120,
+        function() return MimDiceDB.partyAlert.fontSize end,
+        function(v) MimDiceDB.partyAlert.fontSize = v end,
+        function() SA_PartyRefreshPreview() end)
+
+    -- ── 색상 그리드 ──
+    local colorLabel = win:CreateFontString(nil, "OVERLAY")
+    colorLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -236)
+    colorLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    colorLabel:SetText("문구 색상")
+    colorLabel:SetTextColor(0.9, 0.9, 0.9)
+    win.swatches = {}
+    local SWATCH, GAP = 24, 4
+    local startX, startY = 18, -256
+    for idx, rgb in ipairs(SA_COLOR_PRESETS) do
+        local colN = (idx - 1) % SA_PALETTE_COLS
+        local rowN = math.floor((idx - 1) / SA_PALETTE_COLS)
+        local sw = CreateFrame("Button", nil, win)
+        sw:SetSize(SWATCH, SWATCH)
+        sw:SetPoint("TOPLEFT", win, "TOPLEFT", startX + colN*(SWATCH+GAP), startY - rowN*(SWATCH+GAP))
+        local sel = sw:CreateTexture(nil, "BACKGROUND")
+        sel:SetPoint("TOPLEFT", -2, 2); sel:SetPoint("BOTTOMRIGHT", 2, -2)
+        sel:SetColorTexture(1, 1, 1, 1); sel:Hide(); sw.sel = sel
+        local tex = sw:CreateTexture(nil, "ARTWORK")
+        tex:SetAllPoints(); tex:SetColorTexture(rgb[1], rgb[2], rgb[3], 1)
+        sw:SetScript("OnClick", function()
+            MimDiceDB.partyAlert.color = { r = rgb[1], g = rgb[2], b = rgb[3] }
+            for _, o in ipairs(win.swatches) do o.sel:Hide() end
+            sw.sel:Show()
+            SA_PartyRefreshPreview()
+        end)
+        win.swatches[idx] = sw
+    end
+
+    -- ── 배경 투명도 (실제 알림 배경 검정 반투명도, 0=배경없음) ──
+    local bgLabel = win:CreateFontString(nil, "OVERLAY")
+    bgLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -374)
+    bgLabel:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+    bgLabel:SetText("배경 투명도"); bgLabel:SetTextColor(0.9, 0.9, 0.9)
+    local bgBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    bgBox:SetSize(38, 20)
+    bgBox:SetPoint("LEFT", bgLabel, "RIGHT", 12, 0)
+    bgBox:SetAutoFocus(false); bgBox:SetFont("Fonts\\2002.ttf", 11, "")
+    bgBox:SetNumeric(true); bgBox:SetMaxLetters(3); bgBox:SetJustifyH("CENTER")
+    local bgSuffix = win:CreateFontString(nil, "OVERLAY")
+    bgSuffix:SetPoint("LEFT", bgBox, "RIGHT", 6, 0)
+    bgSuffix:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+    bgSuffix:SetText("% (0=배경없음, 실제 알림에 적용)"); bgSuffix:SetTextColor(0.7, 0.7, 0.7)
+    bgBox:SetScript("OnTextChanged", function(self, userInput)
+        if not userInput then return end
+        local v = tonumber(self:GetText())
+        if v then
+            v = math.max(0, math.min(100, v))
+            MimDiceDB.partyAlert.bgAlpha = v / 100
+            SA_PartyRefreshPreview()
+        end
+    end)
+    bgBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    win.bgBox = bgBox
+
+    -- ── 알림 방식: 반복 알림 / 표시 지속 ──
+    -- 반복 알림(놓침 방지): 켜면 대기 신청자가 있는 동안 N초마다 재알림, 끄면 신청 올 때 1회만
+    local repeatCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
+    repeatCb:SetSize(22, 22)
+    repeatCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -406)
+    local repeatLb = win:CreateFontString(nil, "OVERLAY")
+    repeatLb:SetPoint("LEFT", repeatCb, "RIGHT", 0, 0)
+    repeatLb:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+    repeatLb:SetText("반복 알림"); repeatLb:SetTextColor(0.9, 0.9, 0.9)
+    local repeatBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    repeatBox:SetSize(38, 20)
+    repeatBox:SetPoint("LEFT", repeatCb, "RIGHT", 58, 0)
+    repeatBox:SetAutoFocus(false); repeatBox:SetFont("Fonts\\2002.ttf", 11, "")
+    repeatBox:SetNumeric(true); repeatBox:SetMaxLetters(3); repeatBox:SetJustifyH("CENTER")
+    local repeatSuffix = win:CreateFontString(nil, "OVERLAY")
+    repeatSuffix:SetPoint("LEFT", repeatBox, "RIGHT", 6, 0)
+    repeatSuffix:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+    repeatSuffix:SetText("초마다 (끄면 1회만)"); repeatSuffix:SetTextColor(0.7, 0.7, 0.7)
+    repeatCb:SetScript("OnClick", function(self)
+        MimDiceDB.partyAlert.repeatMode = self:GetChecked() and "repeat" or "once"
+        SA_StopPartyRepeat(); SA_UpdatePartyRepeat()
+    end)
+    repeatBox:SetScript("OnTextChanged", function(self, userInput)
+        if not userInput then return end
+        local v = tonumber(self:GetText())
+        if v and v >= 1 then
+            MimDiceDB.partyAlert.repeatInterval = v
+            SA_StopPartyRepeat(); SA_UpdatePartyRepeat()
+        end
+    end)
+    repeatBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    win.repeatCb = repeatCb; win.repeatBox = repeatBox
+
+    -- 표시 지속: 켜면 N초 뒤 페이드아웃, 끄면 대기 신청자 없어질 때까지 계속 표시
+    local displayCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
+    displayCb:SetSize(22, 22)
+    displayCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -434)
+    local displayLb = win:CreateFontString(nil, "OVERLAY")
+    displayLb:SetPoint("LEFT", displayCb, "RIGHT", 0, 0)
+    displayLb:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+    displayLb:SetText("자동 숨김"); displayLb:SetTextColor(0.9, 0.9, 0.9)
+    local durationBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    durationBox:SetSize(38, 20)
+    durationBox:SetPoint("LEFT", displayCb, "RIGHT", 58, 0)
+    durationBox:SetAutoFocus(false); durationBox:SetFont("Fonts\\2002.ttf", 11, "")
+    durationBox:SetNumeric(true); durationBox:SetMaxLetters(3); durationBox:SetJustifyH("CENTER")
+    local durationSuffix = win:CreateFontString(nil, "OVERLAY")
+    durationSuffix:SetPoint("LEFT", durationBox, "RIGHT", 6, 0)
+    durationSuffix:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+    durationSuffix:SetText("초 뒤 (끄면 계속표시)"); durationSuffix:SetTextColor(0.7, 0.7, 0.7)
+    displayCb:SetScript("OnClick", function(self)
+        MimDiceDB.partyAlert.displayMode = self:GetChecked() and "fade" or "stay"
+    end)
+    durationBox:SetScript("OnTextChanged", function(self, userInput)
+        if not userInput then return end
+        local v = tonumber(self:GetText())
+        if v and v >= 1 then MimDiceDB.partyAlert.duration = v end
+    end)
+    durationBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    win.displayCb = displayCb; win.durationBox = durationBox
+
+    -- ── 위치 X/Y ──
+    local posRefresh, posX, posY = SA_AddPosRow(win, -468,
+        function() return MimDiceDB.partyAlert.x end,
+        function(v) MimDiceDB.partyAlert.x = v end,
+        function() return MimDiceDB.partyAlert.y end,
+        function(v) MimDiceDB.partyAlert.y = v end,
+        function() SA_PartyRefreshPreview() end)
+    win.posRefresh = posRefresh
+    SA_ChainTabEnter({ win.sizeSlider.edit, bgBox, repeatBox, durationBox, posX, posY })
+
+    -- ── 위치 잠금 / 기본값 / 미리보기 ──
+    local lockBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    lockBtn:SetSize(110, 24)
+    lockBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 14)
+    lockBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+    lockBtn:SetScript("OnClick", function()
+        local pa = MimDiceDB.partyAlert
+        pa.locked = not pa.locked
+        SA_UpdatePartyFrame()
+        win.RefreshLockBtn()
+    end)
+    win.lockBtn = lockBtn
+    function win.RefreshLockBtn()
+        lockBtn:SetText(MimDiceDB.partyAlert.locked and "위치 잠금 해제" or "위치 잠금(드래그끝)")
+    end
+
+    local resetBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    resetBtn:SetSize(70, 24)
+    resetBtn:SetPoint("BOTTOM", win, "BOTTOM", 0, 14)
+    resetBtn:SetText("기본값")
+    resetBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    resetBtn:SetScript("OnClick", function()
+        local pa = MimDiceDB.partyAlert
+        pa.fontSize, pa.x, pa.y = 40, 0, -80
+        pa.color = { r = 0.3, g = 1, b = 0.3 }
+        pa.prefix = "새 파티 신청!"
+        pa.showName, pa.showSpec, pa.showItemLevel, pa.showScore = true, true, true, true
+        pa.bgAlpha = 0.5
+        pa.repeatMode, pa.repeatInterval = "once", 5
+        pa.displayMode, pa.duration = "fade", 4
+        pa.locked = true
+        SA_StopPartyRepeat()
+        SA_UpdatePartyFrame()
+        SA_RefreshPartyConfig()
+        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[MimDice]|r 파티 신청 알림 설정 초기화됨")
+    end)
+
+    -- 테스트: 잠금 상태에서도 실제처럼 글자+소리 확인 (본인 정보로 표시, 페이드로 사라짐)
+    local testBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    testBtn:SetSize(70, 24)
+    testBtn:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 14)
+    testBtn:SetText("테스트")
+    testBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    testBtn:SetScript("OnClick", function() SA_ShowPartyAlert(true) end)
+
+    win:Hide()
+    SA_PartyConfig = win
+    return win
+end
+
+-- 현재 설정값을 팝업 위젯에 반영 (전역: reset 버튼에서도 참조)
+function SA_RefreshPartyConfig()
+    local win = SA_PartyConfig
+    if not win then return end
+    local pa = MimDiceDB.partyAlert
+    win.RefreshSoundRow()
+    win.prefixBox:SetText(pa.prefix or "새 파티 신청!")
+    win.nameCb:SetChecked(pa.showName ~= false)
+    win.specCb:SetChecked(pa.showSpec)
+    win.ilvlCb:SetChecked(pa.showItemLevel)
+    win.scoreCb:SetChecked(pa.showScore)
+    win.bgBox:SetText(tostring(math.floor((pa.bgAlpha or 0.5) * 100 + 0.5)))
+    win.repeatCb:SetChecked(pa.repeatMode == "repeat")
+    win.repeatBox:SetText(tostring(pa.repeatInterval or 5))
+    win.displayCb:SetChecked(pa.displayMode ~= "stay")   -- 자동숨김(fade)=체크, 계속표시(stay)=해제
+    win.durationBox:SetText(tostring(pa.duration or 4))
+    win.sizeSlider.SyncValue()
+    win.posRefresh()
+    win.RefreshLockBtn()
+    local cc = pa.color or { r = 0.3, g = 1, b = 0.3 }
+    for idx, rgb in ipairs(SA_COLOR_PRESETS) do
+        local match = math.abs(rgb[1]-(cc.r or 0))<0.02 and math.abs(rgb[2]-(cc.g or 0))<0.02 and math.abs(rgb[3]-(cc.b or 0))<0.02
+        if win.swatches[idx] then
+            if match then win.swatches[idx].sel:Show() else win.swatches[idx].sel:Hide() end
+        end
+    end
+end
+
+function SA_TogglePartyConfig()
+    local win = SA_CreatePartyConfig()
+    if win:IsShown() then
+        win:Hide()
+    else
+        if SA_DeathConfig and SA_DeathConfig:IsShown() then SA_DeathConfig:Hide() end
+        for _, w in pairs(SA_BuffConfigs) do if w:IsShown() then w:Hide() end end
+        if SA_BattleResIconConfig and SA_BattleResIconConfig:IsShown() then SA_BattleResIconConfig:Hide() end
+        win:ClearAllPoints()
+        win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
+        SA_RefreshPartyConfig()
+        win:Show()
+    end
+end
+
 local SA_EventFrame = CreateFrame("Frame")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
 SA_EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")   -- 인스턴스 진입 시 전투부활 충전 기준값 동기화
 SA_EventFrame:RegisterEvent("UNIT_DIED")
 SA_EventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")     -- 전투부활 충전 변화 감지
+SA_EventFrame:RegisterEvent("LFG_LIST_APPLICANT_LIST_UPDATED")  -- 파티 신청 감지
 SA_EventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 
 SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
@@ -2412,6 +3269,8 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         end
         -- 죽음 프레임도 미리 생성 (첫 사망=전투 중 생성 지연/위험 제거)
         SA_EnsureDeathFrame()
+        -- 파티 알림 프레임도 미리 생성 (SetPropagateMouseClicks는 전투 중 보호 → 첫 알림이 전투 중이어도 안전)
+        SA_EnsurePartyFrame()
         SA_SyncBattleResCharges()   -- 전투부활 충전 기준값 초기화 (오발동 방지)
         -- 전투부활 아이콘 미리 생성 + 0.5초 주기 갱신 티커 시작
         SA_EnsureBattleResIcon()
@@ -2423,6 +3282,8 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         -- 인스턴스 진입/이동 시 충전 기준값 재동기화 (진입 직후 충전 변화 오발동 방지)
         SA_SyncBattleResCharges()
         SA_RefreshBattleResIconState()
+    elseif event == "LFG_LIST_APPLICANT_LIST_UPDATED" then
+        SA_CheckPartyApplicants()
     elseif event == "SPELL_UPDATE_CHARGES" then
         SA_CheckBattleResCharge()
         SA_RefreshBattleResIconState()   -- 충전 변화 즉시 아이콘 반영
@@ -2587,6 +3448,7 @@ local function SA_CreateWindow()
         if SA_DeathConfig and SA_DeathConfig:IsShown() then SA_DeathConfig:Hide() end
         for _, w in pairs(SA_BuffConfigs) do if w:IsShown() then w:Hide() end end
         if SA_BattleResIconConfig and SA_BattleResIconConfig:IsShown() then SA_BattleResIconConfig:Hide() end
+        if _G.MimDice_PartyConfig and _G.MimDice_PartyConfig:IsShown() then _G.MimDice_PartyConfig:Hide() end
         if SA_SoundPicker and SA_SoundPicker:IsShown() then SA_SoundPicker:Hide() end
     end)
 
@@ -2830,28 +3692,56 @@ local function SA_CreateWindow()
     brCfgBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
     brCfgBtn:SetScript("OnClick", function() SA_ToggleBattleResIconConfig() end)
 
+    -- 파티 신청 줄: [✓] 파티 신청 (사운드+메시지) ..... [설정]
+    local paCb = CreateFrame("CheckButton", nil, SA_OptionWindow, "UICheckButtonTemplate")
+    paCb:SetSize(22, 22)
+    paCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -206)
+    paCb:SetChecked(MimDiceDB and MimDiceDB.partyAlert and MimDiceDB.partyAlert.enabled)
+    paCb:SetScript("OnClick", function(self)
+        if MimDiceDB.partyAlert then
+            MimDiceDB.partyAlert.enabled = self:GetChecked() and true or false
+            if not MimDiceDB.partyAlert.enabled then
+                -- 끌 때 정리: 반복 티커 중지 + (편집중 아니면) 계속표시(stay) 잔상 제거
+                SA_StopPartyRepeat()
+                if MimDiceDB.partyAlert.locked ~= false then SA_HidePartyFrame() end
+            end
+        end
+    end)
+    local paLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    paLabel:SetPoint("LEFT", paCb, "RIGHT", 2, 0)
+    paLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    paLabel:SetText("파티 신청 (사운드 + 메시지)")
+    paLabel:SetTextColor(0.9, 0.9, 0.9)
+
+    local paCfgBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    paCfgBtn:SetSize(50, 22)
+    paCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -206)
+    paCfgBtn:SetText("설정")
+    paCfgBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    paCfgBtn:SetScript("OnClick", function() SA_TogglePartyConfig() end)
+
     -- 구분선
     local divider = SA_OptionWindow:CreateTexture(nil, "ARTWORK")
     divider:SetSize(350, 1)
-    divider:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -214)
+    divider:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -238)
     divider:SetColorTexture(0.5, 0.5, 0.5, 0.6)
 
     -- ── << 스킬 사운드 알림 >> 섹션 ─────────────────
     local skillSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    skillSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -226)
+    skillSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -250)
     skillSectionLabel:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
     skillSectionLabel:SetText("스킬 사운드 알림 (직업별 저장)")
     skillSectionLabel:SetTextColor(1, 0.82, 0)
 
     local inputLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    inputLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -252)
+    inputLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -276)
     inputLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
     inputLabel:SetText("1. 추가할 스킬의 이름 또는 ID 입력 (꼭 띄어쓰기 지켜야 함)")
     inputLabel:SetTextColor(0.9, 0.9, 0.9)
 
     local inputBox = CreateFrame("EditBox", "SA_SpellInput", SA_OptionWindow, "InputBoxTemplate")
     inputBox:SetSize(200, 22)
-    inputBox:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 20, -272)
+    inputBox:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 20, -296)
     inputBox:SetAutoFocus(false)
     inputBox:SetFont("Fonts\\2002.ttf", 12, "")
 
@@ -2915,13 +3805,13 @@ local function SA_CreateWindow()
 
     -- ── 2. 목록 스크롤 프레임 ──────────────────────────────────────────
     local listTitle = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    listTitle:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -312)
+    listTitle:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -336)
     listTitle:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
     listTitle:SetText("2. 사운드 개별 설정")
     listTitle:SetTextColor(0.8, 0.8, 0.8)
 
     local scrollFrame = CreateFrame("ScrollFrame", "SA_ListScrollFrame", SA_OptionWindow, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 10, -332)
+    scrollFrame:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 10, -356)
     scrollFrame:SetPoint("BOTTOMRIGHT", SA_OptionWindow, "BOTTOMRIGHT", -30, 10)
 
     local scrollChild = CreateFrame("Frame", "SA_ListScrollChild", scrollFrame)
