@@ -2504,21 +2504,31 @@ end
 -- =====================================================================
 local SA_PartyFrame = nil
 local SA_PartyConfig = nil   -- 설정창 (아래에서 생성). 드래그 시 참조용 미리 선언.
-local SA_paLastCount = 0     -- 직전 신청자 수 (증가 감지용)
+local SA_paLastCount = 0     -- 직전 신청자 수 (잔상 정리 등에 사용)
 local SA_partyRepeatTicker = nil  -- 반복 알림 티커 (repeat 모드)
 local SA_partyRepeatInterval = nil  -- 현재 티커 간격(초) — 설정 변경 감지용
+local SA_paSeen = {}         -- 이미 알림한 applicantID 집합 (목록 순서를 안 믿고 새 신청자를 ID로 식별)
+local SA_paLastShownID = nil -- 마지막으로 표시한 신청자 ID (반복 알림 재표시용)
 
 -- 최근 신청자 정보 문자열 ([특성아이콘 특성명] 직업색이름  아이템렙  쐐기점수). 전부 pcall 보호.
 -- GetApplicantMemberInfo 반환값 순서(확인됨): 1 name, 2 class, 3 locClass, 4 level,
 --   5 itemLevel, 6 honor, 7 tank, 8 healer, 9 damager, 10 role, 11 rel, 12 dungeonScore,
 --   13 pvpIlvl, 14 ?, 15 ?, 16 specID, ...  (pcall로 감싸면 인덱스가 +1 밀림)
-local function SA_PartyApplicantText()
+local function SA_PartyApplicantText(appID)
     local pa = MimDiceDB and MimDiceDB.partyAlert
     if not pa or not C_LFGList then return "" end
     local ok, apps = pcall(C_LFGList.GetApplicants)
     if not ok or type(apps) ~= "table" or #apps == 0 then return "" end
-    local appID = apps[#apps]   -- 가장 최근 신청
-    local r = { pcall(C_LFGList.GetApplicantMemberInfo, appID, 1) }
+    -- 표시 대상: 지정 신청자 → (반복 알림) 마지막 표시했던 신청자가 아직 대기 중이면 그 사람 → 목록 마지막
+    -- (GetApplicants() 목록 순서는 "최신이 마지막"이 보장되지 않으므로 순서에 의존하지 않는다)
+    local target = appID
+    if not target and SA_paLastShownID then
+        for _, id in ipairs(apps) do
+            if id == SA_paLastShownID then target = id; break end
+        end
+    end
+    target = target or apps[#apps]
+    local r = { pcall(C_LFGList.GetApplicantMemberInfo, target, 1) }
     if not r[1] then return "" end              -- r[1] = pcall ok
     local name  = r[2]
     if not name or SA_IsSecret(name) then return "" end
@@ -2714,7 +2724,8 @@ local function SA_EnsurePartyFrame()
 end
 
 -- 화면에 파티 신청 알림 표시 (+사운드). preview=true면 마스터 off여도 미리보기
-local function SA_ShowPartyAlert(preview)
+-- appID: 표시할 신청자 ID (실제 알림에서 새 신청자를 특정. nil이면 마지막 표시자/목록 마지막)
+local function SA_ShowPartyAlert(preview, appID)
     local pa = MimDiceDB and MimDiceDB.partyAlert
     if not pa then return end
     if not preview and not pa.enabled then return end
@@ -2731,7 +2742,7 @@ local function SA_ShowPartyAlert(preview)
     local col = pa.color or { r = 0.3, g = 1, b = 0.3 }
     local hex = string.format("%02x%02x%02x", (col.r or 0.3)*255, (col.g or 1)*255, (col.b or 0.3)*255)
     local msg = "|cff" .. hex .. (pa.prefix or "새 파티 신청!") .. "|r"
-    local info = preview and SA_PartyPreviewText() or SA_PartyApplicantText()
+    local info = preview and SA_PartyPreviewText() or SA_PartyApplicantText(appID)
     if info and info ~= "" then msg = msg .. "  " .. info end
     f.text:SetText(msg)
     f.FitToText()
@@ -2806,11 +2817,19 @@ local function SA_StopPartyRepeat()
     SA_partyRepeatInterval = nil
 end
 
+-- 초대 권한 확인: 솔로(내가 모집 등록자) / 파티장·공대장 / 공대부관만 신청자를 처리할 수 있음
+-- 일반 파티원·공대원에게도 LFG_LIST_APPLICANT_LIST_UPDATED 이벤트가 오므로 여기서 걸러야 함
+local function SA_PartyCanInvite()
+    if not IsInGroup() then return true end   -- 그룹 밖 = 모집 글 주인 본인
+    return UnitIsGroupLeader("player") or UnitIsGroupAssistant("player")
+end
+
 -- 반복 알림 티커 상태 재평가 (신청자 변화·설정 변경 시 호출)
 -- repeat 모드 + 대기 신청자 있음 → repeatInterval초마다 재알림. 아니면 중지.
 local function SA_UpdatePartyRepeat()
     local pa = MimDiceDB and MimDiceDB.partyAlert
-    if not pa or not pa.enabled or pa.repeatMode ~= "repeat" or not C_LFGList then
+    if not pa or not pa.enabled or pa.repeatMode ~= "repeat" or not C_LFGList
+       or not SA_PartyCanInvite() then
         SA_StopPartyRepeat(); return
     end
     local ok, count = pcall(C_LFGList.GetNumApplicants)
@@ -2821,7 +2840,8 @@ local function SA_UpdatePartyRepeat()
     SA_partyRepeatInterval = interval
     SA_partyRepeatTicker = C_Timer.NewTicker(interval, function()
         local p = MimDiceDB and MimDiceDB.partyAlert
-        if not p or not p.enabled or p.repeatMode ~= "repeat" or not C_LFGList then SA_StopPartyRepeat(); return end
+        if not p or not p.enabled or p.repeatMode ~= "repeat" or not C_LFGList
+           or not SA_PartyCanInvite() then SA_StopPartyRepeat(); return end
         local ok2, c2 = pcall(C_LFGList.GetNumApplicants)
         if not ok2 or type(c2) ~= "number" or c2 <= 0 then
             SA_StopPartyRepeat()
@@ -2832,20 +2852,40 @@ local function SA_UpdatePartyRepeat()
     end)
 end
 
--- LFG 신청자 수 증가 감지 (파티 리더/모집자일 때만)
+-- LFG 새 신청자 감지 (초대 권한자만: 솔로 모집자/파티장/공대장/부관)
+-- 신청자 수 증가가 아니라 "처음 보는 applicantID"로 판정 → 목록 순서/동시 신청/교체에도 정확
 local function SA_CheckPartyApplicants()
     local pa = MimDiceDB and MimDiceDB.partyAlert
     if not pa or not pa.enabled then SA_StopPartyRepeat(); return end
+    if not SA_PartyCanInvite() then SA_StopPartyRepeat(); return end
     if not C_LFGList then return end
-    local ok, count = pcall(C_LFGList.GetNumApplicants)
-    if not ok or type(count) ~= "number" then return end
-    if count > SA_paLastCount then
-        SA_ShowPartyAlert(false)
+    local ok, apps = pcall(C_LFGList.GetApplicants)
+    if not ok or type(apps) ~= "table" then return end
+    local count = #apps
+
+    -- 새 신청자 = SA_paSeen에 없는 ID (여러 명 동시면 마지막 새 ID로 표시)
+    local present, newID = {}, nil
+    for _, id in ipairs(apps) do
+        present[id] = true
+        if not SA_paSeen[id] then
+            SA_paSeen[id] = true
+            newID = id
+        end
+    end
+    -- 목록에서 사라진 ID 정리 (취소 후 재신청도 새 신청으로 다시 감지됨)
+    for id in pairs(SA_paSeen) do
+        if not present[id] then SA_paSeen[id] = nil end
+    end
+
+    if newID then
+        SA_paLastShownID = newID
+        SA_ShowPartyAlert(false, newID)
     end
     SA_paLastCount = count
     if count <= 0 then
         -- 대기 신청자 없음: 반복 중지 + (편집중이 아니면) stay 잔상 숨김
         SA_StopPartyRepeat()
+        SA_paLastShownID = nil
         if pa.locked ~= false then SA_HidePartyFrame() end
     else
         SA_UpdatePartyRepeat()   -- 반복 모드면 티커 유지/시작
