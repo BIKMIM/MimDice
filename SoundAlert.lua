@@ -240,7 +240,7 @@ function SA_InitDB()
     if dt.color == nil then dt.color = { r = 1, g = 0.2, b = 0.2 } end
     if dt.x == nil then dt.x = 0 end                          -- 중앙
     if dt.y == nil then dt.y = 130 end                        -- 마력주입 바 바로 아래
-    if dt.locked == nil then dt.locked = true end
+    dt.locked = true   -- 리로드/재접속 시 항상 잠금으로 시작 (편집 상태 유지 안 함)
     if dt.duration == nil then dt.duration = 3 end
 
     -- =================================================================
@@ -282,7 +282,7 @@ function SA_InitDB()
         if bt.color == nil then bt.color = { r = d.color[1], g = d.color[2], b = d.color[3] } end
         if bt.x == nil then bt.x = 0 end
         if bt.y == nil then bt.y = d.dy end
-        if bt.locked == nil then bt.locked = true end
+        bt.locked = true   -- 리로드/재접속 시 항상 잠금으로 시작 (편집 상태 유지 안 함)
         if bt.width == nil then bt.width = 800 end               -- 크고 잘 보이는 기본 바
         if bt.height == nil then bt.height = 50 end
         if bt.timeFontSize == nil then bt.timeFontSize = 40 end  -- 글씨 크기 (라벨+남은시간 공통)
@@ -313,7 +313,7 @@ function SA_InitDB()
     if br.iconX == nil then br.iconX = 0 end
     if br.iconY == nil then br.iconY = 0 end     -- 화면 정중앙 (가려지지 않게)
     if br.iconSize == nil then br.iconSize = 40 end
-    if br.iconLocked == nil then br.iconLocked = true end
+    br.iconLocked = true   -- 리로드/재접속 시 항상 잠금으로 시작 (편집 상태 유지 안 함)
 
     -- =================================================================
     -- 파티 신청 알림: 계정 공용 (파티 모집 시 신청 오면 화면 메시지 + 사운드)
@@ -330,7 +330,7 @@ function SA_InitDB()
     if pa.color == nil then pa.color = { r = 0.3, g = 1, b = 0.3 } end
     if pa.x == nil then pa.x = 0 end
     if pa.y == nil then pa.y = 400 end                           -- 화면 위쪽
-    if pa.locked == nil then pa.locked = true end
+    pa.locked = true   -- 리로드/재접속 시 항상 잠금으로 시작 (편집 상태 유지 안 함)
     if pa.duration == nil then pa.duration = 4 end
     if pa.showClass == nil then pa.showClass = true end          -- 직업 표시
     if pa.showSpec == nil then pa.showSpec = true end            -- 특성 표시
@@ -379,6 +379,12 @@ function SA_InitDB()
         if e.soundType == "id" and e.soundID == nil and type(e.soundKey) == "number" then
             e.soundID = e.soundKey
             e.soundKey = nil
+        end
+        -- 4) '내장'인데 선택된 내장음(soundKey)이 없으면 소리가 아예 안 나는 깨진 상태.
+        --    커스텀 파일명이 남아 있으면 커스텀으로 복원 (구버전 잔재/미완성 선택 정리)
+        if e.soundType == "preset" and e.soundKey == nil
+           and type(e.soundFile) == "string" and e.soundFile ~= "" then
+            e.soundType = "custom"
         end
     end
     SA_FixSoundFields(MimDiceDB.battleRes)
@@ -930,6 +936,8 @@ local function SA_SetBoxValue(box, value, placeholder)
     end
 end
 
+local SA_deathTestUntil = 0   -- 죽음 테스트 중복 방지: 이 시각(GetTime)까지 재실행 억제
+
 local function SA_CreateDeathConfig()
     if SA_DeathConfig then return SA_DeathConfig end
 
@@ -961,7 +969,16 @@ local function SA_CreateDeathConfig()
         if MimDice_SaveAnchors then MimDice_SaveAnchors() end
     end)
 
-    -- (설정창을 닫아도 미리보기/편집 상태는 유지 → 블러드/마력주입/죽음 동시에 보며 위치 조정)
+    -- 설정창을 닫으면(X/ESC/연쇄) 미리보기 숨김 + 위치 자동 잠금
+    win:SetScript("OnHide", function()
+        local f = SA_DeathFrame
+        if f and f.previewOn then SA_DeathPreviewOff() end
+        local dt = MimDiceDB and MimDiceDB.deathTrack
+        if dt and not dt.locked then
+            dt.locked = true
+            SA_UpdateDeathFrame()   -- 편집 표시 정리 (실제 페이드 중 메시지는 유지)
+        end
+    end)
 
     local title = win:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOP", win, "TOP", 0, -12)
@@ -1070,10 +1087,9 @@ local function SA_CreateDeathConfig()
     enableCb:SetScript("OnClick", function(self)
         local on = self:GetChecked() and true or false
         MimDiceDB.deathTrack.showMessage = on
-        if on then
-            SA_DeathPreviewOn()    -- 켜면 위치/모양 확인용 미리보기 즉시 표시
-        else
-            SA_DeathPreviewOff()   -- 끄면 화면에서 즉시 숨김
+        -- 체크는 순수 ON/OFF만 (미리보기 없음). 화면 확인은 위치잠금 해제 또는 테스트 버튼으로.
+        if not on then
+            SA_DeathPreviewOff()   -- 끄면 혹시 떠 있던 미리보기 즉시 숨김
         end
     end)
     win.enableCb = enableCb
@@ -1175,14 +1191,14 @@ local function SA_CreateDeathConfig()
         if MimDiceDB.deathTrack.locked then
             lockBtn:SetText("위치 잠금 해제")
         else
-            lockBtn:SetText("위치 잠금(드래그끝)")
+            lockBtn:SetText("위치 잠금")
         end
     end
 
     -- 기본값으로 초기화 (글씨 80, 중앙, 마력주입 바 아래)
     local resetBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     resetBtn:SetSize(70, 24)
-    resetBtn:SetPoint("BOTTOM", win, "BOTTOM", 0, 14)
+    resetBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 155, 14)   -- 340폭 기준 3버튼(110/70/70) 균등 간격 30px
     resetBtn:SetText("기본값")
     resetBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
     resetBtn:SetScript("OnClick", function()
@@ -1197,12 +1213,20 @@ local function SA_CreateDeathConfig()
 
     -- 테스트: 실제처럼 메시지(페이드로 사라짐) + 사운드 확인 (마스터 off여도 재생)
     local testBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-    testBtn:SetSize(90, 24)
+    testBtn:SetSize(70, 24)
     testBtn:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 14)
     testBtn:SetText("테스트")
     testBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
     testBtn:SetScript("OnClick", function()
         local dt = MimDiceDB.deathTrack
+        -- 테스트 중복 방지: 표시 유지시간 동안 재클릭 무시 (소리 겹침 방지)
+        local now = GetTime()
+        if now < SA_deathTestUntil then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                "|cffffff00[MimDice]|r 테스트 재생 중입니다 (%.0f초 남음)", SA_deathTestUntil - now))
+            return
+        end
+        SA_deathTestUntil = now + (dt.duration or 3)
         local hadPreview = SA_DeathFrame and SA_DeathFrame.previewOn  -- 상시 미리보기('표시' 체크) 중이면 유지
         SA_RenderDeathPreview()                    -- 본인 이름/직업색으로 즉시 표시
         if not hadPreview then
@@ -1309,7 +1333,14 @@ local function SA_CreateBuffConfig(key)
     end)
     win.key = key
 
-    -- (설정창을 닫아도 미리보기/편집 상태는 유지 → 블러드/마력주입/죽음 동시에 보며 위치 조정)
+    -- 설정창을 닫으면(X/ESC/연쇄) 미리보기 숨김 + 위치 자동 잠금 (실제 발동 카운트다운은 유지)
+    win:SetScript("OnHide", function()
+        local f = SA_BuffBars[key]
+        if f and f.previewOn then f.previewOn = false end
+        local bt = MimDiceDB and MimDiceDB.buffTrack and MimDiceDB.buffTrack[key]
+        if bt and not bt.locked then bt.locked = true end
+        SA_UpdateBuffBar(key)   -- 정책 복귀: 실제 발동 중이면 그대로, 아니면 숨김
+    end)
 
     local title = win:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOP", win, "TOP", 0, -12)
@@ -1419,11 +1450,9 @@ local function SA_CreateBuffConfig(key)
         local on = self:GetChecked() and true or false
         MimDiceDB.buffTrack[key].barEnabled = on
         local f = SA_BuffBars[key]
-        if on then
-            -- 켜면 위치/모양 확인용으로 즉시 미리보기 표시
-            SA_BuffPreviewOn(key)
-        elseif f then
-            -- 끄면 화면에서 즉시 숨김 (미리보기/편집 바 포함)
+        -- 체크는 순수 ON/OFF만 (미리보기 없음). 화면 확인은 위치잠금 해제 또는 테스트 버튼으로.
+        if not on and f then
+            -- 끄면 화면에서 즉시 숨김 (미리보기/진행 중 바 포함)
             f.previewOn = false
             f.previewing = false
             f.endTime = 0
@@ -1500,13 +1529,13 @@ local function SA_CreateBuffConfig(key)
     end)
     win.lockBtn = lockBtn
     function win.RefreshLockBtn()
-        lockBtn:SetText(MimDiceDB.buffTrack[key].locked and "위치 잠금 해제" or "위치 잠금(드래그끝)")
+        lockBtn:SetText(MimDiceDB.buffTrack[key].locked and "위치 잠금 해제" or "위치 잠금")
     end
 
     -- 기본값으로 초기화
     local resetBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     resetBtn:SetSize(70, 24)
-    resetBtn:SetPoint("BOTTOM", win, "BOTTOM", 0, 14)
+    resetBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 155, 14)   -- 340폭 기준 3버튼(110/70/70) 균등 간격 30px
     resetBtn:SetText("기본값")
     resetBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
     resetBtn:SetScript("OnClick", function()
@@ -1523,7 +1552,7 @@ local function SA_CreateBuffConfig(key)
 
     -- 테스트: 실제 발동처럼 사운드 + (바 표시 설정 시) 실제 지속시간 카운트다운 (블러드 40초 → 0.0)
     local previewBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-    previewBtn:SetSize(90, 24)
+    previewBtn:SetSize(70, 24)
     previewBtn:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 14)
     previewBtn:SetText("테스트")
     previewBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
@@ -1813,6 +1842,9 @@ local function SA_PlayBuff(key)
     SA_PlaySound(bt, "Dialog")
 end
 
+-- 테스트 중복 방지: 사운드(≈지속시간 40초)가 끝나기 전 재클릭은 무시 (소리 겹침 방지)
+local SA_buffTestUntil = {}   -- key → 이 시각(GetTime)까지 테스트 재실행 억제
+
 -- 테스트 (설정창 버튼용, 전역): 실제 발동과 동일하게
 -- 사운드 + (바 표시 설정 시) 실제 지속시간(블러드 40초) 카운트다운을 0.0까지 표시
 function SA_BuffTest(key)
@@ -1820,6 +1852,13 @@ function SA_BuffTest(key)
     if not bt then return end
     local def = BUFF_DEF_BY_KEY[key]
     local dur = (def and def.duration) or 40
+    local now = GetTime()
+    if SA_buffTestUntil[key] and now < SA_buffTestUntil[key] then
+        DEFAULT_CHAT_FRAME:AddMessage(string.format(
+            "|cffffff00[MimDice]|r 테스트 재생 중입니다 (%.0f초 남음)", SA_buffTestUntil[key] - now))
+        return
+    end
+    SA_buffTestUntil[key] = now + dur
     if bt.barEnabled then
         SA_StartBuffBar(key, dur, true)   -- force: 마스터 off여도 테스트는 표시
         -- 카운트다운 끝난 뒤 표시 정책 복구 ('바 표시' 상시 미리보기/편집 중이면 다시 표시)
@@ -2216,6 +2255,8 @@ function SA_OpenSoundPicker(anchor, getSel, onSelect)
 end
 
 -- ── 전투부활 아이콘 설정창 ────────────────────────────────────────────
+local SA_brTestUntil = 0   -- 전투부활 테스트 중복 방지: 이 시각(GetTime)까지 재실행 억제
+
 function SA_CreateBattleResIconConfig()
     if SA_BattleResIconConfig then return SA_BattleResIconConfig end
 
@@ -2245,9 +2286,11 @@ function SA_CreateBattleResIconConfig()
         if mw then mw:StopMovingOrSizing() end
         if MimDice_SaveAnchors then MimDice_SaveAnchors() end
     end)
-    -- 설정창을 닫으면 그룹 정책대로 복귀 (정적 미리보기 해제) + 사운드 팝업도 닫기
+    -- 설정창을 닫으면(X/ESC/연쇄) 그룹 정책대로 복귀 + 사운드 팝업 닫기 + 아이콘 위치 자동 잠금
     win:SetScript("OnHide", function()
         if SA_SoundPicker then SA_SoundPicker:Hide() end
+        local b = MimDiceDB and MimDiceDB.battleRes
+        if b and not b.iconLocked then b.iconLocked = true end
         SA_RefreshBattleResIconState()
     end)
 
@@ -2379,7 +2422,7 @@ function SA_CreateBattleResIconConfig()
 
     -- 위치 잠금/해제
     local lockBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-    lockBtn:SetSize(120, 24)
+    lockBtn:SetSize(110, 24)
     lockBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 14)
     lockBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
     lockBtn:SetScript("OnClick", function()
@@ -2390,13 +2433,13 @@ function SA_CreateBattleResIconConfig()
     end)
     win.lockBtn = lockBtn
     function win.RefreshLockBtn()
-        lockBtn:SetText(MimDiceDB.battleRes.iconLocked and "위치 잠금 해제" or "위치 잠금(드래그끝)")
+        lockBtn:SetText(MimDiceDB.battleRes.iconLocked and "위치 잠금 해제" or "위치 잠금")
     end
 
-    -- 기본값 초기화
+    -- 기본값 초기화 (다른 설정창과 동일하게 하단 가운데)
     local resetBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     resetBtn:SetSize(70, 24)
-    resetBtn:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 14)
+    resetBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 155, 14)   -- 340폭 기준 3버튼(110/70/70) 균등 간격 30px
     resetBtn:SetText("기본값")
     resetBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
     resetBtn:SetScript("OnClick", function()
@@ -2405,6 +2448,25 @@ function SA_CreateBattleResIconConfig()
         SA_RefreshBattleResIconState()
         win.Refresh()
         DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[MimDice]|r 전투부활 아이콘 설정 초기화됨")
+    end)
+
+    -- 테스트: 실제 충전 알림처럼 사운드 재생 (마스터 off여도 재생, 중복 방지)
+    local testBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    testBtn:SetSize(70, 24)
+    testBtn:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 14)
+    testBtn:SetText("테스트")
+    testBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    testBtn:SetScript("OnClick", function()
+        local now = GetTime()
+        if now < SA_brTestUntil then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                "|cffffff00[MimDice]|r 테스트 재생 중입니다 (%.0f초 남음)", SA_brTestUntil - now))
+            return
+        end
+        SA_brTestUntil = now + 3
+        local b = MimDiceDB.battleRes
+        local was = b.enabled; b.enabled = true
+        SA_PlaySound(b, "Dialog"); b.enabled = was
     end)
 
     -- 위젯에 현재값 반영
@@ -2512,6 +2574,7 @@ local SA_partyRepeatTicker = nil  -- 반복 알림 티커 (repeat 모드)
 local SA_partyRepeatInterval = nil  -- 현재 티커 간격(초) — 설정 변경 감지용
 local SA_paSeen = {}         -- 이미 알림한 applicantID 집합 (목록 순서를 안 믿고 새 신청자를 ID로 식별)
 local SA_paLastShownID = nil -- 마지막으로 표시한 신청자 ID (반복 알림 재표시용)
+local SA_paTestUntil = 0     -- 테스트 중복 방지: 이 시각(GetTime)까지 테스트 재실행 억제
 
 -- 최근 신청자 정보 문자열 ([특성아이콘 특성명] 직업색이름  아이템렙  쐐기점수). 전부 pcall 보호.
 -- GetApplicantMemberInfo 반환값 순서(확인됨): 1 name, 2 class, 3 locClass, 4 level,
@@ -2735,6 +2798,16 @@ local function SA_ShowPartyAlert(preview, appID)
     local pa = MimDiceDB and MimDiceDB.partyAlert
     if not pa then return end
     if not preview and not pa.enabled then return end
+    -- 테스트 중복 방지: 표시 유지시간 동안 재클릭 무시 (소리 겹침 방지. 실제 알림은 항상 통과)
+    if preview then
+        local now = GetTime()
+        if now < SA_paTestUntil then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format(
+                "|cffffff00[MimDice]|r 테스트 재생 중입니다 (%.0f초 남음)", SA_paTestUntil - now))
+            return
+        end
+        SA_paTestUntil = now + (pa.duration or 4)
+    end
 
     local f = SA_EnsurePartyFrame()
     -- 실제 알림 배경: 검정 반투명 (사용자 지정 알파). 알파 0이면 사실상 배경 없음. 편집 테두리는 숨김
@@ -2970,8 +3043,14 @@ local function SA_CreatePartyConfig()
         if mw then mw:StopMovingOrSizing() end
         if MimDice_SaveAnchors then MimDice_SaveAnchors() end
     end)
+    -- 설정창을 닫으면(X/ESC/연쇄) 사운드 팝업 닫기 + 위치 자동 잠금
     win:SetScript("OnHide", function()
         if SA_SoundPicker then SA_SoundPicker:Hide() end
+        local pa = MimDiceDB and MimDiceDB.partyAlert
+        if pa and not pa.locked then
+            pa.locked = true
+            SA_UpdatePartyFrame()   -- 편집 표시 정리
+        end
     end)
 
     local title = win:CreateFontString(nil, "OVERLAY")
@@ -3245,12 +3324,12 @@ local function SA_CreatePartyConfig()
     end)
     win.lockBtn = lockBtn
     function win.RefreshLockBtn()
-        lockBtn:SetText(MimDiceDB.partyAlert.locked and "위치 잠금 해제" or "위치 잠금(드래그끝)")
+        lockBtn:SetText(MimDiceDB.partyAlert.locked and "위치 잠금 해제" or "위치 잠금")
     end
 
     local resetBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     resetBtn:SetSize(70, 24)
-    resetBtn:SetPoint("BOTTOM", win, "BOTTOM", 0, 14)
+    resetBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 155, 14)   -- 340폭 기준 3버튼(110/70/70) 균등 간격 30px
     resetBtn:SetText("기본값")
     resetBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
     resetBtn:SetScript("OnClick", function()
