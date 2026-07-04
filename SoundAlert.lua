@@ -579,6 +579,9 @@ local function SA_EnsureDeathFrame()
     local fs = f:CreateFontString(nil, "OVERLAY")
     fs:SetPoint("CENTER")
     fs:SetJustifyH("LEFT")
+    -- 기본 폰트 필수: 로그인 시 미리 생성되므로, 표시 전에 SetText("")가 먼저 불리면
+    -- "Font not set" 에러 (실제 표시 시 설정값으로 다시 SetFont)
+    fs:SetFont("Fonts\\2002.ttf", 24, "THICKOUTLINE")
     fs:SetShadowColor(0, 0, 0, 1)
     fs:SetShadowOffset(2, -2)
     f.text = fs
@@ -2668,6 +2671,9 @@ local function SA_EnsurePartyFrame()
 
     local fs = f:CreateFontString(nil, "OVERLAY")
     fs:SetPoint("CENTER")
+    -- 기본 폰트 필수: 프레임을 로그인 시 미리 생성하므로, 알림 표시 전에
+    -- SetText("")(숨김 정리)가 먼저 불리면 "Font not set" 에러가 남 (표시 시 설정값으로 다시 SetFont)
+    fs:SetFont("Fonts\\2002.ttf", 30, "THICKOUTLINE")
     fs:SetShadowColor(0, 0, 0, 1); fs:SetShadowOffset(2, -2)
     f.text = fs
 
