@@ -60,6 +60,8 @@ local SOUND_CATEGORIES = {
 local SA = {}
 local SA_OptionWindow = nil
 local SA_TabOption = nil
+local SA_TabWhisper = nil      -- 귓속말차단 탭
+local SA_WhisperWindow = nil   -- 귓속말차단 옵션창
 local SA_EntryFrames = {}
 
 -- 시스템(기본) 엔트리 정의 - 표시 순서대로 (직업별 사운드 목록에 표시되는 항목)
@@ -356,6 +358,22 @@ function SA_InitDB()
         pa.enabled = true
         pa.enabledMigrated = true
     end
+
+    -- =================================================================
+    -- 저렙 귓속말 차단: 계정 공용 (기준 레벨 미만 캐릭터의 귓속말 숨김)
+    -- =================================================================
+    if not MimDiceDB.whisperBlock then MimDiceDB.whisperBlock = {} end
+    local wb = MimDiceDB.whisperBlock
+    if wb.enabled == nil then wb.enabled = true end    -- 마스터 on/off (기본 ON)
+    if wb.minLevel == nil then wb.minLevel = 60 end    -- 이 레벨 미만이면 숨김 (만렙 90 기준, 저렙 어뷰징 차단)
+    -- 기본값 조정 1회 반영: 켜짐 ON + 레벨 10→60 (공개 전 테스트 데이터 정리)
+    if not wb.lvlDefaultV2 then
+        wb.enabled = true
+        if wb.minLevel == 10 then wb.minLevel = 60 end
+        wb.lvlDefaultV2 = true
+    end
+    -- 어떤 기록도 남기지 않는다: 이전 버전에서 저장된 차단 기록이 있으면 완전 삭제
+    wb.log = nil
 
     -- ── ID 타입 1회 마이그레이션 ──
     -- 예전엔 ID 값을 soundKey 에 저장했는데 내장(preset)과 같은 칸이라 서로 덮어쓰는 문제가 있었다.
@@ -994,7 +1012,7 @@ local function SA_CreateDeathConfig()
     local soundLabel = win:CreateFontString(nil, "OVERLAY")
     soundLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -36)
     soundLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
-    soundLabel:SetText("재생 사운드 — 아래 3개 중 하나 선택")
+    soundLabel:SetText("재생 사운드 : 아래 3개 중 하나 선택")
     soundLabel:SetTextColor(0.9, 0.9, 0.9)
 
     -- 3종 타입 선택 버튼 (내장 / 커스텀 / ID)
@@ -1356,7 +1374,7 @@ local function SA_CreateBuffConfig(key)
     local soundLabel = win:CreateFontString(nil, "OVERLAY")
     soundLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -36)
     soundLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
-    soundLabel:SetText("재생 사운드 — 아래 3개 중 하나 선택")
+    soundLabel:SetText("재생 사운드 : 아래 3개 중 하나 선택")
     soundLabel:SetTextColor(0.9, 0.9, 0.9)
 
     -- 3종 타입 선택 버튼 (내장 / 커스텀 / ID)
@@ -3067,7 +3085,7 @@ local function SA_CreatePartyConfig()
     local soundLabel = win:CreateFontString(nil, "OVERLAY")
     soundLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -36)
     soundLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
-    soundLabel:SetText("재생 사운드 — 아래 3개 중 하나 선택")
+    soundLabel:SetText("재생 사운드 : 아래 3개 중 하나 선택")
     soundLabel:SetTextColor(0.9, 0.9, 0.9)
 
     win.typeRefresh = SA_MakeTypeSelector(win, 15, -56,
@@ -3404,6 +3422,309 @@ function SA_TogglePartyConfig()
     end
 end
 
+-- =====================================================================
+-- 저렙 귓속말 차단
+-- 귓속말 이벤트에는 발신자의 레벨 정보가 없다. 대신 친구 목록에는 레벨이
+-- 표시되는 점을 이용한다: 발신자를 잠깐 친구로 등록 → 친구목록 갱신에서
+-- 레벨 확인 → 즉시 삭제. 확인하는 동안 그 귓말은 채팅창에서 보류(필터)하고,
+-- 기준 레벨 이상이면 원래 채팅창으로 복원, 미만이면 그대로 숨긴다.
+-- 친구/길드원/파티·공대원/BNet친구/GM, 그리고 내가 먼저 귓말한 상대는 검사 없이 통과.
+-- (친구 등록이 불가능한 비연결 서버 발신자는 레벨 확인이 불가 → 통과)
+-- =====================================================================
+local SA_WBFrame = CreateFrame("Frame")
+local SA_wbSafe = {}       -- 통과 확정 발신자 (재검사 안 함)
+local SA_wbPending = {}    -- 레벨 확인 대기: [이름] = { [lineID] = {n=인자수, 인자...} }
+local SA_wbHidden = {}     -- 숨길 채팅 lineID 집합
+local SA_wbBlocked = {}    -- 차단 확정 발신자 (답장해도 통과 안 됨. 리로드/차단 끄기 전까지 유지)
+local SA_wbSysHide = {}    -- 이름 → 만료시각: 레벨 확인 중 "친구 등록/접속/삭제" 시스템 문구 숨김용
+local SA_wbRealms = {}     -- 우리와 연결된 서버 목록 (친구 등록 가능 범위)
+local SA_wbReady = false   -- 로그인 후 친구목록 첫 스캔 완료 여부
+local SA_WB_NOTE = "밈다이스-레벨확인"   -- 임시 친구 식별용 메모
+local SA_wbDebug = false   -- 진단 모드 (/밈귓말 debug): 통과/차단 사유를 채팅에 표시. 저장 안 됨
+
+local function SA_wbDbg(msg)
+    if SA_wbDebug then DEFAULT_CHAT_FRAME:AddMessage("|cff88ccff[밈귓말]|r " .. msg) end
+end
+
+-- 원래부터 믿을 수 있는 상대인지. 맞으면 사유 문자열, 아니면 nil (진단 표시용)
+local function SA_wbTrusted(name, flag, guid)
+    if flag == "GM" or flag == "DEV" then return "GM" end
+    if guid and not SA_IsSecret(guid) then
+        local okB, acc = pcall(function()
+            return C_BattleNet and C_BattleNet.GetGameAccountInfoByGUID(guid)
+        end)
+        if okB and acc then return "배틀넷 친구" end
+        local okF, fr = pcall(C_FriendList.IsFriend, guid)
+        if okF and fr then return "캐릭터 친구" end
+        local okG, gm = pcall(IsGuildMember, guid)
+        if okG and gm then return "길드원" end
+    end
+    if UnitInParty(name) or UnitInRaid(name) then return "파티/공대원" end
+    return nil
+end
+
+-- 보류했던 귓말을 원래 채팅창(+외부 귓속말 창)으로 복원
+local function SA_wbReplay(ids)
+    for id, args in pairs(ids) do
+        SA_wbHidden[id] = nil
+        local frames = { GetFramesRegisteredForEvent("CHAT_MSG_WHISPER") }
+        for j = 1, #frames do
+            local cf = frames[j]
+            local fname = cf.GetName and cf:GetName()
+            if type(fname) == "string" and fname:find("^ChatFrame") then
+                if ChatFrame_MessageEventHandler then
+                    ChatFrame_MessageEventHandler(cf, "CHAT_MSG_WHISPER", unpack(args, 1, args.n))
+                elseif cf.MessageEventHandler then
+                    cf:MessageEventHandler("CHAT_MSG_WHISPER", unpack(args, 1, args.n))
+                end
+            end
+        end
+        -- 외부 귓속말 창들은 기본 채팅 경로를 안 쓰므로 직접 전달
+        local msg, sender = args[1], args[2]
+        if type(msg) == "string" and type(sender) == "string" then
+            local im = _G.EnhanceQoL and _G.EnhanceQoL.ChatIM          -- '즉시 대화' 창
+            if im and im.enabled and im.AddMessage then
+                pcall(im.AddMessage, im, sender, msg)
+            end
+        end
+        local wimE = _G.WIM and _G.WIM.modules and _G.WIM.modules.WhisperEngine   -- WIM
+        if wimE and wimE.CHAT_MSG_WHISPER then
+            pcall(wimE.CHAT_MSG_WHISPER, wimE, unpack(args, 1, args.n))
+        end
+    end
+end
+
+-- 대기가 모두 끝나면 잠깐 꺼뒀던 효과음 복구
+-- ("접속했습니다" 문구/효과음이 약간 늦게 올 수 있어 2초 여유. 문구는 SA_wbSysHide 필터가 처리)
+local function SA_wbRestoreSystem()
+    if next(SA_wbPending) then return end
+    C_Timer.After(2, function()
+        if not next(SA_wbPending) then pcall(UnmuteSoundFile, 567518) end
+    end)
+end
+
+-- 귓말 수신: 레벨 확인이 필요한 상대면 메시지 보류 + 임시 친구 등록
+local function SA_wbOnWhisper(...)
+    local wbdb = MimDiceDB and MimDiceDB.whisperBlock
+    if not wbdb or not wbdb.enabled then return end
+    local player = select(2, ...)
+    local flag   = select(6, ...)
+    local lineID = select(11, ...)
+    local guid   = select(12, ...)
+    if SA_IsSecret(player) or SA_IsSecret(lineID) or type(lineID) ~= "number" then return end
+    local name = Ambiguate(player, "none")
+    -- 이미 레벨 확인 중인 상대의 추가 귓말: 신뢰 검사보다 먼저 보류 처리
+    -- (레벨 확인용 '임시 친구 등록' 상태를 신뢰 검사가 진짜 친구로 착각하는 것 방지)
+    local pend = SA_wbPending[name]
+    if pend then
+        if not pend[lineID] then pend[lineID] = { n = select("#", ...), ... } end
+        SA_wbHidden[lineID] = true
+        SA_wbDbg(name .. ": 레벨 확인 중... (추가 귓말도 보류)")
+        return
+    end
+    -- 차단 확정자는 통과목록보다 우선 (답장 등으로 통과목록에 들어갔어도 무시)
+    if SA_wbSafe[name] and not SA_wbBlocked[name] then
+        SA_wbDbg(name .. ": 통과 (세션 통과목록 - 친구였거나 내가 귓말한 상대)")
+        return
+    end
+    if not SA_wbBlocked[name] then
+        local why = SA_wbTrusted(name, flag, guid)
+        if why then
+            SA_wbSafe[name] = true
+            SA_wbDbg(name .. ": 통과 (" .. why .. ")")
+            return
+        end
+    end
+    -- 비연결 서버는 친구 등록이 안 돼 레벨 확인 불가 → 통과
+    local dash = name:find("-", 1, true)
+    if dash and not SA_wbRealms[name:sub(dash + 1)] then
+        SA_wbDbg(name .. ": 통과 (비연결 서버 - 레벨 확인 불가)")
+        return
+    end
+
+    local p = SA_wbPending[name]
+    if not p then
+        p = {}
+        SA_wbPending[name] = p
+        SA_wbDbg(name .. ": 레벨 확인 중... (귓말 보류)")
+        SA_wbSysHide[name] = GetTime() + 15            -- 이 이름이 든 시스템 문구(친구 등록/접속/삭제) 잠깐 숨김
+        pcall(MuteSoundFile, 567518)                   -- "친구 접속" 효과음 잠깐 음소거
+        pcall(C_FriendList.AddFriend, name, SA_WB_NOTE)
+        -- 5초 안에 레벨 확인이 안 되면(귓말 직후 접속종료·친구목록 가득 참 등) 수상하므로 차단 유지
+        -- (귓말 쓰고 바로 게임을 꺼서 확인을 회피하는 수법 방지)
+        C_Timer.After(5, function()
+            if not SA_wbPending[name] then return end
+            SA_wbPending[name] = nil
+            SA_wbBlocked[name] = true   -- 확인 회피 = 차단 확정 (답장해도 유지)
+            SA_wbDbg(name .. ": 차단 유지 (5초 내 레벨 확인 실패 - 접속종료/친구목록 가득참 등)")
+            -- 아무 기록/알림 없이 조용히 차단 유지 (lineID 필터가 계속 숨김)
+            SA_wbRestoreSystem()
+        end)
+    end
+    if not p[lineID] then p[lineID] = { n = select("#", ...), ... } end
+    SA_wbHidden[lineID] = true
+end
+
+-- 친구목록 갱신: 대기 중인 발신자의 레벨을 읽고 임시 등록 삭제 → 통과/숨김 결정
+local function SA_wbOnFriendsUpdate()
+    if not SA_wbReady then
+        -- 로그인 첫 갱신: 이전 세션의 임시 항목 청소 + 기존 친구는 통과 목록으로
+        SA_wbReady = true
+        local num = C_FriendList.GetNumFriends() or 0
+        for i = num, 1, -1 do
+            local ok, info = pcall(C_FriendList.GetFriendInfoByIndex, i)
+            if ok and info then
+                if info.notes == SA_WB_NOTE then
+                    pcall(C_FriendList.RemoveFriendByIndex, i)
+                elseif type(info.name) == "string" then
+                    SA_wbSafe[info.name] = true
+                end
+            end
+        end
+        return
+    end
+    if not next(SA_wbPending) then return end
+    local wbdb = MimDiceDB and MimDiceDB.whisperBlock
+    local minLv = (wbdb and wbdb.minLevel) or 10
+    local num = C_FriendList.GetNumFriends() or 0
+    for i = num, 1, -1 do
+        local ok, info = pcall(C_FriendList.GetFriendInfoByIndex, i)
+        local name = ok and info and info.name
+        if name and SA_wbPending[name] and info.notes == SA_WB_NOTE then
+            local level = info.level
+            -- 등록 직후 갱신에는 레벨이 0으로 옴 → 다음 갱신을 기다림
+            if type(level) == "number" and level > 0 then
+                pcall(C_FriendList.RemoveFriendByIndex, i)
+                local ids = SA_wbPending[name]
+                SA_wbPending[name] = nil
+                if level >= minLv then
+                    SA_wbSafe[name] = true
+                    SA_wbBlocked[name] = nil   -- 레벨업해서 기준을 넘겼으면 차단 해제
+                    SA_wbDbg(name .. ": 통과 (레벨 " .. level .. " >= 기준 " .. minLv .. ")")
+                    SA_wbReplay(ids)   -- 기준 이상 → 보류했던 귓말 복원
+                else
+                    SA_wbBlocked[name] = true  -- 차단 확정 (답장해도 유지)
+                    SA_wbDbg(name .. ": 차단 (레벨 " .. level .. " < 기준 " .. minLv .. ")")
+                end
+                -- 기준 미만 → 아무 기록/알림 없이 조용히 숨김 유지
+                SA_wbRestoreSystem()
+            end
+        end
+    end
+end
+
+SA_WBFrame:SetScript("OnEvent", function(_, event, ...)
+    if event == "CHAT_MSG_WHISPER" then
+        SA_wbOnWhisper(...)
+    elseif event == "FRIENDLIST_UPDATE" then
+        SA_wbOnFriendsUpdate()
+    elseif event == "CHAT_MSG_WHISPER_INFORM" then
+        -- 내가 먼저 귓말한 상대는 통과 목록으로. 단, 이미 차단 확정된 상대는 답장해도 통과 안 됨
+        local target = select(2, ...)
+        if not SA_IsSecret(target) then
+            local tname = Ambiguate(target, "none")
+            if SA_wbBlocked[tname] then
+                SA_wbDbg(tname .. ": 차단 유지 (차단된 상대에게 답장해도 통과되지 않음)")
+            elseif not SA_wbSafe[tname] then
+                SA_wbSafe[tname] = true
+                SA_wbDbg(tname .. ": 통과목록 추가 (내가 귓말을 보낸 상대)")
+            end
+        end
+    elseif event == "CHAT_MSG_SYSTEM" then
+        local msg = ...
+        if not SA_IsSecret(msg) and msg == ERR_FRIEND_LIST_FULL then
+            DEFAULT_CHAT_FRAME:AddMessage("|cffff5555[MimDice]|r 친구 목록이 가득 차 저렙 귓속말 차단이 동작할 수 없습니다. 친구 자리를 2칸 비워주세요.")
+        end
+    end
+end)
+
+-- 숨김 대상 lineID면 채팅창에 표시하지 않음
+local function SA_wbChatFilter(_, _, _, _, _, _, _, _, _, _, _, _, lineID)
+    if SA_IsSecret(lineID) then return end
+    if type(lineID) == "number" and SA_wbHidden[lineID] then return true end
+end
+-- 레벨 확인 중인 이름이 들어간 시스템 문구("친구 목록에 등록/삭제", "게임에 접속") 숨김.
+-- 필터 방식이라 채팅 탭이 몇 개든 전부 적용됨.
+local function SA_wbSystemFilter(_, _, msg)
+    if SA_IsSecret(msg) or type(msg) ~= "string" then return end
+    local now = GetTime()
+    for nm, expire in pairs(SA_wbSysHide) do
+        if now > expire then
+            SA_wbSysHide[nm] = nil
+        elseif msg:find(nm, 1, true) then
+            return true
+        end
+    end
+end
+
+local SA_wbAddFilter = (ChatFrameUtil and ChatFrameUtil.AddMessageEventFilter) or ChatFrame_AddMessageEventFilter
+SA_wbAddFilter("CHAT_MSG_WHISPER", SA_wbChatFilter)
+SA_wbAddFilter("CHAT_MSG_SYSTEM", SA_wbSystemFilter)
+
+-- 진단용 슬래시: /밈귓말 (상태 표시) , /밈귓말 debug (통과/차단 사유를 채팅에 표시 - 세션 한정, 저장 안 됨)
+SLASH_MIMWHISPER1 = "/밈귓말"
+SLASH_MIMWHISPER2 = "/mimwhisper"
+SlashCmdList["MIMWHISPER"] = function(msg)
+    if msg == "debug" or msg == "디버그" then
+        SA_wbDebug = not SA_wbDebug
+        DEFAULT_CHAT_FRAME:AddMessage("|cff88ccff[밈귓말]|r 진단 모드 "
+            .. (SA_wbDebug and "켜짐: 귓말이 올 때마다 통과/차단 사유를 표시합니다" or "꺼짐"))
+    else
+        local wb = MimDiceDB and MimDiceDB.whisperBlock
+        DEFAULT_CHAT_FRAME:AddMessage(string.format(
+            "|cff88ccff[밈귓말]|r 차단 %s / 기준: 레벨 %d 미만 숨김 / 진단 모드: /밈귓말 debug",
+            (wb and wb.enabled) and "켜짐" or "꺼짐", (wb and wb.minLevel) or 60))
+    end
+end
+
+-- 로그인 시 1회 초기화 (SA_EventFrame의 PLAYER_LOGIN에서 호출)
+local function SA_WhisperBlockInit()
+    -- 연결된 서버 목록 (이 범위만 친구 등록 = 레벨 확인 가능)
+    local realms = GetAutoCompleteRealms()
+    if type(realms) == "table" then
+        for i = 1, #realms do SA_wbRealms[realms[i]] = true end
+    end
+    local me = UnitName("player")
+    if me then SA_wbSafe[me] = true end
+    -- 기본 채팅창보다 우리 핸들러가 귓말을 먼저 받도록 등록 순서 조정
+    -- (이미 등록된 프레임들을 잠깐 내렸다가 우리 등록 뒤에 다시 올림)
+    local frames = { GetFramesRegisteredForEvent("CHAT_MSG_WHISPER") }
+    for j = 1, #frames do
+        local f = frames[j]
+        if not f:IsForbidden() then f:UnregisterEvent("CHAT_MSG_WHISPER") end
+    end
+    SA_WBFrame:RegisterEvent("CHAT_MSG_WHISPER")
+    for j = 1, #frames do
+        local f = frames[j]
+        if not f:IsForbidden() then f:RegisterEvent("CHAT_MSG_WHISPER") end
+    end
+    SA_WBFrame:RegisterEvent("CHAT_MSG_WHISPER_INFORM")
+    SA_WBFrame:RegisterEvent("FRIENDLIST_UPDATE")
+    SA_WBFrame:RegisterEvent("CHAT_MSG_SYSTEM")
+    C_FriendList.ShowFriends()   -- 친구목록 첫 갱신 유도 (임시 항목 청소용)
+
+    -- '즉시 대화' 창(EnhanceQoL ChatIM) 호환:
+    -- 이 창은 채팅 필터를 거치지 않고 원본 이벤트를 직접 그리는데,
+    -- 표시 직전에 자체 무시목록 검사를 하므로 그 검사에 우리 판단(보류/차단)을 끼워 넣는다.
+    -- → 메시지·알림 효과음·창 깜빡임까지 한 번에 건너뜀.
+    -- (위의 등록 순서 조정 덕에 우리 핸들러가 먼저 실행되어 보류 상태가 항상 선반영됨)
+    local eqol = _G.EnhanceQoL
+    if eqol then
+        if not eqol.Ignore then eqol.Ignore = {} end
+        local ig = eqol.Ignore
+        local origCheck = ig.CheckIgnore
+        ig.CheckIgnore = function(selfIg, pname, ...)
+            local wbdb = MimDiceDB and MimDiceDB.whisperBlock
+            if wbdb and wbdb.enabled and type(pname) == "string" and not SA_IsSecret(pname) then
+                local short = Ambiguate(pname, "none")
+                if SA_wbPending[short] or SA_wbBlocked[short] then return true end
+            end
+            if origCheck then return origCheck(selfIg, pname, ...) end
+            return nil
+        end
+    end
+end
+
 local SA_EventFrame = CreateFrame("Frame")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
@@ -3432,6 +3753,8 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         if not SA_brIconTicker then
             SA_brIconTicker = C_Timer.NewTicker(0.5, SA_RefreshBattleResIconState)
         end
+        -- 저렙 귓속말 차단 초기화 (이벤트 등록 순서 조정 + 임시 친구항목 청소)
+        SA_WhisperBlockInit()
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- 인스턴스 진입/이동 시 충전 기준값 재동기화 (진입 직후 충전 변화 오발동 방지)
         SA_SyncBattleResCharges()
@@ -3500,18 +3823,49 @@ end)
 -- UI 기능 구현
 -- =====================================================================
 
+-- 탭 켜짐/꺼짐 색상 (사운드/귓말차단 공용)
+local function SA_SetTabActive(tab, on)
+    if not tab then return end
+    if on then
+        tab:SetBackdropColor(0.5, 0.1, 0.1, 0.9)
+        tab:SetBackdropBorderColor(1, 0.82, 0, 1)
+        tab.text:SetTextColor(1, 1, 0)
+    else
+        tab:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
+        tab:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
+        tab.text:SetTextColor(0.6, 0.6, 0.6)
+    end
+end
+
 local function SA_ToggleWindow()
     if SA_OptionWindow:IsShown() then
         SA_OptionWindow:Hide()
-        SA_TabOption:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
-        SA_TabOption:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
-        SA_TabOption.text:SetTextColor(0.6, 0.6, 0.6)
+        SA_SetTabActive(SA_TabOption, false)
     else
+        -- 두 옵션창은 같은 자리를 쓰므로 하나만 표시
+        if SA_WhisperWindow and SA_WhisperWindow:IsShown() then
+            SA_WhisperWindow:Hide()
+            SA_SetTabActive(SA_TabWhisper, false)
+        end
         SA_OptionWindow:Show()
         SA_RefreshList()
-        SA_TabOption:SetBackdropColor(0.5, 0.1, 0.1, 0.9)
-        SA_TabOption:SetBackdropBorderColor(1, 0.82, 0, 1)
-        SA_TabOption.text:SetTextColor(1, 1, 0)
+        SA_SetTabActive(SA_TabOption, true)
+    end
+end
+
+local function SA_ToggleWhisperWindow()
+    if not SA_WhisperWindow then return end
+    if SA_WhisperWindow:IsShown() then
+        SA_WhisperWindow:Hide()
+        SA_SetTabActive(SA_TabWhisper, false)
+    else
+        if SA_OptionWindow and SA_OptionWindow:IsShown() then
+            SA_OptionWindow:Hide()
+            SA_SetTabActive(SA_TabOption, false)
+        end
+        SA_WhisperWindow:Show()
+        if SA_RefreshWhisperLog then SA_RefreshWhisperLog() end
+        SA_SetTabActive(SA_TabWhisper, true)
     end
 end
 
@@ -3526,8 +3880,9 @@ local function SA_CreateTab()
         insets = { left = 3, right = 3, top = 3, bottom = 3 }
     }
 
+    -- 사운드 탭 (기존 옵션창: 소리/알림 관련)
     SA_TabOption = CreateFrame("Button", "SA_TabOption", mainWin, "BackdropTemplate")
-    SA_TabOption:SetSize(34, 65)
+    SA_TabOption:SetSize(34, 80)
     SA_TabOption:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", -4, -30)
     SA_TabOption:SetBackdrop(tabBackdrop)
     SA_TabOption:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
@@ -3536,11 +3891,28 @@ local function SA_CreateTab()
     local optText = SA_TabOption:CreateFontString(nil, "OVERLAY")
     optText:SetPoint("CENTER")
     optText:SetFont("Fonts\\2002.ttf", 12, "OUTLINE")
-    optText:SetText("옵\n션")
+    optText:SetText("사\n운\n드")
     optText:SetTextColor(0.6, 0.6, 0.6)
     SA_TabOption.text = optText
 
     SA_TabOption:SetScript("OnClick", SA_ToggleWindow)
+
+    -- 귓말차단 탭 (저렙 귓속말 차단 설정 + 차단 기록)
+    SA_TabWhisper = CreateFrame("Button", "SA_TabWhisper", mainWin, "BackdropTemplate")
+    SA_TabWhisper:SetSize(34, 100)
+    SA_TabWhisper:SetPoint("TOPLEFT", SA_TabOption, "BOTTOMLEFT", 0, -6)
+    SA_TabWhisper:SetBackdrop(tabBackdrop)
+    SA_TabWhisper:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
+    SA_TabWhisper:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
+
+    local wbText = SA_TabWhisper:CreateFontString(nil, "OVERLAY")
+    wbText:SetPoint("CENTER")
+    wbText:SetFont("Fonts\\2002.ttf", 12, "OUTLINE")
+    wbText:SetText("귓\n말\n차\n단")
+    wbText:SetTextColor(0.6, 0.6, 0.6)
+    SA_TabWhisper.text = wbText
+
+    SA_TabWhisper:SetScript("OnClick", SA_ToggleWhisperWindow)
 end
 
 local function SA_CreateWindow()
@@ -3574,15 +3946,15 @@ local function SA_CreateWindow()
         if MimDice_SaveAnchors then MimDice_SaveAnchors() end
     end)
     
-    -- ★ 메인 창이 닫힐 때 옵션 창도 함께 닫히도록 연동 ★
+    -- ★ 메인 창이 닫힐 때 옵션 창(사운드/귓말차단)도 함께 닫히도록 연동 ★
     mainWin:HookScript("OnHide", function()
         if SA_OptionWindow and SA_OptionWindow:IsShown() then
             SA_OptionWindow:Hide()
-            if SA_TabOption then
-                SA_TabOption:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
-                SA_TabOption:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
-                SA_TabOption.text:SetTextColor(0.6, 0.6, 0.6)
-            end
+            SA_SetTabActive(SA_TabOption, false)
+        end
+        if SA_WhisperWindow and SA_WhisperWindow:IsShown() then
+            SA_WhisperWindow:Hide()
+            SA_SetTabActive(SA_TabWhisper, false)
         end
     end)
     
@@ -4190,6 +4562,112 @@ function SA_RefreshList()
 end
 
 -- =====================================================================
+-- 귓속말차단 옵션창 (탭 2번: 설정 + 쉬운 설명 + 차단 기록)
+-- =====================================================================
+local function SA_CreateWhisperWindow()
+    local mainWin = _G["MainWindow"]
+    if not mainWin then return end
+
+    local win = CreateFrame("Frame", "SA_WhisperWindow", UIParent, "BackdropTemplate")
+    win:SetWidth(380)
+    win:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", 38, 0)
+    win:SetPoint("BOTTOMLEFT", mainWin, "BOTTOMRIGHT", 38, 0)
+    win:SetFrameStrata("HIGH")
+    win:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    win:SetBackdropColor(0, 0, 0, 0.5)
+    win:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+    win:EnableMouse(true)
+    -- 드래그하면 메인창과 한 덩어리로 이동 (사운드 옵션창과 동일)
+    win:RegisterForDrag("LeftButton")
+    win:SetScript("OnDragStart", function()
+        if mainWin:IsMovable() then mainWin:StartMoving() end
+    end)
+    win:SetScript("OnDragStop", function()
+        mainWin:StopMovingOrSizing()
+        if MimDice_SaveAnchors then MimDice_SaveAnchors() end
+    end)
+    win:Hide()
+
+    local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
+    closeBtn:SetScript("OnClick", function() SA_ToggleWhisperWindow() end)
+
+    local title = win:CreateFontString(nil, "OVERLAY")
+    title:SetPoint("TOP", win, "TOP", 0, -12)
+    title:SetFont("Fonts\\2002.ttf", 14, "OUTLINE")
+    title:SetText("저렙 귓속말 차단")
+    title:SetTextColor(1, 0.82, 0)
+
+    -- ── 켜기 + 기준 레벨 ──
+    local enCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
+    enCb:SetSize(24, 24)
+    enCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -34)
+    enCb:SetScript("OnClick", function(self)
+        if MimDiceDB.whisperBlock then
+            MimDiceDB.whisperBlock.enabled = self:GetChecked() and true or false
+        end
+    end)
+    win.enCb = enCb
+    local enLabel = win:CreateFontString(nil, "OVERLAY")
+    enLabel:SetPoint("LEFT", enCb, "RIGHT", 2, 0)
+    enLabel:SetFont("Fonts\\2002.ttf", 12, "OUTLINE")
+    enLabel:SetText("차단 켜기 : 레벨")
+    enLabel:SetTextColor(0.9, 0.9, 0.9)
+    local lvBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    lvBox:SetSize(38, 20)
+    lvBox:SetPoint("LEFT", enLabel, "RIGHT", 10, 0)
+    lvBox:SetAutoFocus(false); lvBox:SetFont("Fonts\\2002.ttf", 12, "")
+    lvBox:SetNumeric(true); lvBox:SetMaxLetters(3); lvBox:SetJustifyH("CENTER")
+    lvBox:SetScript("OnTextChanged", function(self, userInput)
+        if not userInput then return end
+        local v = tonumber(self:GetText())
+        if v and v >= 2 and MimDiceDB.whisperBlock then MimDiceDB.whisperBlock.minLevel = v end
+    end)
+    lvBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    win.lvBox = lvBox
+    local lvSuffix = win:CreateFontString(nil, "OVERLAY")
+    lvSuffix:SetPoint("LEFT", lvBox, "RIGHT", 6, 0)
+    lvSuffix:SetFont("Fonts\\2002.ttf", 12, "OUTLINE")
+    lvSuffix:SetText("미만 귓속말 숨김")
+    lvSuffix:SetTextColor(0.9, 0.9, 0.9)
+
+    -- ── 쉬운 설명 ──
+    local help = win:CreateFontString(nil, "OVERLAY")
+    help:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -70)
+    help:SetFont("Fonts\\2002.ttf", 12, "")
+    help:SetTextColor(0.8, 0.8, 0.8)
+    help:SetWidth(350); help:SetJustifyH("LEFT"); help:SetWordWrap(true); help:SetSpacing(5)
+    help:SetText(
+        "ㅁ 위에서 정한 레벨보다 낮은 캐릭터가 보낸 귓속말은\n" ..
+        "    화면에 뜨지 않습니다.\n\n" ..
+        "ㅁ 아무 소리나 알림도 나오지 않게 조용하게\n" ..
+        "    저렙 귓속말이 차단됩니다.\n\n" ..
+        "ㅁ 귓속말 내용은 저장하지 않고 기록도 남기지 않습니다.\n\n" ..
+        "ㅁ Enhanced QoL 이나 WIM 같은 귓속말 애드온을 쓰더라도 해당 애드온보다\n" ..
+        "    먼저 귓속말을 차단해서 화면에 표시하지 않습니다.\n\n" ..
+        "ㅁ 차단이 되지 않는 애드온이 있다면 밈줌까페에 알려주세요.\n\n" ..
+        "ㅁ 무언가 나쁜 연락이 왔었다는 기분도 느끼지 않고\n" ..
+        "    온전히 와우를 즐겁게 즐길 수 있습니다.\n\n" ..
+        "ㅁ 항상 즐거운 와우 생활 되세요~")
+
+    SA_WhisperWindow = win
+end
+
+-- 귓말차단 창 위젯 값 동기화 (전역: 탭 열 때 호출)
+function SA_RefreshWhisperLog()
+    local win = SA_WhisperWindow
+    if not win then return end
+    local wb = MimDiceDB and MimDiceDB.whisperBlock
+    win.enCb:SetChecked(wb and wb.enabled)
+    win.lvBox:SetText(tostring((wb and wb.minLevel) or 60))
+end
+
+-- =====================================================================
 -- 애드온 초기화 호출
 -- =====================================================================
 function SoundAlert_OnLoad()
@@ -4198,6 +4676,7 @@ function SoundAlert_OnLoad()
             SA_InitDB()
             SA_CreateTab()
             SA_CreateWindow()
+            SA_CreateWhisperWindow()
         else
             C_Timer.After(0.1, TryInit)
         end
