@@ -3234,13 +3234,13 @@ local function SA_CreatePartyConfig()
 
     -- ── 색상 그리드 ──
     local colorLabel = win:CreateFontString(nil, "OVERLAY")
-    colorLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -236)
+    colorLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -268)
     colorLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
     colorLabel:SetText("문구 색상")
     colorLabel:SetTextColor(0.9, 0.9, 0.9)
     win.swatches = {}
     local SWATCH, GAP = 24, 4
-    local startX, startY = 18, -256
+    local startX, startY = 18, -288
     for idx, rgb in ipairs(SA_COLOR_PRESETS) do
         local colN = (idx - 1) % SA_PALETTE_COLS
         local rowN = math.floor((idx - 1) / SA_PALETTE_COLS)
@@ -3263,7 +3263,7 @@ local function SA_CreatePartyConfig()
 
     -- ── 배경 투명도 (실제 알림 배경 검정 반투명도, 0=배경없음) ──
     local bgLabel = win:CreateFontString(nil, "OVERLAY")
-    bgLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -374)
+    bgLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -406)
     bgLabel:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
     bgLabel:SetText("배경 투명도"); bgLabel:SetTextColor(0.9, 0.9, 0.9)
     local bgBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
@@ -3291,7 +3291,7 @@ local function SA_CreatePartyConfig()
     -- 반복 알림(놓침 방지): 켜면 대기 신청자가 있는 동안 N초마다 재알림, 끄면 신청 올 때 1회만
     local repeatCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
     repeatCb:SetSize(22, 22)
-    repeatCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -406)
+    repeatCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -438)
     local repeatLb = win:CreateFontString(nil, "OVERLAY")
     repeatLb:SetPoint("LEFT", repeatCb, "RIGHT", 0, 0)
     repeatLb:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
@@ -3323,7 +3323,7 @@ local function SA_CreatePartyConfig()
     -- 표시 지속: 켜면 N초 뒤 페이드아웃, 끄면 대기 신청자 없어질 때까지 계속 표시
     local displayCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
     displayCb:SetSize(22, 22)
-    displayCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -434)
+    displayCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -466)
     local displayLb = win:CreateFontString(nil, "OVERLAY")
     displayLb:SetPoint("LEFT", displayCb, "RIGHT", 0, 0)
     displayLb:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
@@ -3351,7 +3351,7 @@ local function SA_CreatePartyConfig()
     -- ── 파티장이 아니어도 알림 받기 ──
     local anyRoleCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
     anyRoleCb:SetSize(22, 22)
-    anyRoleCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -462)
+    anyRoleCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -494)
     local anyRoleLb = win:CreateFontString(nil, "OVERLAY")
     anyRoleLb:SetPoint("LEFT", anyRoleCb, "RIGHT", 0, 0)
     anyRoleLb:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
@@ -3365,7 +3365,7 @@ local function SA_CreatePartyConfig()
     -- ── 5인 풀파티 알림 (소리 + 와우 작업표시줄 아이콘 반짝임) ──
     local fpCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
     fpCb:SetSize(22, 22)
-    fpCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -490)
+    fpCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -522)
     local fpLb = win:CreateFontString(nil, "OVERLAY")
     fpLb:SetPoint("LEFT", fpCb, "RIGHT", 0, 0)
     fpLb:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
@@ -3377,20 +3377,20 @@ local function SA_CreatePartyConfig()
     win.fpCb = fpCb
 
     -- 풀파티 사운드 선택 (내장/커스텀/ID)
-    win.fpTypeRefresh = SA_MakeTypeSelector(win, 15, -518,
+    win.fpTypeRefresh = SA_MakeTypeSelector(win, 15, -550,
         function() return MimDiceDB.partyAlert.fullParty.soundType end,
         function(t) MimDiceDB.partyAlert.fullParty.soundType = t; win.RefreshFpSoundRow() end)
 
     local fpSoundBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
     fpSoundBox:SetSize(135, 22)
-    fpSoundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -518)
+    fpSoundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -550)
     fpSoundBox:SetAutoFocus(false); fpSoundBox:SetFont("Fonts\\2002.ttf", 11, "")
     win.fpSoundBox = fpSoundBox
     SA_WirePlaceholder(fpSoundBox)
 
     local fpSelectBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     fpSelectBtn:SetSize(135, 22)
-    fpSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -518)
+    fpSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -550)
     do
         local fs = fpSelectBtn:GetFontString()
         fs:SetFont("Fonts\\2002.ttf", 10, ""); fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
@@ -3411,7 +3411,7 @@ local function SA_CreatePartyConfig()
 
     local fpTestBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     fpTestBtn:SetSize(24, 22)
-    fpTestBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -518)
+    fpTestBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -550)
     fpTestBtn:SetText("▶")
     fpTestBtn:SetScript("OnClick", function()
         local fp = MimDiceDB.partyAlert.fullParty
@@ -3442,14 +3442,14 @@ local function SA_CreatePartyConfig()
     fpSoundBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
 
     -- ── 위치 X/Y ──
-    local posRefresh, posX, posY = SA_AddPosRow(win, -552,
+    local posRefresh, posX, posY = SA_AddPosRow(win, -236,
         function() return MimDiceDB.partyAlert.x end,
         function(v) MimDiceDB.partyAlert.x = v end,
         function() return MimDiceDB.partyAlert.y end,
         function(v) MimDiceDB.partyAlert.y = v end,
         function() SA_PartyRefreshPreview() end)
     win.posRefresh = posRefresh
-    SA_ChainTabEnter({ win.sizeSlider.edit, bgBox, repeatBox, durationBox, posX, posY })
+    SA_ChainTabEnter({ win.sizeSlider.edit, posX, posY, bgBox, repeatBox, durationBox })
 
     -- ── 위치 잠금 / 기본값 / 미리보기 ──
     local lockBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
@@ -4777,6 +4777,8 @@ local function SA_CreateWhisperWindow()
     help:SetText(
         "ㅁ 위에서 정한 레벨보다 낮은 캐릭터가 보낸 귓속말은\n" ..
         "    화면에 뜨지 않습니다.\n\n" ..
+        "ㅁ 배틀넷 친구나, 게임내 친구로 설정되어 있는\n" ..
+        "    친구의 귓속말은 볼 수 있습니다.\n\n" ..
         "ㅁ 귓속말 내용은 저장하지 않고 기록도 남기지 않습니다.\n\n" ..
         "ㅁ EnhanceQoL 이나 WIM 같은 귓속말 애드온을\n" ..
         "    쓰더라도 해당 애드온보다 먼저 귓속말을 차단해서\n" ..
