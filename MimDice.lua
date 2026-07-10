@@ -1,7 +1,7 @@
 -- Author         : BIK
 -- Create Date    : 2023-02-02 오후 05:37:12
 -- Last Updated   : 2026-05-30 오후 04:32:22
--- Version        : v1.14.0
+-- Version        : v1.14.1
 
 ---@diagnostic disable: undefined-global, param-type-mismatch, undefined-field, cast-local-type -- 전역 함수 정의 에러, 매개변수 타입 불일치, 정의되지 않은 필드, 로컬 타입 캐스팅 무시
 
@@ -159,6 +159,18 @@ local function SafeToString(value)
     return ""
 end
 -- ===== Secret Value 처리 끝 =====
+
+-- ===== 채팅 전송 (12.x 호환) =====
+-- 구식 전역 SendChatMessage는 호환 래퍼(Blizzard_DeprecatedChatInfo)를 거치는데,
+-- 전투 중 등 일부 상황에서 ADDON_ACTION_BLOCKED로 차단될 수 있다 → 현대 API 우선 사용
+local function MimSendChat(msg, channel)
+    if C_ChatInfo and C_ChatInfo.SendChatMessage then
+        C_ChatInfo.SendChatMessage(msg, channel)
+    else
+        SendChatMessage(msg, channel)   -- 구버전 클라이언트 대비
+    end
+end
+-- ===== 채팅 전송 끝 =====
 
 -- 안전한 전역 변수 접근을 위한 유틸리티 함수
 -- @param iconName string 아이콘 프레임의 이름
@@ -1198,7 +1210,7 @@ function MimDice_RollAnnounce()
             DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00----------끝----------|r")
             
         else
-            SendChatMessage("-------주사위결과-------", selectedChannel)
+            MimSendChat("-------주사위결과-------", selectedChannel)
 
             table.sort(rollArray, Choice_Sort_Reverse)
             local currentPlayerRealm = GetSafeRealmName()
@@ -1258,9 +1270,9 @@ function MimDice_RollAnnounce()
                                    rangeText .. countText
 
                 table.insert(RankList, finalMessage)
-                SendChatMessage(finalMessage, selectedChannel)
+                MimSendChat(finalMessage, selectedChannel)
             end
-            SendChatMessage("----------끝----------", selectedChannel)
+            MimSendChat("----------끝----------", selectedChannel)
         end
     end)
 
@@ -1407,9 +1419,9 @@ function Prefix()
 
         Final_Text = T_Check() .. D_Check() .. H_Check() .. Dice_Text .. Num_Dice .. Space .. High_Check() .. Low_Check() .. Suffix
 
-        SendChatMessage(StartLine, SelectChannel())
-        SendChatMessage(Final_Text, SelectChannel())
-        SendChatMessage(EndLine, SelectChannel())
+        MimSendChat(StartLine, SelectChannel())
+        MimSendChat(Final_Text, SelectChannel())
+        MimSendChat(EndLine, SelectChannel())
     end)
 
     if not success then
