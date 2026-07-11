@@ -5,6 +5,71 @@
 ---@diagnostic disable: undefined-global, param-type-mismatch, undefined-field, cast-local-type
 
 -- =====================================================================
+-- 폰트 : 동봉 폰트 목록 + 현재 선택 폰트 (선택은 즉시 저장, 적용은 리로드)
+-- =====================================================================
+local MIMDICE_FONT_DIR = "Interface\\AddOns\\MimDice\\Fonts\\"
+MIMDICE_FONTS = {
+    { key = "default",     name = "와우 기본 (2002)" },
+    { key = "nanumgothic", name = "나눔고딕", file = "NanumGothic.ttf" },
+}
+
+-- 폰트 파일이 실제로 읽히는지 확인 (내 폰트 등록/표시용).
+-- 숨은 글자에 폰트를 입혀 보고, 실제로 그 폰트가 됐는지로 판단한다.
+local SA_FontProbe
+function MimDiceFontValid(file)
+    if not file or file == "" then return false end
+    if not SA_FontProbe then
+        SA_FontProbe = UIParent:CreateFontString(nil, "BACKGROUND")
+        SA_FontProbe:Hide()
+    end
+    SA_FontProbe:SetFont("Fonts\\2002.ttf", 12, "")
+    pcall(SA_FontProbe.SetFont, SA_FontProbe, MIMDICE_FONT_DIR .. file, 12, "")
+    local cur = SA_FontProbe:GetFont()
+    return cur ~= nil and cur:lower():find(file:lower(), 1, true) ~= nil
+end
+
+-- 현재 선택된 폰트의 경로. 문제가 있으면 와우 기본(2002)으로
+function MimDiceFontPath()
+    local sk = MimDiceDB and MimDiceDB.skin
+    local key = sk and sk.font
+    if key and key ~= "default" then
+        if key:sub(1, 5) == "file:" then
+            local file = key:sub(6)                    -- 내 폰트 (파일명 등록)
+            if MimDiceFontValid(file) then return MIMDICE_FONT_DIR .. file end
+        else
+            for _, f in ipairs(MIMDICE_FONTS) do
+                if f.key == key and f.file then return MIMDICE_FONT_DIR .. f.file end
+            end
+        end
+    end
+    return "Fonts\\2002.ttf"
+end
+
+-- 현재 선택된 폰트의 표시 이름
+function MimDiceFontName()
+    local sk = MimDiceDB and MimDiceDB.skin
+    local key = (sk and sk.font) or "default"
+    if key:sub(1, 5) == "file:" then return key:sub(6) end
+    for _, f in ipairs(MIMDICE_FONTS) do
+        if f.key == key then return f.name end
+    end
+    return "와우 기본 (2002)"
+end
+
+-- XML 에 박혀 있는 글자들에도 선택한 폰트를 입힌다 (크기/외곽선은 유지)
+function MimDiceApplyFontToXML()
+    local path = MimDiceFontPath()
+    for _, n in ipairs({ "DiceString", "Mim_Dice_Title", "SortTextHigh", "SortTextLow", "version",
+                         "RollStrings", "Announce_ButtonText", "Reset_ButtonText", "Start_ButtonText" }) do
+        local fs = _G[n]
+        if fs and fs.SetFont then
+            local _, size, flags = fs:GetFont()
+            pcall(fs.SetFont, fs, path, size or 12, flags)
+        end
+    end
+end
+
+-- =====================================================================
 -- 환경 설정 (커스텀 파일 )
 -- =====================================================================
 local CUSTOM_SOUND_FILES = {
@@ -62,6 +127,8 @@ local SA_OptionWindow = nil
 local SA_TabOption = nil
 local SA_TabWhisper = nil      -- 귓속말차단 탭
 local SA_WhisperWindow = nil   -- 귓속말차단 옵션창
+local SA_TabSkin = nil         -- 스킨 탭
+local SA_SkinWindow = nil      -- 스킨 옵션창
 local SA_EntryFrames = {}
 
 -- 시스템(기본) 엔트리 정의 - 표시 순서대로 (직업별 사운드 목록에 표시되는 항목)
@@ -340,6 +407,8 @@ function SA_InitDB()
     if pa.showScore == nil then pa.showScore = true end          -- 쐐기점수 표시
     if pa.showName == nil then pa.showName = true end            -- 닉네임(이름) 표시
     if pa.bgAlpha == nil then pa.bgAlpha = 0.5 end               -- 배경 반투명도(0~1)
+    if pa.bgColor == nil then pa.bgColor = { r = 0, g = 0, b = 0 } end   -- 배경 색상 (기본 검정)
+    if pa.statColor == nil then pa.statColor = { r = 1, g = 1, b = 1 } end -- 템렙/쐐기 글자색
     -- 반복 알림: "once"=신청 올 때 1회 / "repeat"=대기 신청자 있는 동안 repeatInterval초마다 재알림
     if pa.repeatMode == nil then pa.repeatMode = "once" end
     if pa.repeatInterval == nil then pa.repeatInterval = 5 end
@@ -384,6 +453,31 @@ function SA_InitDB()
     end
     -- 어떤 기록도 남기지 않는다: 이전 버전에서 저장된 차단 기록이 있으면 완전 삭제
     wb.log = nil
+
+    -- =================================================================
+    -- 스킨: 계정 공용 (플랫 다크 테마, 실시간 적용)
+    -- =================================================================
+    if not MimDiceDB.skin then MimDiceDB.skin = {} end
+    local skn = MimDiceDB.skin
+    if skn.enabled == nil then skn.enabled = false end                        -- 기본: 클래식(끄기)
+    if skn.preset == nil then skn.preset = "darkgray" end
+    if skn.base == nil then skn.base = { r = 0.11, g = 0.11, b = 0.12 } end   -- 제일 진한 배경색
+    if skn.accentText == nil then skn.accentText = { r = 1.00, g = 0.45, b = 0.75 } end  -- 강조 글자
+    if skn.accentHover == nil then skn.accentHover = { r = 0.35, g = 0.65, b = 1.00 } end -- 강조 배경
+    if skn.alpha == nil then skn.alpha = 0.93 end                             -- 배경 투명도
+    if not skn.alphaByPreset then skn.alphaByPreset = {} end                  -- 스킨별 투명도 (사용자 조절값 기억)
+    if skn.accentTextA == nil then skn.accentTextA = 1 end                    -- 강조 글자 투명도
+    if skn.accentHoverA == nil then skn.accentHoverA = 0.30 end               -- 강조 배경(호버) 투명도
+    if not skn.custom then                                                     -- '커스텀 (내 색)' 슬롯: 사용자가 만진 색 영구 저장
+        skn.custom = {
+            alpha = 0.93,
+            base = { r = 0.11, g = 0.11, b = 0.12 },
+            accentText = { r = 1.00, g = 0.45, b = 0.75 },
+            accentHover = { r = 0.35, g = 0.65, b = 1.00 },
+        }
+    end
+    if skn.font == nil then skn.font = "default" end                         -- 선택 폰트 (리로드 시 적용)
+    if not skn.customFonts then skn.customFonts = {} end                      -- 내 폰트 파일명 목록
 
     -- ── ID 타입 1회 마이그레이션 ──
     -- 예전엔 ID 값을 soundKey 에 저장했는데 내장(preset)과 같은 칸이라 서로 덮어쓰는 문제가 있었다.
@@ -541,6 +635,418 @@ local SA_COLOR_PRESETS = {
 }
 
 -- =====================================================================
+-- 스킨 (플랫 다크 테마) - 실시간 적용/해제 (리로드 불필요)
+-- 기준색(제일 진한 배경) 하나에서 창/테두리/탭/버튼 색을 비율로 자동 파생하고,
+-- 강조 글자색(제목/선택 탭)과 강조 배경(호버/활성 탭)만 따로 고른다.
+-- 원리: 무엇을 바꿨는지(플랫화한 버튼, 숨긴 원본 그림)를 전부 등록해 두고
+--       색 변경 = 다시 칠하기 / 끄기 = 원본 복원을 즉시 수행.
+-- =====================================================================
+-- 프리셋: 색 3종 + 배경 투명도(alpha)로 서로 다른 분위기 (Details 스킨 라인업 참고)
+local SA_SKIN_PRESETS = {
+    { key = "darkgray",      name = "다크 그레이",   alpha = 0.93, base = {0.11,0.11,0.12}, accentText = {1.00,0.45,0.75}, accentHover = {0.35,0.65,1.00} },
+    { key = "newgray",       name = "뉴 그레이",     alpha = 0.95, base = {0.17,0.17,0.18}, accentText = {1.00,0.82,0.00}, accentHover = {0.45,0.45,0.50} },
+    { key = "minimalblack",  name = "미니멀 블랙",   alpha = 0.78, base = {0.04,0.04,0.04}, accentText = {0.92,0.92,0.92}, accentHover = {0.32,0.32,0.32} },
+    { key = "elvblue",       name = "Elv 블루",   alpha = 0.97, base = {0.06,0.06,0.06}, accentText = {0.20,0.65,1.00}, accentHover = {0.09,0.42,0.70} },
+    { key = "slateblue",     name = "슬레이트 블루", alpha = 0.93, base = {0.09,0.11,0.17}, accentText = {0.55,0.75,1.00}, accentHover = {0.30,0.45,0.75} },
+    { key = "graphiteteal",  name = "그래파이트 틸", alpha = 0.93, base = {0.07,0.10,0.10}, accentText = {0.20,0.90,0.70}, accentHover = {0.12,0.55,0.48} },
+    { key = "charcoalamber", name = "차콜 앰버",     alpha = 0.93, base = {0.12,0.10,0.07}, accentText = {1.00,0.72,0.25}, accentHover = {0.70,0.50,0.15} },
+    { key = "serenityred",   name = "세레니티 레드", alpha = 0.93, base = {0.09,0.06,0.06}, accentText = {1.00,0.30,0.30}, accentHover = {0.55,0.10,0.10} },
+    { key = "mimpurple",     name = "밈줌 퍼플",     alpha = 0.93, base = {0.10,0.07,0.14}, accentText = {1.00,0.50,0.90}, accentHover = {0.55,0.30,0.80} },
+}
+local function SA_SkinPresetByKey(key)
+    for _, p in ipairs(SA_SKIN_PRESETS) do if p.key == key then return p end end
+    return SA_SKIN_PRESETS[1]
+end
+
+local function SA_SkinOn()
+    return (MimDiceDB and MimDiceDB.skin and MimDiceDB.skin.enabled) and true or false
+end
+
+-- 현재 설정에서 파생 팔레트 계산
+local function SA_SkinPal()
+    local sk = (MimDiceDB and MimDiceDB.skin) or {}
+    local b = sk.base or { r = 0.11, g = 0.11, b = 0.12 }
+    local function shade(m, add)
+        add = add or 0
+        return math.min(1, b.r * m + add), math.min(1, b.g * m + add), math.min(1, b.b * m + add)
+    end
+    local at = sk.accentText or { r = 1, g = 0.45, b = 0.75 }
+    local ah = sk.accentHover or { r = 0.35, g = 0.65, b = 1 }
+    return {
+        win    = { b.r, b.g, b.b, sk.alpha or 0.93 },   -- 창 배경 (기준색 + 투명도)
+        border = { shade(0.45) },            -- 테두리: 배경보다 두 단계 어둡게
+        tab    = { shade(1.6, 0.02) },       -- 탭(비활성)
+        btn    = { shade(2.0, 0.05) },       -- 버튼 면
+        field  = { shade(0.60) },            -- 입력칸/체크박스 안쪽 (배경보다 어둡게 = 파인 느낌)
+        tint   = { shade(2.6, 0.12) },       -- 스크롤바/슬라이더 물들이기 색
+        accent = { at.r, at.g, at.b, sk.accentTextA or 1 },      -- 강조 글자 (+투명도)
+        hover  = { ah.r, ah.g, ah.b, sk.accentHoverA or 0.30 },  -- 강조 배경 (호버/활성, +투명도)
+    }
+end
+
+-- 적용 대상 등록부 (실시간 재색/복구용)
+local SA_SkinWins = {}         -- 스킨 대상 창들 (자체 BackdropTemplate 창)
+local SA_SkinBtns = {}         -- 플랫화된 버튼들
+local SA_SkinChecks = {}       -- 플랫화된 체크박스들
+local SA_SkinEdits = {}        -- 플랫화된 입력칸들
+local SA_SkinTints = {}        -- 물들인 스크롤바/슬라이더들
+local SA_SkinScrollBars = {}   -- 현대식으로 바꾼 스크롤바들
+local SA_SkinMainState = nil   -- 메인창: 숨긴 원본 그림 목록 + 플랫 덮개
+
+-- 각진 1픽셀 플랫 테두리 백드롭 (동글동글한 툴팁 테두리 대신)
+local SA_SKIN_FLAT_BACKDROP = {
+    bgFile = "Interface\\Buttons\\WHITE8X8",
+    edgeFile = "Interface\\Buttons\\WHITE8X8",
+    edgeSize = 1,
+}
+
+-- 버튼 플랫화 / 재색 (최초 1회 원본 그림 조각을 전부 수집해 두고 숨김/복원)
+-- 요즘 빨간 버튼은 그림이 NormalTexture가 아니라 Left/Center/Right 조각이라
+-- 버튼의 텍스처 전부를 대상으로 한다.
+local function SA_SkinButtonApply(btn, pal)
+    local st = btn.MimDiceSkin
+    if not st then
+        st = { art = {} }
+        btn.MimDiceSkin = st
+        local fs = btn:GetFontString()
+        if fs then st.fr, st.fg, st.fb = fs:GetTextColor() end
+        for _, r in ipairs({ btn:GetRegions() }) do   -- 우리 텍스처를 만들기 전에 수집
+            if r:IsObjectType("Texture") then table.insert(st.art, r) end
+        end
+        st.bd = btn:CreateTexture(nil, "BACKGROUND", nil, 0)   -- 1px 각진 테두리 역할
+        st.bd:SetAllPoints()
+        st.bg = btn:CreateTexture(nil, "BACKGROUND", nil, 1)   -- 버튼 면
+        st.bg:SetPoint("TOPLEFT", 1, -1); st.bg:SetPoint("BOTTOMRIGHT", -1, 1)
+        st.hl = btn:CreateTexture(nil, "HIGHLIGHT")            -- 마우스오버 시 자동 표시
+        st.hl:SetPoint("TOPLEFT", 1, -1); st.hl:SetPoint("BOTTOMRIGHT", -1, 1)
+        table.insert(SA_SkinBtns, btn)
+    end
+    pcall(function()
+        for _, r in ipairs(st.art) do r:SetAlpha(0) end
+        st.bd:SetColorTexture(pal.border[1], pal.border[2], pal.border[3], 1); st.bd:Show()
+        st.bg:SetColorTexture(pal.btn[1], pal.btn[2], pal.btn[3], 1); st.bg:Show()
+        st.hl:SetColorTexture(pal.hover[1], pal.hover[2], pal.hover[3], pal.hover[4] or 0.30); st.hl:Show()
+        local fs = btn:GetFontString()
+        if fs then fs:SetTextColor(0.92, 0.92, 0.92) end
+    end)
+end
+
+-- 버튼 원상복구 (스킨 끄기)
+local function SA_SkinButtonRestore(btn)
+    local st = btn.MimDiceSkin
+    if not st then return end
+    pcall(function()
+        for _, r in ipairs(st.art) do r:SetAlpha(1) end
+        st.bd:Hide(); st.bg:Hide(); st.hl:Hide()
+        local fs = btn:GetFontString()
+        if fs and st.fr then fs:SetTextColor(st.fr, st.fg, st.fb) end
+    end)
+end
+
+-- 체크박스 플랫화: 그림을 숨기고 각진 어두운 박스로.
+-- 체크 표시는 우리가 만든 강조색 채움 텍스처로 교체하되,
+-- "원본 체크 텍스처 객체"를 저장해 뒀다가 끌 때 그대로 되돌린다.
+-- (하이(동전)/로우 등 자기만의 체크 그림을 가진 버튼도 안전하게 복원됨)
+local function SA_SkinCheckApply(cb, pal)
+    local st = cb.MimDiceSkin
+    if not st then
+        st = { art = {} }
+        cb.MimDiceSkin = st
+        st.origCk = cb.GetCheckedTexture and cb:GetCheckedTexture() or nil
+        local disChecked = cb.GetDisabledCheckedTexture and cb:GetDisabledCheckedTexture()
+        for _, r in ipairs({ cb:GetRegions() }) do
+            if r:IsObjectType("Texture") and r ~= st.origCk and r ~= disChecked then
+                table.insert(st.art, r)
+            end
+        end
+        st.bd = cb:CreateTexture(nil, "BACKGROUND", nil, 0)
+        st.bd:SetPoint("TOPLEFT", 4, -4); st.bd:SetPoint("BOTTOMRIGHT", -4, 4)
+        st.bg = cb:CreateTexture(nil, "BACKGROUND", nil, 1)
+        st.bg:SetPoint("TOPLEFT", 5, -5); st.bg:SetPoint("BOTTOMRIGHT", -5, 5)
+        st.hl = cb:CreateTexture(nil, "HIGHLIGHT")
+        st.hl:SetPoint("TOPLEFT", 5, -5); st.hl:SetPoint("BOTTOMRIGHT", -5, 5)
+        st.ck = cb:CreateTexture(nil, "ARTWORK")   -- 강조색 채움 (체크 표시용)
+        st.ck:SetPoint("TOPLEFT", 7, -7); st.ck:SetPoint("BOTTOMRIGHT", -7, 7)
+        table.insert(SA_SkinChecks, cb)
+    end
+    for _, r in ipairs(st.art) do pcall(r.SetAlpha, r, 0) end
+    pcall(function()
+        st.bd:SetColorTexture(pal.border[1], pal.border[2], pal.border[3], 1); st.bd:Show()
+        st.bg:SetColorTexture(pal.field[1], pal.field[2], pal.field[3], 1); st.bg:Show()
+        st.hl:SetColorTexture(pal.hover[1], pal.hover[2], pal.hover[3], pal.hover[4] or 0.30); st.hl:Show()
+        st.ck:SetColorTexture(pal.hover[1], pal.hover[2], pal.hover[3], 1)
+        cb:SetCheckedTexture(st.ck)                    -- 체크 표시 = 강조색 채움
+        st.ck:SetShown(cb:GetChecked() and true or false)
+        if st.origCk then st.origCk:SetAlpha(0) end    -- 원본 체크 그림은 잠시 숨김
+    end)
+end
+local function SA_SkinCheckRestore(cb)
+    local st = cb.MimDiceSkin
+    if not st then return end
+    for _, r in ipairs(st.art) do pcall(r.SetAlpha, r, 1) end
+    pcall(st.bd.Hide, st.bd)
+    pcall(st.bg.Hide, st.bg)
+    pcall(st.hl.Hide, st.hl)
+    pcall(function()
+        if st.origCk then
+            cb:SetCheckedTexture(st.origCk)   -- 원본 체크 텍스처 객체를 그대로 복귀
+            st.origCk:SetAlpha(1)
+        end
+        st.ck:Hide()
+    end)
+end
+
+-- 입력칸 플랫화: 금테 홈 그림을 숨기고 각진 어두운 칸으로
+local function SA_SkinEditApply(eb, pal)
+    local st = eb.MimDiceSkin
+    if not st then
+        local art = {}
+        for _, r in ipairs({ eb:GetRegions() }) do
+            if r:IsObjectType("Texture") then table.insert(art, r) end
+        end
+        if #art == 0 then return end   -- 그림 없는 입력칸은 건드릴 것이 없음
+        st = { art = art }
+        eb.MimDiceSkin = st
+        st.bd = eb:CreateTexture(nil, "BACKGROUND", nil, 0)
+        st.bd:SetPoint("TOPLEFT", -5, 1); st.bd:SetPoint("BOTTOMRIGHT", 1, -1)
+        st.bg = eb:CreateTexture(nil, "BACKGROUND", nil, 1)
+        st.bg:SetPoint("TOPLEFT", st.bd, "TOPLEFT", 1, -1)
+        st.bg:SetPoint("BOTTOMRIGHT", st.bd, "BOTTOMRIGHT", -1, 1)
+        table.insert(SA_SkinEdits, eb)
+    end
+    pcall(function()
+        for _, r in ipairs(st.art) do r:SetAlpha(0) end
+        st.bd:SetColorTexture(pal.border[1], pal.border[2], pal.border[3], 1); st.bd:Show()
+        st.bg:SetColorTexture(pal.field[1], pal.field[2], pal.field[3], 1); st.bg:Show()
+    end)
+end
+local function SA_SkinEditRestore(eb)
+    local st = eb.MimDiceSkin
+    if not st then return end
+    pcall(function()
+        for _, r in ipairs(st.art) do r:SetAlpha(1) end
+        st.bd:Hide(); st.bg:Hide()
+    end)
+end
+
+-- 스크롤바/슬라이더 물들이기: 그림을 회색조로 만들고 팔레트색으로 착색 (복원 가능)
+local function SA_SkinTintApply(obj, pal)
+    if not obj then return end
+    local st = obj.MimDiceSkinTint
+    if not st then
+        st = {}
+        obj.MimDiceSkinTint = st
+        local function collect(f, d)
+            if d > 4 then return end
+            for _, r in ipairs({ f:GetRegions() }) do
+                if r:IsObjectType("Texture") then table.insert(st, r) end
+            end
+            if f.GetThumbTexture then
+                local th = f:GetThumbTexture()
+                if th then table.insert(st, th) end
+            end
+            for _, c in ipairs({ f:GetChildren() }) do collect(c, d + 1) end
+        end
+        collect(obj, 0)
+        table.insert(SA_SkinTints, obj)
+    end
+    for _, r in ipairs(st) do
+        pcall(function()
+            r:SetDesaturated(true)
+            r:SetVertexColor(pal.tint[1], pal.tint[2], pal.tint[3], 1)
+        end)
+    end
+end
+local function SA_SkinTintRestore(obj)
+    local st = obj.MimDiceSkinTint
+    if not st then return end
+    for _, r in ipairs(st) do
+        pcall(function()
+            r:SetDesaturated(false)
+            r:SetVertexColor(1, 1, 1, 1)
+        end)
+    end
+end
+
+-- 구형 스크롤바를 현대식으로: 위/아래 화살표 숨김 + 얇은 플랫 트랙/썸
+local function SA_SkinScrollBarApply(sb, pal)
+    local st = sb.MimDiceSkinSB
+    if not st then
+        st = {}
+        sb.MimDiceSkinSB = st
+        local name = sb:GetName()
+        st.up = sb.ScrollUpButton or (name and _G[name .. "ScrollUpButton"])
+        st.down = sb.ScrollDownButton or (name and _G[name .. "ScrollDownButton"])
+        st.track = sb:CreateTexture(nil, "BACKGROUND")
+        st.track:SetPoint("TOPLEFT", 5, 16)
+        st.track:SetPoint("BOTTOMRIGHT", -5, -16)
+        table.insert(SA_SkinScrollBars, sb)
+    end
+    pcall(function()
+        if st.up then st.up:Hide() end
+        if st.down then st.down:Hide() end
+        st.track:SetColorTexture(pal.field[1], pal.field[2], pal.field[3], 0.8)
+        st.track:Show()
+        sb:SetThumbTexture("Interface\\Buttons\\WHITE8X8")
+        local th = sb:GetThumbTexture()
+        if th then
+            th:SetVertexColor(pal.btn[1], pal.btn[2], pal.btn[3], 1)
+            th:SetSize(6, 30)
+        end
+    end)
+end
+local function SA_SkinScrollBarRestore(sb)
+    local st = sb.MimDiceSkinSB
+    if not st then return end
+    pcall(function()
+        if st.up then st.up:Show() end
+        if st.down then st.down:Show() end
+        st.track:Hide()
+        sb:SetThumbTexture("Interface\\Buttons\\UI-ScrollBar-Knob")
+        local th = sb:GetThumbTexture()
+        if th then
+            th:SetVertexColor(1, 1, 1, 1)
+            th:SetSize(18, 24)
+        end
+    end)
+end
+
+-- 창 내부의 위젯(그림 버튼/체크박스/입력칸/스크롤/슬라이더)을 재귀로 찾아 테마 적용
+-- (아이콘 버튼/닫기 X/자체 제작 플랫 버튼은 자동 제외)
+local function SA_SkinWalk(frame, pal, depth)
+    if depth > 6 then return end
+    for _, child in ipairs({ frame:GetChildren() }) do
+        local ot = child:GetObjectType()
+        if ot == "Button" then
+            local name = child:GetName()
+            local fs = child.GetFontString and child:GetFontString()
+            local hasArt = (child.GetNormalTexture and child:GetNormalTexture())
+                or child.Left or child.Center or child.Right   -- 요즘 빨간 버튼의 그림 조각
+            if fs and hasArt and not (name and name:find("CloseButton")) then
+                SA_SkinButtonApply(child, pal)
+            end
+        elseif ot == "CheckButton" then
+            SA_SkinCheckApply(child, pal)
+        elseif ot == "EditBox" then
+            SA_SkinEditApply(child, pal)
+        elseif ot == "Slider" then
+            SA_SkinTintApply(child, pal)
+        elseif ot == "ScrollFrame" then
+            local name = child:GetName()
+            local sb = child.ScrollBar
+                or (child.GetScrollBar and child:GetScrollBar())
+                or (name and _G[name .. "ScrollBar"])
+            if sb then
+                if sb.SetThumbTexture then
+                    SA_SkinScrollBarApply(sb, pal)   -- 구형: 화살표 숨기고 플랫 트랙/썸
+                else
+                    SA_SkinTintApply(sb, pal)        -- 신형: 팔레트색으로 착색
+                end
+            end
+        end
+        SA_SkinWalk(child, pal, depth + 1)
+    end
+end
+
+-- 창 하나에 스킨 칠하기 (각진 1px 테두리로 교체) / 원래 모양·색으로 복구
+local function SA_SkinWindowApply(win, pal)
+    if win.SetBackdrop then
+        if not win.MimDiceSkinFlat then
+            win:SetBackdrop(SA_SKIN_FLAT_BACKDROP)   -- 각진 테두리로 교체 (색 초기화됨 → 아래서 다시 칠함)
+            win.MimDiceSkinFlat = true
+        end
+        win:SetBackdropColor(pal.win[1], pal.win[2], pal.win[3], pal.win[4])
+        win:SetBackdropBorderColor(pal.border[1], pal.border[2], pal.border[3], 1)
+    end
+    SA_SkinWalk(win, pal, 0)
+end
+local function SA_SkinWindowRestore(win)
+    local orig = win.MimDiceSkinOrig
+    if win.SetBackdrop and orig then
+        if win.MimDiceSkinFlat then
+            if orig.backdrop then win:SetBackdrop(orig.backdrop) end
+            win.MimDiceSkinFlat = false
+        end
+        win:SetBackdropColor(orig.bg[1], orig.bg[2], orig.bg[3], orig.bg[4])
+        win:SetBackdropBorderColor(orig.border[1], orig.border[2], orig.border[3], orig.border[4])
+    end
+end
+
+-- 창 등록: 생성 시 1회 호출. 그 시점의 원래 모양/색을 기억해 뒀다가 끌 때 그대로 복원
+local function SA_SkinRegisterWindow(win)
+    if not win then return end
+    if win.GetBackdropColor and not win.MimDiceSkinOrig then
+        win.MimDiceSkinOrig = {
+            backdrop = win.GetBackdrop and win:GetBackdrop() or nil,
+            bg = { win:GetBackdropColor() },
+            border = { win:GetBackdropBorderColor() },
+        }
+    end
+    table.insert(SA_SkinWins, win)
+    if SA_SkinOn() then SA_SkinWindowApply(win, SA_SkinPal()) end
+end
+
+-- 메인창(블리자드 아트 프레임): 원본 그림 숨기고 플랫 덮개 표시 / 복구
+local function SA_SkinMainApply(pal)
+    local mw = _G.MainWindow
+    if not mw then return end
+    local st = SA_SkinMainState
+    if not st then
+        st = { hidden = {} }
+        SA_SkinMainState = st
+        pcall(function()
+            if mw.NineSlice then table.insert(st.hidden, mw.NineSlice) end
+            for _, r in ipairs({ mw:GetRegions() }) do
+                if r:IsObjectType("Texture") then
+                    local rn = r:GetName()
+                    -- 이름 없는 조각(템플릿 그림)과 "MainWindow..." 템플릿 배경만 숨김.
+                    -- 직업 아이콘(C_icon..)/역할 아이콘(TankTexture..) 등 이름 있는 커스텀 텍스처는 유지
+                    if not rn or rn:find("^MainWindow") then
+                        table.insert(st.hidden, r)
+                    end
+                end
+            end
+        end)
+        local bgf = CreateFrame("Frame", nil, mw, "BackdropTemplate")
+        bgf:SetAllPoints()
+        bgf:SetFrameLevel(mw:GetFrameLevel())   -- 자식 위젯들 아래에 깔림
+        bgf:EnableMouse(false)
+        bgf:SetBackdrop(SA_SKIN_FLAT_BACKDROP)  -- 각진 1px 테두리
+        st.bgf = bgf
+    end
+    for _, obj in ipairs(st.hidden) do pcall(obj.SetAlpha, obj, 0) end
+    st.bgf:SetBackdropColor(pal.win[1], pal.win[2], pal.win[3], math.min(1, pal.win[4] + 0.04))
+    st.bgf:SetBackdropBorderColor(pal.border[1], pal.border[2], pal.border[3], 1)
+    st.bgf:Show()
+    SA_SkinWalk(mw, pal, 0)
+end
+local function SA_SkinMainRestore()
+    local st = SA_SkinMainState
+    if not st then return end
+    for _, obj in ipairs(st.hidden) do pcall(obj.SetAlpha, obj, 1) end
+    st.bgf:Hide()
+end
+
+-- 전체 즉시 재적용 (스킨 탭에서 뭔가 바꿀 때마다 호출 - 리로드 불필요)
+-- 전역: 스킨 탭 UI와 로그인 초기화에서 사용
+function SA_SkinRefresh()
+    if SA_SkinOn() then
+        local pal = SA_SkinPal()
+        for _, w in ipairs(SA_SkinWins) do SA_SkinWindowApply(w, pal) end
+        SA_SkinMainApply(pal)
+    else
+        for _, w in ipairs(SA_SkinWins) do SA_SkinWindowRestore(w) end
+        for _, b in ipairs(SA_SkinBtns) do SA_SkinButtonRestore(b) end
+        for _, c in ipairs(SA_SkinChecks) do SA_SkinCheckRestore(c) end
+        for _, e in ipairs(SA_SkinEdits) do SA_SkinEditRestore(e) end
+        for _, t in ipairs(SA_SkinTints) do SA_SkinTintRestore(t) end
+        for _, sb in ipairs(SA_SkinScrollBars) do SA_SkinScrollBarRestore(sb) end
+        SA_SkinMainRestore()
+    end
+    if SA_SkinRefreshTabs then SA_SkinRefreshTabs() end   -- 탭 색/호버 갱신 (아래에서 정의)
+end
+
+-- =====================================================================
 -- 죽음 메시지 화면 표시 (이동 가능 프레임 + 페이드아웃)
 -- =====================================================================
 local SA_DeathFrame = nil
@@ -620,7 +1126,7 @@ local function SA_EnsureDeathFrame()
     fs:SetJustifyH("LEFT")
     -- 기본 폰트 필수: 로그인 시 미리 생성되므로, 표시 전에 SetText("")가 먼저 불리면
     -- "Font not set" 에러 (실제 표시 시 설정값으로 다시 SetFont)
-    fs:SetFont("Fonts\\2002.ttf", 24, "THICKOUTLINE")
+    fs:SetFont(MimDiceFontPath(), 24, "THICKOUTLINE")
     fs:SetShadowColor(0, 0, 0, 1)
     fs:SetShadowOffset(2, -2)
     f.text = fs
@@ -677,7 +1183,7 @@ end
 local function SA_SetDeathContent(role, fontSize, coloredText)
     local f = SA_EnsureDeathFrame()
     local fs = math.min(fontSize or 24, 120)   -- WoW 폰트 렌더 한계
-    f.text:SetFont("Fonts\\2002.ttf", fs, "THICKOUTLINE")
+    f.text:SetFont(MimDiceFontPath(), fs, "THICKOUTLINE")
     f.text:SetText(coloredText)
 
     local tc = ROLE_TEXCOORD[role]
@@ -796,7 +1302,7 @@ local function SA_MakeNumberSlider(parent, sliderName, y, labelText, minV, maxV,
     -- 라벨 (범위 함께 표시: 예 "바 가로 크기 (100~1900)")
     local lbl = parent:CreateFontString(nil, "OVERLAY")
     lbl:SetPoint("TOPLEFT", parent, "TOPLEFT", 15, y)
-    lbl:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    lbl:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     lbl:SetText(labelText .. " (" .. minV .. "~" .. maxV .. ")")
     lbl:SetTextColor(0.9, 0.9, 0.9)
 
@@ -815,7 +1321,7 @@ local function SA_MakeNumberSlider(parent, sliderName, y, labelText, minV, maxV,
     edit:SetSize(52, 22)
     edit:SetPoint("LEFT", s, "RIGHT", 18, 0)   -- 슬라이더 바로 우측
     edit:SetAutoFocus(false)
-    edit:SetFont("Fonts\\2002.ttf", 12, "")
+    edit:SetFont(MimDiceFontPath(), 12, "")
     edit:SetNumeric(true)
     edit:SetMaxLetters(4)
     edit:SetJustifyH("CENTER")
@@ -875,7 +1381,7 @@ end
 local function SA_AddPosRow(parent, y, getX, setX, getY, setY, onChange)
     local lbl = parent:CreateFontString(nil, "OVERLAY")
     lbl:SetPoint("TOPLEFT", parent, "TOPLEFT", 15, y)
-    lbl:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    lbl:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     lbl:SetTextColor(0.9, 0.9, 0.9)
     lbl:SetText("위치 (중앙 0,0)   X")
 
@@ -883,7 +1389,7 @@ local function SA_AddPosRow(parent, y, getX, setX, getY, setY, onChange)
         local e = CreateFrame("EditBox", nil, parent, "InputBoxTemplate")
         e:SetSize(50, 20)
         e:SetAutoFocus(false)
-        e:SetFont("Fonts\\2002.ttf", 11, "")
+        e:SetFont(MimDiceFontPath(), 11, "")
         e:SetMaxLetters(6)
         -- 값 저장(포커스는 유지) — 탭/엔터 이동은 아래에서 따로 처리
         e.commit = function()
@@ -900,7 +1406,7 @@ local function SA_AddPosRow(parent, y, getX, setX, getY, setY, onChange)
     ex:SetPoint("LEFT", lbl, "RIGHT", 8, 0)
     local lblY = parent:CreateFontString(nil, "OVERLAY")
     lblY:SetPoint("LEFT", ex, "RIGHT", 12, 0)
-    lblY:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    lblY:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     lblY:SetTextColor(0.9, 0.9, 0.9)
     lblY:SetText("Y")
     local ey = mkBox(getY, setY)
@@ -925,7 +1431,7 @@ local function SA_MakeTypeSelector(parent, x, y, getType, onPick)
         b:SetSize(44, 22)
         b:SetPoint("TOPLEFT", parent, "TOPLEFT", x + (i - 1) * 46, y)
         b:SetText(d.label)
-        b:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+        b:GetFontString():SetFont(MimDiceFontPath(), 10, "")
         b.stype = d.t
         b:SetScript("OnClick", function() onPick(d.t) end)
         btns[i] = b
@@ -969,13 +1475,140 @@ local function SA_SetBoxValue(box, value, placeholder)
     end
 end
 
+-- 공용: 색상 한 줄 [라벨] [스와치=색상환 열기] [RRGGBB 코드 입력] [기본색]
+-- 색상환은 와우 내장 풀 컬러 팔레트. 드래그하는 동안 실시간으로 미리보기 반영.
+-- getFn() → {r,g,b} / setFn(r,g,b) / defaults = {r,g,b} 기본색 / onChange() 미리보기 갱신
+-- opacityOpt = { get=fn(0~1), set=fn(a) } : 색상환의 투명도 슬라이더와 연동 (블러드 바 투명도 등)
+-- 반환: refresh() - 스와치/코드칸을 현재 값으로 갱신
+local function SA_MakeColorRow(win, y, labelText, getFn, setFn, defaults, onChange, opacityOpt)
+    local lb = win:CreateFontString(nil, "OVERLAY")
+    lb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, y)
+    lb:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    lb:SetText(labelText); lb:SetTextColor(0.9, 0.9, 0.9)
+
+    local btn = CreateFrame("Button", nil, win)
+    btn:SetSize(30, 18)
+    btn:SetPoint("LEFT", lb, "RIGHT", 10, 0)
+    local bd = btn:CreateTexture(nil, "BORDER")
+    bd:SetAllPoints(); bd:SetColorTexture(0.6, 0.6, 0.6, 1)
+    local sw = btn:CreateTexture(nil, "ARTWORK")
+    sw:SetPoint("TOPLEFT", 1, -1); sw:SetPoint("BOTTOMRIGHT", -1, 1)
+    local hlt = btn:CreateTexture(nil, "HIGHLIGHT")
+    hlt:SetPoint("TOPLEFT", -2, 2); hlt:SetPoint("BOTTOMRIGHT", 2, -2)
+    hlt:SetColorTexture(1, 1, 1, 0.3)
+
+    local hexBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    hexBox:SetSize(66, 20)
+    hexBox:SetPoint("LEFT", btn, "RIGHT", 12, 0)
+    hexBox:SetAutoFocus(false); hexBox:SetFont(MimDiceFontPath(), 11, "")
+    hexBox:SetMaxLetters(7)   -- '#' 포함 입력 허용
+
+    local defBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    defBtn:SetSize(52, 20)
+    defBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, y + 4)
+    defBtn:SetText("기본색")
+    defBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
+
+    local function refresh()
+        local c = getFn() or { r = 1, g = 1, b = 1 }
+        sw:SetColorTexture(c.r or 1, c.g or 1, c.b or 1, 1)
+        hexBox:SetText(string.format("%02X%02X%02X",
+            math.floor((c.r or 1) * 255 + 0.5),
+            math.floor((c.g or 1) * 255 + 0.5),
+            math.floor((c.b or 1) * 255 + 0.5)))
+        hexBox:SetCursorPosition(0)
+    end
+    local function applyColor(r, g, b)
+        setFn(r, g, b)
+        refresh()
+        if onChange then onChange() end
+    end
+
+    btn:SetScript("OnClick", function()
+        local c = getFn() or { r = 1, g = 1, b = 1 }
+        if ColorPickerFrame and ColorPickerFrame.SetupColorPickerAndShow then
+            ColorPickerFrame:SetupColorPickerAndShow({
+                r = c.r, g = c.g, b = c.b,
+                hasOpacity = opacityOpt ~= nil,
+                opacity = opacityOpt and opacityOpt.get() or nil,
+                swatchFunc = function()
+                    local nr, ng, nb = ColorPickerFrame:GetColorRGB()
+                    applyColor(nr, ng, nb)
+                end,
+                opacityFunc = opacityOpt and function()
+                    local a = ColorPickerFrame.GetColorAlpha and ColorPickerFrame:GetColorAlpha() or 1
+                    opacityOpt.set(a)
+                    if onChange then onChange() end
+                end or nil,
+                cancelFunc = function(prev)
+                    if prev then
+                        applyColor(prev.r, prev.g, prev.b)
+                        if opacityOpt and prev.a then
+                            opacityOpt.set(prev.a)
+                            if onChange then onChange() end
+                        end
+                    end
+                end,
+            })
+        end
+    end)
+
+    hexBox:SetScript("OnEnterPressed", function(self)
+        local t = self:GetText():gsub("#", ""):gsub("%s", "")
+        if t:match("^%x%x%x%x%x%x$") then
+            applyColor(tonumber(t:sub(1, 2), 16) / 255,
+                       tonumber(t:sub(3, 4), 16) / 255,
+                       tonumber(t:sub(5, 6), 16) / 255)
+        else
+            refresh()   -- 잘못된 입력은 원래 값으로 되돌림
+            DEFAULT_CHAT_FRAME:AddMessage("|cffffff00[MimDice]|r 색상 코드는 6자리로 입력하세요. (예: FF66AA)")
+        end
+        self:ClearFocus()
+    end)
+    hexBox:SetScript("OnEscapePressed", function(self) refresh(); self:ClearFocus() end)
+
+    defBtn:SetScript("OnClick", function()
+        applyColor(defaults[1], defaults[2], defaults[3])
+    end)
+
+    refresh()
+    return refresh
+end
+
+-- 공용: 이 프레임을 잡고 끌면 본체(MainWindow)가 "점프 없이" 따라오게 연결
+-- (StartMoving을 원격 프레임에서 호출하면 본체가 마우스 위치로 끌려오는 문제가 있어
+--  커서 이동량만큼만 본체를 옮기는 수동 방식 사용)
+local function SA_WireBundleDrag(frame)
+    frame:RegisterForDrag("LeftButton")
+    frame:SetScript("OnDragStart", function(self)
+        local mw = _G.MainWindow
+        if not mw or not mw:IsMovable() then return end
+        local scale = mw:GetEffectiveScale()
+        local cx, cy = GetCursorPosition()
+        self.MimDragX = mw:GetLeft() - cx / scale
+        self.MimDragY = mw:GetTop() - cy / scale
+        self:SetScript("OnUpdate", function(s2)
+            local mw2 = _G.MainWindow
+            if not mw2 then return end
+            local sc = mw2:GetEffectiveScale()
+            local x, y = GetCursorPosition()
+            mw2:ClearAllPoints()
+            mw2:SetPoint("TOPLEFT", UIParent, "BOTTOMLEFT", s2.MimDragX + x / sc, s2.MimDragY + y / sc)
+        end)
+    end)
+    frame:SetScript("OnDragStop", function(self)
+        self:SetScript("OnUpdate", nil)
+        if MimDice_SaveAnchors then MimDice_SaveAnchors() end
+    end)
+end
+
 local SA_deathTestUntil = 0   -- 죽음 테스트 중복 방지: 이 시각(GetTime)까지 재실행 억제
 
 local function SA_CreateDeathConfig()
     if SA_DeathConfig then return SA_DeathConfig end
 
     local win = CreateFrame("Frame", "MimDice_DeathConfig", UIParent, "BackdropTemplate")
-    win:SetSize(340, 470)
+    win:SetSize(340, 350)
     -- 기본 위치: 옵션창 우측 (열 때마다 이 위치로). 드래그로 임시 이동 가능.
     win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
     win:SetFrameStrata("DIALOG")
@@ -990,17 +1623,8 @@ local function SA_CreateDeathConfig()
     win:EnableMouse(true)
     win:SetMovable(true)
     -- (화면 클램프 없음: 메인창처럼 화면 밖으로도 이동 가능 — 번들로 함께 이동)
-    win:RegisterForDrag("LeftButton")
-    -- 설정창을 잡고 끌면 본체(MainWindow)를 움직임 → 옵션창·설정창이 앵커로 붙어 하나로 뭉쳐 이동
-    win:SetScript("OnDragStart", function()
-        local mw = _G.MainWindow
-        if mw and mw:IsMovable() then mw:StartMoving() end
-    end)
-    win:SetScript("OnDragStop", function()
-        local mw = _G.MainWindow
-        if mw then mw:StopMovingOrSizing() end
-        if MimDice_SaveAnchors then MimDice_SaveAnchors() end
-    end)
+    -- 설정창을 잡고 끌면 본체(MainWindow)가 점프 없이 한 덩어리로 이동
+    SA_WireBundleDrag(win)
 
     -- 설정창을 닫으면(X/ESC/연쇄) 미리보기 숨김 + 위치 자동 잠금
     win:SetScript("OnHide", function()
@@ -1015,7 +1639,7 @@ local function SA_CreateDeathConfig()
 
     local title = win:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOP", win, "TOP", 0, -12)
-    title:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
+    title:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     title:SetText("죽음 알림 설정 (공용)")
     title:SetTextColor(1, 0.82, 0)
 
@@ -1026,7 +1650,7 @@ local function SA_CreateDeathConfig()
     -- ── 재생 사운드 ─────────────────────────
     local soundLabel = win:CreateFontString(nil, "OVERLAY")
     soundLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -36)
-    soundLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    soundLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     soundLabel:SetText("재생 사운드 : 아래 3개 중 하나 선택")
     soundLabel:SetTextColor(0.9, 0.9, 0.9)
 
@@ -1040,7 +1664,7 @@ local function SA_CreateDeathConfig()
     soundBox:SetSize(135, 22)
     soundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
     soundBox:SetAutoFocus(false)
-    soundBox:SetFont("Fonts\\2002.ttf", 11, "")
+    soundBox:SetFont(MimDiceFontPath(), 11, "")
     win.soundBox = soundBox
     SA_WirePlaceholder(soundBox)
 
@@ -1050,7 +1674,7 @@ local function SA_CreateDeathConfig()
     soundSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
     do
         local fs = soundSelectBtn:GetFontString()
-        fs:SetFont("Fonts\\2002.ttf", 10, "")
+        fs:SetFont(MimDiceFontPath(), 10, "")
         fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
         fs:ClearAllPoints(); fs:SetPoint("LEFT", 6, 0); fs:SetPoint("RIGHT", -6, 0)
     end
@@ -1114,7 +1738,7 @@ local function SA_CreateDeathConfig()
     enableCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -86)
     local enableLabel = win:CreateFontString(nil, "OVERLAY")
     enableLabel:SetPoint("LEFT", enableCb, "RIGHT", 2, 0)
-    enableLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    enableLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     enableLabel:SetText("화면에 죽음 메시지 표시")
     enableLabel:SetTextColor(0.9, 0.9, 0.9)
     enableCb:SetScript("OnClick", function(self)
@@ -1130,7 +1754,7 @@ local function SA_CreateDeathConfig()
     -- 문구 입력
     local suffixLabel = win:CreateFontString(nil, "OVERLAY")
     suffixLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -114)
-    suffixLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    suffixLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     suffixLabel:SetText("닉네임 뒤 문구 (예: 사망 !!)")
     suffixLabel:SetTextColor(0.9, 0.9, 0.9)
 
@@ -1138,7 +1762,7 @@ local function SA_CreateDeathConfig()
     suffixBox:SetSize(200, 22)
     suffixBox:SetPoint("TOPLEFT", win, "TOPLEFT", 20, -134)
     suffixBox:SetAutoFocus(false)
-    suffixBox:SetFont("Fonts\\2002.ttf", 12, "")
+    suffixBox:SetFont(MimDiceFontPath(), 12, "")
     suffixBox:SetScript("OnTextChanged", function(self, userInput)
         if userInput then
             MimDiceDB.deathTrack.suffix = self:GetText()
@@ -1155,48 +1779,15 @@ local function SA_CreateDeathConfig()
         function() SA_RefreshPreviewIfVisible() end)
     win.sizeSlider = sizeSlider
 
-    -- 색상 프리셋 그리드 (7 x 4)
-    local colorLabel = win:CreateFontString(nil, "OVERLAY")
-    colorLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -222)
-    colorLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
-    colorLabel:SetText("문구 색상")
-    colorLabel:SetTextColor(0.9, 0.9, 0.9)
-
-    win.swatches = {}
-    local SWATCH = 24
-    local GAP = 4
-    local startX, startY = 18, -242
-    for idx, rgb in ipairs(SA_COLOR_PRESETS) do
-        local colN = (idx - 1) % SA_PALETTE_COLS
-        local rowN = math.floor((idx - 1) / SA_PALETTE_COLS)
-        local sw = CreateFrame("Button", nil, win)
-        sw:SetSize(SWATCH, SWATCH)
-        sw:SetPoint("TOPLEFT", win, "TOPLEFT", startX + colN * (SWATCH + GAP), startY - rowN * (SWATCH + GAP))
-
-        -- 선택 표시용 흰 테두리(BACKGROUND): 색 텍스처보다 2px 크게 깔아 가장자리만 보이게
-        local sel = sw:CreateTexture(nil, "BACKGROUND")
-        sel:SetPoint("TOPLEFT", -2, 2)
-        sel:SetPoint("BOTTOMRIGHT", 2, -2)
-        sel:SetColorTexture(1, 1, 1, 1)
-        sel:Hide()
-        sw.sel = sel
-
-        local tex = sw:CreateTexture(nil, "ARTWORK")
-        tex:SetAllPoints()
-        tex:SetColorTexture(rgb[1], rgb[2], rgb[3], 1)
-        sw.tex = tex
-
-        sw:SetScript("OnClick", function()
-            MimDiceDB.deathTrack.color = { r = rgb[1], g = rgb[2], b = rgb[3] }
-            for _, other in ipairs(win.swatches) do other.sel:Hide() end
-            sw.sel:Show()
-            SA_RefreshPreviewIfVisible()
-        end)
-        win.swatches[idx] = sw
-    end
+    -- 문구 색상 (색상환 풀 팔레트 + 코드 입력 + 기본색)
+    win.colorRefresh = SA_MakeColorRow(win, -222, "문구 색상",
+        function() return MimDiceDB.deathTrack.color end,
+        function(r, g, b) MimDiceDB.deathTrack.color = { r = r, g = g, b = b } end,
+        { 1, 0.2, 0.2 },
+        function() SA_RefreshPreviewIfVisible() end)
 
     -- 위치 X/Y 직접 입력
-    local posRefresh, posX, posY = SA_AddPosRow(win, -368,
+    local posRefresh, posX, posY = SA_AddPosRow(win, -258,
         function() return MimDiceDB.deathTrack.x end,
         function(v) MimDiceDB.deathTrack.x = v end,
         function() return MimDiceDB.deathTrack.y end,
@@ -1211,7 +1802,7 @@ local function SA_CreateDeathConfig()
     local lockBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     lockBtn:SetSize(110, 24)
     lockBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 14)
-    lockBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+    lockBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
     lockBtn:SetScript("OnClick", function()
         local dt = MimDiceDB.deathTrack
         dt.locked = not dt.locked
@@ -1233,7 +1824,7 @@ local function SA_CreateDeathConfig()
     resetBtn:SetSize(70, 24)
     resetBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 155, 14)   -- 340폭 기준 3버튼(110/70/70) 균등 간격 30px
     resetBtn:SetText("기본값")
-    resetBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    resetBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     resetBtn:SetScript("OnClick", function()
         local dt = MimDiceDB.deathTrack
         dt.fontSize, dt.x, dt.y = 80, 0, 130
@@ -1249,7 +1840,7 @@ local function SA_CreateDeathConfig()
     testBtn:SetSize(70, 24)
     testBtn:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 14)
     testBtn:SetText("테스트")
-    testBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    testBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     testBtn:SetScript("OnClick", function()
         local dt = MimDiceDB.deathTrack
         -- 테스트 중복 방지: 표시 유지시간 동안 재클릭 무시 (소리 겹침 방지)
@@ -1273,6 +1864,7 @@ local function SA_CreateDeathConfig()
         SA_PlaySound(dt); dt.enabled = was
     end)
 
+    SA_SkinRegisterWindow(win)   -- 스킨 대상 등록 (켜져 있으면 즉시 적용)
     win:Hide()  -- 생성 직후 숨김 (CreateFrame 기본은 표시 상태 → 첫 클릭에 닫히는 문제 방지)
     SA_DeathConfig = win
     return win
@@ -1290,17 +1882,7 @@ function SA_RefreshDeathConfig()
     win.sizeSlider.SyncValue()
     win.posRefresh()
     win.RefreshLockBtn()
-
-    -- 현재 색과 일치하는 스와치 선택 표시
-    local cc = dt.color or { r = 1, g = 0.2, b = 0.2 }
-    for idx, rgb in ipairs(SA_COLOR_PRESETS) do
-        local match = math.abs(rgb[1] - (cc.r or 0)) < 0.02
-            and math.abs(rgb[2] - (cc.g or 0)) < 0.02
-            and math.abs(rgb[3] - (cc.b or 0)) < 0.02
-        if win.swatches[idx] then
-            if match then win.swatches[idx].sel:Show() else win.swatches[idx].sel:Hide() end
-        end
-    end
+    win.colorRefresh()   -- 색상 스와치/코드칸 갱신
 end
 
 function SA_ToggleDeathConfig()
@@ -1339,7 +1921,7 @@ local function SA_CreateBuffConfig(key)
     local def = BUFF_DEF_BY_KEY[key]
 
     local win = CreateFrame("Frame", "MimDice_BuffConfig_" .. key, UIParent, "BackdropTemplate")
-    win:SetSize(340, 580)
+    win:SetSize(340, 416)
     win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
     win:SetFrameStrata("DIALOG")
     win:SetBackdrop({
@@ -1353,17 +1935,8 @@ local function SA_CreateBuffConfig(key)
     win:EnableMouse(true)
     win:SetMovable(true)
     -- (화면 클램프 없음: 메인창처럼 화면 밖으로도 이동 가능 — 번들로 함께 이동)
-    win:RegisterForDrag("LeftButton")
-    -- 설정창을 잡고 끌면 본체(MainWindow)를 움직임 → 옵션창·설정창이 앵커로 붙어 하나로 뭉쳐 이동
-    win:SetScript("OnDragStart", function()
-        local mw = _G.MainWindow
-        if mw and mw:IsMovable() then mw:StartMoving() end
-    end)
-    win:SetScript("OnDragStop", function()
-        local mw = _G.MainWindow
-        if mw then mw:StopMovingOrSizing() end
-        if MimDice_SaveAnchors then MimDice_SaveAnchors() end
-    end)
+    -- 설정창을 잡고 끌면 본체(MainWindow)가 점프 없이 한 덩어리로 이동
+    SA_WireBundleDrag(win)
     win.key = key
 
     -- 설정창을 닫으면(X/ESC/연쇄) 미리보기 숨김 + 위치 자동 잠금 (실제 발동 카운트다운은 유지)
@@ -1377,7 +1950,7 @@ local function SA_CreateBuffConfig(key)
 
     local title = win:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOP", win, "TOP", 0, -12)
-    title:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
+    title:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     title:SetText(def.name .. " 지속바 설정 (공용)")
     title:SetTextColor(1, 0.82, 0)
 
@@ -1388,7 +1961,7 @@ local function SA_CreateBuffConfig(key)
     -- 재생 사운드
     local soundLabel = win:CreateFontString(nil, "OVERLAY")
     soundLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -36)
-    soundLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    soundLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     soundLabel:SetText("재생 사운드 : 아래 3개 중 하나 선택")
     soundLabel:SetTextColor(0.9, 0.9, 0.9)
 
@@ -1402,7 +1975,7 @@ local function SA_CreateBuffConfig(key)
     soundBox:SetSize(135, 22)
     soundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
     soundBox:SetAutoFocus(false)
-    soundBox:SetFont("Fonts\\2002.ttf", 11, "")
+    soundBox:SetFont(MimDiceFontPath(), 11, "")
     win.soundBox = soundBox
     SA_WirePlaceholder(soundBox)
 
@@ -1412,7 +1985,7 @@ local function SA_CreateBuffConfig(key)
     soundSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
     do
         local fs = soundSelectBtn:GetFontString()
-        fs:SetFont("Fonts\\2002.ttf", 10, "")
+        fs:SetFont(MimDiceFontPath(), 10, "")
         fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
         fs:ClearAllPoints(); fs:SetPoint("LEFT", 6, 0); fs:SetPoint("RIGHT", -6, 0)
     end
@@ -1476,7 +2049,7 @@ local function SA_CreateBuffConfig(key)
     barCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -86)
     local barLabel = win:CreateFontString(nil, "OVERLAY")
     barLabel:SetPoint("LEFT", barCb, "RIGHT", 2, 0)
-    barLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    barLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     barLabel:SetText("화면에 지속시간 바 표시")
     barLabel:SetTextColor(0.9, 0.9, 0.9)
     barCb:SetScript("OnClick", function(self)
@@ -1494,51 +2067,26 @@ local function SA_CreateBuffConfig(key)
     end)
     win.barCb = barCb
 
-    -- 바 색상 그리드 (28색)
-    local colorLabel = win:CreateFontString(nil, "OVERLAY")
-    colorLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -112)
-    colorLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
-    colorLabel:SetText("바 색상")
-    colorLabel:SetTextColor(0.9, 0.9, 0.9)
-
-    win.swatches = {}
-    local SWATCH, GAP = 24, 4
-    local startX, startY = 18, -132
-    for idx, rgb in ipairs(SA_COLOR_PRESETS) do
-        local colN = (idx - 1) % SA_PALETTE_COLS
-        local rowN = math.floor((idx - 1) / SA_PALETTE_COLS)
-        local sw = CreateFrame("Button", nil, win)
-        sw:SetSize(SWATCH, SWATCH)
-        sw:SetPoint("TOPLEFT", win, "TOPLEFT", startX + colN * (SWATCH + GAP), startY - rowN * (SWATCH + GAP))
-
-        local sel = sw:CreateTexture(nil, "BACKGROUND")
-        sel:SetPoint("TOPLEFT", -2, 2)
-        sel:SetPoint("BOTTOMRIGHT", 2, -2)
-        sel:SetColorTexture(1, 1, 1, 1)
-        sel:Hide()
-        sw.sel = sel
-
-        local tex = sw:CreateTexture(nil, "ARTWORK")
-        tex:SetAllPoints()
-        tex:SetColorTexture(rgb[1], rgb[2], rgb[3], 1)
-
-        sw:SetScript("OnClick", function()
-            MimDiceDB.buffTrack[key].color = { r = rgb[1], g = rgb[2], b = rgb[3] }
-            for _, other in ipairs(win.swatches) do other.sel:Hide() end
-            sw.sel:Show()
-            SA_UpdateBuffBar(key)
-        end)
-        win.swatches[idx] = sw
-    end
+    -- 바 색상 (색상환 풀 팔레트 + 코드 입력 + 기본색. 색상환의 투명도 슬라이더 = 바 투명도와 연동)
+    win.colorRefresh = SA_MakeColorRow(win, -112, "바 색상",
+        function() return MimDiceDB.buffTrack[key].color end,
+        function(r, g, b) MimDiceDB.buffTrack[key].color = { r = r, g = g, b = b } end,
+        { def.color[1], def.color[2], def.color[3] },
+        function() SA_UpdateBuffBar(key) end,
+        {
+            get = function() return (MimDiceDB.buffTrack[key].alphaPct or 50) / 100 end,
+            set = function(a)
+                MimDiceDB.buffTrack[key].alphaPct = math.floor(a * 100 + 0.5)
+            end,
+        })
 
     -- 크기/투명도 슬라이더 (가로/세로/글씨/투명도)
-    win.wSlider = SA_AddBuffSlider(win, key, "MimDice_BuffW_" .. key, -256, "바 가로 크기", 100, 1900, "width")
-    win.hSlider = SA_AddBuffSlider(win, key, "MimDice_BuffH_" .. key, -310, "바 세로 크기", 16, 300, "height")
-    win.tfSlider = SA_AddBuffSlider(win, key, "MimDice_BuffTF_" .. key, -364, "글씨 크기 (라벨+남은시간)", 8, 120, "timeFontSize")
-    win.aSlider = SA_AddBuffSlider(win, key, "MimDice_BuffA_" .. key, -418, "바 투명도 (%)", 10, 100, "alphaPct")
+    win.wSlider = SA_AddBuffSlider(win, key, "MimDice_BuffW_" .. key, -148, "바 가로 크기", 100, 1900, "width")
+    win.hSlider = SA_AddBuffSlider(win, key, "MimDice_BuffH_" .. key, -202, "바 세로 크기", 16, 300, "height")
+    win.tfSlider = SA_AddBuffSlider(win, key, "MimDice_BuffTF_" .. key, -256, "글씨 크기 (라벨+남은시간)", 8, 120, "timeFontSize")
 
     -- 위치 X/Y 직접 입력
-    local posRefresh, posX, posY = SA_AddPosRow(win, -464,
+    local posRefresh, posX, posY = SA_AddPosRow(win, -302,
         function() return MimDiceDB.buffTrack[key].x end,
         function(v) MimDiceDB.buffTrack[key].x = v end,
         function() return MimDiceDB.buffTrack[key].y end,
@@ -1547,13 +2095,13 @@ local function SA_CreateBuffConfig(key)
     win.posRefresh = posRefresh
 
     -- 입력칸 탭/엔터 순환: 가로 → 세로 → 글씨 → 투명도 → X → Y → (가로)
-    SA_ChainTabEnter({ win.wSlider.edit, win.hSlider.edit, win.tfSlider.edit, win.aSlider.edit, posX, posY })
+    SA_ChainTabEnter({ win.wSlider.edit, win.hSlider.edit, win.tfSlider.edit, posX, posY })
 
     -- 위치 잠금/해제
     local lockBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     lockBtn:SetSize(110, 24)
     lockBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 14)
-    lockBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+    lockBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
     lockBtn:SetScript("OnClick", function()
         local bt = MimDiceDB.buffTrack[key]
         bt.locked = not bt.locked
@@ -1570,7 +2118,7 @@ local function SA_CreateBuffConfig(key)
     resetBtn:SetSize(70, 24)
     resetBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 155, 14)   -- 340폭 기준 3버튼(110/70/70) 균등 간격 30px
     resetBtn:SetText("기본값")
-    resetBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    resetBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     resetBtn:SetScript("OnClick", function()
         local d = BUFF_DEF_BY_KEY[key]
         local bt = MimDiceDB.buffTrack[key]
@@ -1588,7 +2136,7 @@ local function SA_CreateBuffConfig(key)
     previewBtn:SetSize(70, 24)
     previewBtn:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 14)
     previewBtn:SetText("테스트")
-    previewBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    previewBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     previewBtn:SetScript("OnClick", function() SA_BuffTest(key) end)
 
     -- 현재 설정값을 위젯에 반영
@@ -1600,20 +2148,12 @@ local function SA_CreateBuffConfig(key)
         win.wSlider.SyncValue()
         win.hSlider.SyncValue()
         win.tfSlider.SyncValue()
-        win.aSlider.SyncValue()
         win.posRefresh()
-        local cc = bt.color or { r = 1, g = 0.2, b = 0.2 }
-        for i, rgb in ipairs(SA_COLOR_PRESETS) do
-            local match = math.abs(rgb[1] - (cc.r or 0)) < 0.02
-                and math.abs(rgb[2] - (cc.g or 0)) < 0.02
-                and math.abs(rgb[3] - (cc.b or 0)) < 0.02
-            if win.swatches[i] then
-                if match then win.swatches[i].sel:Show() else win.swatches[i].sel:Hide() end
-            end
-        end
+        win.colorRefresh()   -- 색상 스와치/코드칸 갱신
     end
 
     win:Hide()
+    SA_SkinRegisterWindow(win)   -- 스킨 대상 등록
     SA_BuffConfigs[key] = win
     return win
 end
@@ -1750,14 +2290,14 @@ local function SA_EnsureBuffBar(key)
 
     local lbl = sb:CreateFontString(nil, "OVERLAY")
     lbl:SetPoint("LEFT", sb, "LEFT", 6, 0)
-    lbl:SetFont("Fonts\\2002.ttf", 12, "OUTLINE")
+    lbl:SetFont(MimDiceFontPath(), 12, "OUTLINE")
     lbl:SetText(def.name)
     lbl:SetShadowColor(0, 0, 0, 1); lbl:SetShadowOffset(1, -1)
     f.lbl = lbl
 
     local timeTxt = sb:CreateFontString(nil, "OVERLAY")
     timeTxt:SetPoint("RIGHT", sb, "RIGHT", -6, 0)
-    timeTxt:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
+    timeTxt:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     timeTxt:SetShadowColor(0, 0, 0, 1); timeTxt:SetShadowOffset(1, -1)
     f.timeTxt = timeTxt
 
@@ -1818,8 +2358,8 @@ function SA_UpdateBuffBar(key)
     local c = bt.color or { r = 1, g = 0.2, b = 0.2 }
     f.sb:SetStatusBarColor(c.r, c.g, c.b, (bt.alphaPct or 70) / 100)   -- 사용자 투명도
     local fs = bt.timeFontSize or 14
-    f.timeTxt:SetFont("Fonts\\2002.ttf", fs, "OUTLINE")
-    f.lbl:SetFont("Fonts\\2002.ttf", fs, "OUTLINE")   -- 라벨(블러드 등)도 같이 스케일
+    f.timeTxt:SetFont(MimDiceFontPath(), fs, "OUTLINE")
+    f.lbl:SetFont(MimDiceFontPath(), fs, "OUTLINE")   -- 라벨(블러드 등)도 같이 스케일
 
     if not bt.locked then
         -- 잠금 해제(위치 잡기): 강조 테두리 + 정적 풀 바 + 드래그 가능
@@ -1986,7 +2526,7 @@ local function SA_EnsureBattleResIcon()
     -- 충전 수 텍스트 (우하단)
     local count = f:CreateFontString(nil, "OVERLAY")
     count:SetPoint("BOTTOMRIGHT", f, "BOTTOMRIGHT", -3, 3)
-    count:SetFont("Fonts\\2002.ttf", 14, "OUTLINE")
+    count:SetFont(MimDiceFontPath(), 14, "OUTLINE")
     count:SetShadowColor(0, 0, 0, 1); count:SetShadowOffset(1, -1)
     count:SetJustifyH("RIGHT")
     f.count = count
@@ -2062,7 +2602,7 @@ local function SA_ApplyBattleResIconLayout(f, br)
     f:SetSize(size, size)
     f:ClearAllPoints()
     f:SetPoint("CENTER", UIParent, "CENTER", br.iconX or 0, br.iconY or 0)
-    f.count:SetFont("Fonts\\2002.ttf", math.max(8, math.floor(size * 0.4)), "OUTLINE")
+    f.count:SetFont(MimDiceFontPath(), math.max(8, math.floor(size * 0.4)), "OUTLINE")
 end
 
 -- 편집/미리보기용 정적 표시 (그룹 무관, 충전 3개 가정)
@@ -2191,7 +2731,7 @@ local function SA_EnsureSoundPicker()
 
     local title = p:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOPLEFT", 12, -10)
-    title:SetFont("Fonts\\2002.ttf", 12, "OUTLINE")
+    title:SetFont(MimDiceFontPath(), 12, "OUTLINE")
     title:SetText("사운드 선택 (▶ 미리듣기)")
     title:SetTextColor(1, 0.82, 0)
 
@@ -2199,7 +2739,7 @@ local function SA_EnsureSoundPicker()
     local note = p:CreateFontString(nil, "OVERLAY")
     note:SetPoint("TOPLEFT", 12, -28)
     note:SetWidth(306); note:SetJustifyH("LEFT"); note:SetWordWrap(true)
-    note:SetFont("Fonts\\2002.ttf", 10, "")
+    note:SetFont(MimDiceFontPath(), 10, "")
     note:SetText("· 긴 사운드파일도 재생가능하도록 주음량대신 대화 채널을 사용합니다.")
     note:SetTextColor(0.7, 0.7, 0.7)
 
@@ -2237,7 +2777,7 @@ local function SA_EnsureSoundPicker()
         nameFS:SetPoint("LEFT", 6, 0)
         nameFS:SetPoint("RIGHT", -34, 0)
         nameFS:SetJustifyH("LEFT"); nameFS:SetWordWrap(false)
-        nameFS:SetFont("Fonts\\2002.ttf", 11, "")
+        nameFS:SetFont(MimDiceFontPath(), 11, "")
         nameFS:SetText(snd.name)
 
         -- 줄(이름) 클릭 = 선택 후 닫기
@@ -2251,7 +2791,7 @@ local function SA_EnsureSoundPicker()
         play:SetSize(24, 18)
         play:SetPoint("RIGHT", -3, 0)
         play:SetText("▶")
-        play:GetFontString():SetFont("Fonts\\2002.ttf", 9, "")
+        play:GetFontString():SetFont(MimDiceFontPath(), 9, "")
         play:SetScript("OnClick", function()
             SA_PlaySound({ enabled = true, soundType = "preset", soundKey = snd.id }, "Dialog")
         end)
@@ -2269,6 +2809,7 @@ local function SA_EnsureSoundPicker()
 
     tinsert(UISpecialFrames, "MimDice_SoundPicker")   -- ESC로 닫기
     p:Hide()
+    SA_SkinRegisterWindow(p)   -- 스킨 대상 등록
     SA_SoundPicker = p
     return p
 end
@@ -2313,17 +2854,8 @@ function SA_CreateBattleResIconConfig()
     win:EnableMouse(true)
     win:SetMovable(true)
     -- (화면 클램프 없음: 메인창처럼 화면 밖으로도 이동 가능 — 번들로 함께 이동)
-    win:RegisterForDrag("LeftButton")
-    -- 설정창을 잡고 끌면 본체(MainWindow)를 움직임 → 옵션창·설정창이 앵커로 붙어 하나로 뭉쳐 이동
-    win:SetScript("OnDragStart", function()
-        local mw = _G.MainWindow
-        if mw and mw:IsMovable() then mw:StartMoving() end
-    end)
-    win:SetScript("OnDragStop", function()
-        local mw = _G.MainWindow
-        if mw then mw:StopMovingOrSizing() end
-        if MimDice_SaveAnchors then MimDice_SaveAnchors() end
-    end)
+    -- 설정창을 잡고 끌면 본체(MainWindow)가 점프 없이 한 덩어리로 이동
+    SA_WireBundleDrag(win)
     -- 설정창을 닫으면(X/ESC/연쇄) 그룹 정책대로 복귀 + 사운드 팝업 닫기 + 아이콘 위치 자동 잠금
     win:SetScript("OnHide", function()
         if SA_SoundPicker then SA_SoundPicker:Hide() end
@@ -2334,7 +2866,7 @@ function SA_CreateBattleResIconConfig()
 
     local title = win:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOP", win, "TOP", 0, -12)
-    title:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
+    title:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     title:SetText("전투부활 설정 (공용)")
     title:SetTextColor(1, 0.82, 0)
 
@@ -2345,7 +2877,7 @@ function SA_CreateBattleResIconConfig()
     -- ── 재생 사운드 (내장/커스텀/ID) — 메인 옵션창에서 이리로 이동 ──
     local soundLabel = win:CreateFontString(nil, "OVERLAY")
     soundLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -40)
-    soundLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    soundLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     soundLabel:SetText("충전 시 재생 사운드")
     soundLabel:SetTextColor(0.9, 0.9, 0.9)
 
@@ -2359,7 +2891,7 @@ function SA_CreateBattleResIconConfig()
     soundBox:SetSize(135, 22)
     soundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -60)
     soundBox:SetAutoFocus(false)
-    soundBox:SetFont("Fonts\\2002.ttf", 11, "")
+    soundBox:SetFont(MimDiceFontPath(), 11, "")
     SA_WirePlaceholder(soundBox)
 
     -- 내장 선택 시: 사운드 선택 팝업 버튼 (soundBox 자리, 토글로 교체 표시)
@@ -2368,7 +2900,7 @@ function SA_CreateBattleResIconConfig()
     soundSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -60)
     do
         local fs = soundSelectBtn:GetFontString()
-        fs:SetFont("Fonts\\2002.ttf", 10, "")
+        fs:SetFont(MimDiceFontPath(), 10, "")
         fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
         fs:ClearAllPoints(); fs:SetPoint("LEFT", 6, 0); fs:SetPoint("RIGHT", -6, 0)
     end
@@ -2425,7 +2957,7 @@ function SA_CreateBattleResIconConfig()
     enCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -104)
     local enLabel = win:CreateFontString(nil, "OVERLAY")
     enLabel:SetPoint("LEFT", enCb, "RIGHT", 2, 0)
-    enLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    enLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     enLabel:SetText("전투부활 아이콘 표시 (다른 애드온 쓰면 끄기)")
     enLabel:SetTextColor(0.9, 0.9, 0.9)
     enCb:SetScript("OnClick", function(self)
@@ -2453,7 +2985,7 @@ function SA_CreateBattleResIconConfig()
     -- 안내문
     local hint = win:CreateFontString(nil, "OVERLAY")
     hint:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -250)
-    hint:SetFont("Fonts\\2002.ttf", 10, "")
+    hint:SetFont(MimDiceFontPath(), 10, "")
     hint:SetTextColor(0.7, 0.7, 0.7)
     hint:SetWidth(310); hint:SetJustifyH("LEFT")
     hint:SetText("· '위치 잠금 해제' 후 아이콘을 드래그해 옮기세요.")
@@ -2462,7 +2994,7 @@ function SA_CreateBattleResIconConfig()
     local lockBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     lockBtn:SetSize(110, 24)
     lockBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 14)
-    lockBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+    lockBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
     lockBtn:SetScript("OnClick", function()
         local b = MimDiceDB.battleRes
         b.iconLocked = not b.iconLocked
@@ -2479,7 +3011,7 @@ function SA_CreateBattleResIconConfig()
     resetBtn:SetSize(70, 24)
     resetBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 155, 14)   -- 340폭 기준 3버튼(110/70/70) 균등 간격 30px
     resetBtn:SetText("기본값")
-    resetBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    resetBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     resetBtn:SetScript("OnClick", function()
         local b = MimDiceDB.battleRes
         b.iconSize, b.iconX, b.iconY, b.iconLocked = 40, 0, 0, true   -- 화면 정중앙
@@ -2493,7 +3025,7 @@ function SA_CreateBattleResIconConfig()
     testBtn:SetSize(70, 24)
     testBtn:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 14)
     testBtn:SetText("테스트")
-    testBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    testBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     testBtn:SetScript("OnClick", function()
         local now = GetTime()
         if now < SA_brTestUntil then
@@ -2518,6 +3050,7 @@ function SA_CreateBattleResIconConfig()
     end
 
     win:Hide()
+    SA_SkinRegisterWindow(win)   -- 스킨 대상 등록
     SA_BattleResIconConfig = win
     return win
 end
@@ -2680,7 +3213,12 @@ local function SA_PartyApplicantText(appID)
     local segs = {}
     if specStr ~= "" then segs[#segs+1] = (specStr:gsub("%s+$", "")) end
     if pa.showName ~= false then segs[#segs+1] = disp end
-    if #stats > 0 then segs[#segs+1] = table.concat(stats, " / ") end
+    if #stats > 0 then
+        local sc = pa.statColor or { r = 1, g = 1, b = 1 }
+        segs[#segs+1] = string.format("|cff%02x%02x%02x%s|r",
+            math.floor(sc.r * 255 + 0.5), math.floor(sc.g * 255 + 0.5), math.floor(sc.b * 255 + 0.5),
+            table.concat(stats, " / "))
+    end
     return table.concat(segs, "  ")
 end
 
@@ -2739,7 +3277,12 @@ local function SA_PartyPreviewText()
     local segs = {}
     if specStr ~= "" then segs[#segs+1] = (specStr:gsub("%s+$", "")) end
     if pa.showName ~= false then segs[#segs+1] = disp end
-    if #stats > 0 then segs[#segs+1] = table.concat(stats, " / ") end
+    if #stats > 0 then
+        local sc = pa.statColor or { r = 1, g = 1, b = 1 }
+        segs[#segs+1] = string.format("|cff%02x%02x%02x%s|r",
+            math.floor(sc.r * 255 + 0.5), math.floor(sc.g * 255 + 0.5), math.floor(sc.b * 255 + 0.5),
+            table.concat(stats, " / "))
+    end
     return table.concat(segs, "  ")
 end
 
@@ -2774,7 +3317,7 @@ local function SA_EnsurePartyFrame()
     fs:SetPoint("CENTER")
     -- 기본 폰트 필수: 프레임을 로그인 시 미리 생성하므로, 알림 표시 전에
     -- SetText("")(숨김 정리)가 먼저 불리면 "Font not set" 에러가 남 (표시 시 설정값으로 다시 SetFont)
-    fs:SetFont("Fonts\\2002.ttf", 30, "THICKOUTLINE")
+    fs:SetFont(MimDiceFontPath(), 30, "THICKOUTLINE")
     fs:SetShadowColor(0, 0, 0, 1); fs:SetShadowOffset(2, -2)
     f.text = fs
 
@@ -2849,12 +3392,12 @@ local function SA_ShowPartyAlert(preview, appID)
 
     local f = SA_EnsurePartyFrame()
     -- 실제 알림 배경: 검정 반투명 (사용자 지정 알파). 알파 0이면 사실상 배경 없음. 편집 테두리는 숨김
-    f.bg:SetColorTexture(0, 0, 0, pa.bgAlpha or 0.5); f.bg:Show()
+    f.bg:SetColorTexture((pa.bgColor and pa.bgColor.r) or 0, (pa.bgColor and pa.bgColor.g) or 0, (pa.bgColor and pa.bgColor.b) or 0, pa.bgAlpha or 0.5); f.bg:Show()
     f:SetEditBorder(false)
     if not InCombatLockdown() then f:EnableMouse(false) end
     f:ClearAllPoints()
     f:SetPoint("CENTER", UIParent, "CENTER", pa.x or 0, pa.y or 400)
-    f.text:SetFont("Fonts\\2002.ttf", pa.fontSize or 30, "THICKOUTLINE")
+    f.text:SetFont(MimDiceFontPath(), pa.fontSize or 30, "THICKOUTLINE")
 
     local col = pa.color or { r = 0.3, g = 1, b = 0.3 }
     local hex = string.format("%02x%02x%02x", (col.r or 0.3)*255, (col.g or 1)*255, (col.b or 0.3)*255)
@@ -2886,11 +3429,11 @@ local function SA_RenderPartyPreview()
     if not pa then return end
     local f = SA_EnsurePartyFrame()
     -- 편집(위치잡기): 실제 배경(검정 반투명, 알파 그대로)은 유지 + 노란 테두리만 둘러 이동가능 표시
-    f.bg:SetColorTexture(0, 0, 0, pa.bgAlpha or 0.5); f.bg:Show()
+    f.bg:SetColorTexture((pa.bgColor and pa.bgColor.r) or 0, (pa.bgColor and pa.bgColor.g) or 0, (pa.bgColor and pa.bgColor.b) or 0, pa.bgAlpha or 0.5); f.bg:Show()
     f:SetEditBorder(true)
     f:ClearAllPoints()
     f:SetPoint("CENTER", UIParent, "CENTER", pa.x or 0, pa.y or 400)
-    f.text:SetFont("Fonts\\2002.ttf", pa.fontSize or 30, "THICKOUTLINE")
+    f.text:SetFont(MimDiceFontPath(), pa.fontSize or 30, "THICKOUTLINE")
     local col = pa.color or { r = 0.3, g = 1, b = 0.3 }
     local hex = string.format("%02x%02x%02x", (col.r or 0.3)*255, (col.g or 1)*255, (col.b or 0.3)*255)
     local info = SA_PartyPreviewText()
@@ -3076,7 +3619,7 @@ local function SA_CreatePartyConfig()
     if SA_PartyConfig then return SA_PartyConfig end
 
     local win = CreateFrame("Frame", "MimDice_PartyConfig", UIParent, "BackdropTemplate")
-    win:SetSize(340, 640)
+    win:SetSize(340, 554)
     win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
     win:SetFrameStrata("DIALOG")
     win:SetBackdrop({
@@ -3088,17 +3631,8 @@ local function SA_CreatePartyConfig()
     win:SetBackdropColor(0, 0, 0, 0.5)
     win:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
     win:EnableMouse(true); win:SetMovable(true)   -- 클램프 없음: 메인창처럼 화면 밖 이동 가능
-    win:RegisterForDrag("LeftButton")
-    -- 설정창을 잡고 끌면 본체(MainWindow)를 움직임 → 옵션창·설정창이 앵커로 붙어 하나로 뭉쳐 이동
-    win:SetScript("OnDragStart", function()
-        local mw = _G.MainWindow
-        if mw and mw:IsMovable() then mw:StartMoving() end
-    end)
-    win:SetScript("OnDragStop", function()
-        local mw = _G.MainWindow
-        if mw then mw:StopMovingOrSizing() end
-        if MimDice_SaveAnchors then MimDice_SaveAnchors() end
-    end)
+    -- 설정창을 잡고 끌면 본체(MainWindow)가 점프 없이 한 덩어리로 이동
+    SA_WireBundleDrag(win)
     -- 설정창을 닫으면(X/ESC/연쇄) 사운드 팝업 닫기 + 위치 자동 잠금
     win:SetScript("OnHide", function()
         if SA_SoundPicker then SA_SoundPicker:Hide() end
@@ -3111,7 +3645,7 @@ local function SA_CreatePartyConfig()
 
     local title = win:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOP", win, "TOP", 0, -12)
-    title:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
+    title:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     title:SetText("파티 신청 알림 설정 (공용)")
     title:SetTextColor(1, 0.82, 0)
 
@@ -3122,7 +3656,7 @@ local function SA_CreatePartyConfig()
     -- ── 재생 사운드 ─────────────────────────
     local soundLabel = win:CreateFontString(nil, "OVERLAY")
     soundLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -36)
-    soundLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    soundLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     soundLabel:SetText("재생 사운드 : 아래 3개 중 하나 선택")
     soundLabel:SetTextColor(0.9, 0.9, 0.9)
 
@@ -3133,7 +3667,7 @@ local function SA_CreatePartyConfig()
     local soundBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
     soundBox:SetSize(135, 22)
     soundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
-    soundBox:SetAutoFocus(false); soundBox:SetFont("Fonts\\2002.ttf", 11, "")
+    soundBox:SetAutoFocus(false); soundBox:SetFont(MimDiceFontPath(), 11, "")
     win.soundBox = soundBox
     SA_WirePlaceholder(soundBox)
 
@@ -3142,7 +3676,7 @@ local function SA_CreatePartyConfig()
     soundSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
     do
         local fs = soundSelectBtn:GetFontString()
-        fs:SetFont("Fonts\\2002.ttf", 10, ""); fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
+        fs:SetFont(MimDiceFontPath(), 10, ""); fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
         fs:ClearAllPoints(); fs:SetPoint("LEFT", 6, 0); fs:SetPoint("RIGHT", -6, 0)
     end
     win.soundSelectBtn = soundSelectBtn
@@ -3196,13 +3730,13 @@ local function SA_CreatePartyConfig()
     -- ── 문구 입력 (prefix) ──
     local prefixLabel = win:CreateFontString(nil, "OVERLAY")
     prefixLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -84)
-    prefixLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    prefixLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     prefixLabel:SetText("화면 문구 (예: 새 파티 신청!)")
     prefixLabel:SetTextColor(0.9, 0.9, 0.9)
     local prefixBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
     prefixBox:SetSize(200, 22)
     prefixBox:SetPoint("TOPLEFT", win, "TOPLEFT", 20, -104)
-    prefixBox:SetAutoFocus(false); prefixBox:SetFont("Fonts\\2002.ttf", 12, "")
+    prefixBox:SetAutoFocus(false); prefixBox:SetFont(MimDiceFontPath(), 12, "")
     prefixBox:SetScript("OnTextChanged", function(self, userInput)
         if userInput then MimDiceDB.partyAlert.prefix = self:GetText(); SA_PartyRefreshPreview() end
     end)
@@ -3212,7 +3746,7 @@ local function SA_CreatePartyConfig()
     -- ── 표시 항목 체크 (특성 / 아이템렙 / 쐐기점수) ──
     local itemLabel = win:CreateFontString(nil, "OVERLAY")
     itemLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -132)
-    itemLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    itemLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     itemLabel:SetText("표시 항목")
     itemLabel:SetTextColor(0.9, 0.9, 0.9)
 
@@ -3226,7 +3760,7 @@ local function SA_CreatePartyConfig()
         end)
         local lb = win:CreateFontString(nil, "OVERLAY")
         lb:SetPoint("LEFT", cb, "RIGHT", 0, 0)
-        lb:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+        lb:SetFont(MimDiceFontPath(), 10, "OUTLINE")
         lb:SetText(text); lb:SetTextColor(0.9, 0.9, 0.9)
         return cb
     end
@@ -3241,78 +3775,49 @@ local function SA_CreatePartyConfig()
         function(v) MimDiceDB.partyAlert.fontSize = v end,
         function() SA_PartyRefreshPreview() end)
 
-    -- ── 색상 그리드 ──
-    local colorLabel = win:CreateFontString(nil, "OVERLAY")
-    colorLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -268)
-    colorLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
-    colorLabel:SetText("문구 색상")
-    colorLabel:SetTextColor(0.9, 0.9, 0.9)
-    win.swatches = {}
-    local SWATCH, GAP = 24, 4
-    local startX, startY = 18, -288
-    for idx, rgb in ipairs(SA_COLOR_PRESETS) do
-        local colN = (idx - 1) % SA_PALETTE_COLS
-        local rowN = math.floor((idx - 1) / SA_PALETTE_COLS)
-        local sw = CreateFrame("Button", nil, win)
-        sw:SetSize(SWATCH, SWATCH)
-        sw:SetPoint("TOPLEFT", win, "TOPLEFT", startX + colN*(SWATCH+GAP), startY - rowN*(SWATCH+GAP))
-        local sel = sw:CreateTexture(nil, "BACKGROUND")
-        sel:SetPoint("TOPLEFT", -2, 2); sel:SetPoint("BOTTOMRIGHT", 2, -2)
-        sel:SetColorTexture(1, 1, 1, 1); sel:Hide(); sw.sel = sel
-        local tex = sw:CreateTexture(nil, "ARTWORK")
-        tex:SetAllPoints(); tex:SetColorTexture(rgb[1], rgb[2], rgb[3], 1)
-        sw:SetScript("OnClick", function()
-            MimDiceDB.partyAlert.color = { r = rgb[1], g = rgb[2], b = rgb[3] }
-            for _, o in ipairs(win.swatches) do o.sel:Hide() end
-            sw.sel:Show()
-            SA_PartyRefreshPreview()
-        end)
-        win.swatches[idx] = sw
-    end
+    -- ── 문구 색상 (색상환 풀 팔레트 + 코드 입력 + 기본색) ──
+    win.colorRefresh = SA_MakeColorRow(win, -268, "문구 색상",
+        function() return MimDiceDB.partyAlert.color end,
+        function(r, g, b) MimDiceDB.partyAlert.color = { r = r, g = g, b = b } end,
+        { 0.3, 1, 0.3 },
+        function() SA_PartyRefreshPreview() end)
 
-    -- ── 배경 투명도 (실제 알림 배경 검정 반투명도, 0=배경없음) ──
-    local bgLabel = win:CreateFontString(nil, "OVERLAY")
-    bgLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -406)
-    bgLabel:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
-    bgLabel:SetText("배경 투명도"); bgLabel:SetTextColor(0.9, 0.9, 0.9)
-    local bgBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
-    bgBox:SetSize(38, 20)
-    bgBox:SetPoint("LEFT", bgLabel, "RIGHT", 12, 0)
-    bgBox:SetAutoFocus(false); bgBox:SetFont("Fonts\\2002.ttf", 11, "")
-    bgBox:SetNumeric(true); bgBox:SetMaxLetters(3); bgBox:SetJustifyH("CENTER")
-    local bgSuffix = win:CreateFontString(nil, "OVERLAY")
-    bgSuffix:SetPoint("LEFT", bgBox, "RIGHT", 6, 0)
-    bgSuffix:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
-    bgSuffix:SetText("% (0=배경없음, 실제 알림에 적용)"); bgSuffix:SetTextColor(0.7, 0.7, 0.7)
-    bgBox:SetScript("OnTextChanged", function(self, userInput)
-        if not userInput then return end
-        local v = tonumber(self:GetText())
-        if v then
-            v = math.max(0, math.min(100, v))
-            MimDiceDB.partyAlert.bgAlpha = v / 100
-            SA_PartyRefreshPreview()
-        end
-    end)
-    bgBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-    win.bgBox = bgBox
+    -- ── 템렙/쐐기 글자색 ──
+    win.statColorRefresh = SA_MakeColorRow(win, -294, "템렙/쐐기 색상",
+        function() return MimDiceDB.partyAlert.statColor end,
+        function(r, g, b) MimDiceDB.partyAlert.statColor = { r = r, g = g, b = b } end,
+        { 1, 1, 1 },
+        function() SA_PartyRefreshPreview() end)
+
+    -- ── 배경 색상 (색상환의 투명도 슬라이더 = 배경 투명도와 연동) ──
+    win.bgColorRefresh = SA_MakeColorRow(win, -320, "배경 색상",
+        function() return MimDiceDB.partyAlert.bgColor end,
+        function(r, g, b) MimDiceDB.partyAlert.bgColor = { r = r, g = g, b = b } end,
+        { 0, 0, 0 },
+        function() SA_PartyRefreshPreview() end,
+        {
+            get = function() return MimDiceDB.partyAlert.bgAlpha or 0.5 end,
+            set = function(a) MimDiceDB.partyAlert.bgAlpha = a end,
+        })
+
 
     -- ── 알림 방식: 반복 알림 / 표시 지속 ──
     -- 반복 알림(놓침 방지): 켜면 대기 신청자가 있는 동안 N초마다 재알림, 끄면 신청 올 때 1회만
     local repeatCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
     repeatCb:SetSize(22, 22)
-    repeatCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -438)
+    repeatCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -352)
     local repeatLb = win:CreateFontString(nil, "OVERLAY")
     repeatLb:SetPoint("LEFT", repeatCb, "RIGHT", 0, 0)
-    repeatLb:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+    repeatLb:SetFont(MimDiceFontPath(), 10, "OUTLINE")
     repeatLb:SetText("반복 알림"); repeatLb:SetTextColor(0.9, 0.9, 0.9)
     local repeatBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
     repeatBox:SetSize(38, 20)
     repeatBox:SetPoint("LEFT", repeatCb, "RIGHT", 58, 0)
-    repeatBox:SetAutoFocus(false); repeatBox:SetFont("Fonts\\2002.ttf", 11, "")
+    repeatBox:SetAutoFocus(false); repeatBox:SetFont(MimDiceFontPath(), 11, "")
     repeatBox:SetNumeric(true); repeatBox:SetMaxLetters(3); repeatBox:SetJustifyH("CENTER")
     local repeatSuffix = win:CreateFontString(nil, "OVERLAY")
     repeatSuffix:SetPoint("LEFT", repeatBox, "RIGHT", 6, 0)
-    repeatSuffix:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+    repeatSuffix:SetFont(MimDiceFontPath(), 10, "OUTLINE")
     repeatSuffix:SetText("초마다 (끄면 1회만)"); repeatSuffix:SetTextColor(0.7, 0.7, 0.7)
     repeatCb:SetScript("OnClick", function(self)
         MimDiceDB.partyAlert.repeatMode = self:GetChecked() and "repeat" or "once"
@@ -3332,19 +3837,19 @@ local function SA_CreatePartyConfig()
     -- 표시 지속: 켜면 N초 뒤 페이드아웃, 끄면 대기 신청자 없어질 때까지 계속 표시
     local displayCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
     displayCb:SetSize(22, 22)
-    displayCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -466)
+    displayCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -380)
     local displayLb = win:CreateFontString(nil, "OVERLAY")
     displayLb:SetPoint("LEFT", displayCb, "RIGHT", 0, 0)
-    displayLb:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+    displayLb:SetFont(MimDiceFontPath(), 10, "OUTLINE")
     displayLb:SetText("자동 숨김"); displayLb:SetTextColor(0.9, 0.9, 0.9)
     local durationBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
     durationBox:SetSize(38, 20)
     durationBox:SetPoint("LEFT", displayCb, "RIGHT", 58, 0)
-    durationBox:SetAutoFocus(false); durationBox:SetFont("Fonts\\2002.ttf", 11, "")
+    durationBox:SetAutoFocus(false); durationBox:SetFont(MimDiceFontPath(), 11, "")
     durationBox:SetNumeric(true); durationBox:SetMaxLetters(3); durationBox:SetJustifyH("CENTER")
     local durationSuffix = win:CreateFontString(nil, "OVERLAY")
     durationSuffix:SetPoint("LEFT", durationBox, "RIGHT", 6, 0)
-    durationSuffix:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+    durationSuffix:SetFont(MimDiceFontPath(), 10, "OUTLINE")
     durationSuffix:SetText("초 뒤 (끄면 계속표시)"); durationSuffix:SetTextColor(0.7, 0.7, 0.7)
     displayCb:SetScript("OnClick", function(self)
         MimDiceDB.partyAlert.displayMode = self:GetChecked() and "fade" or "stay"
@@ -3360,10 +3865,10 @@ local function SA_CreatePartyConfig()
     -- ── 파티장이 아니어도 알림 받기 ──
     local anyRoleCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
     anyRoleCb:SetSize(22, 22)
-    anyRoleCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -494)
+    anyRoleCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -408)
     local anyRoleLb = win:CreateFontString(nil, "OVERLAY")
     anyRoleLb:SetPoint("LEFT", anyRoleCb, "RIGHT", 0, 0)
-    anyRoleLb:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+    anyRoleLb:SetFont(MimDiceFontPath(), 10, "OUTLINE")
     anyRoleLb:SetText("파티장/공대장/부공대장이 아닐 때도 알림 받기")
     anyRoleLb:SetTextColor(0.9, 0.9, 0.9)
     anyRoleCb:SetScript("OnClick", function(self)
@@ -3374,10 +3879,10 @@ local function SA_CreatePartyConfig()
     -- ── 5인 풀파티 알림 (소리 + 와우 작업표시줄 아이콘 반짝임) ──
     local fpCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
     fpCb:SetSize(22, 22)
-    fpCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -522)
+    fpCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -436)
     local fpLb = win:CreateFontString(nil, "OVERLAY")
     fpLb:SetPoint("LEFT", fpCb, "RIGHT", 0, 0)
-    fpLb:SetFont("Fonts\\2002.ttf", 10, "OUTLINE")
+    fpLb:SetFont(MimDiceFontPath(), 10, "OUTLINE")
     fpLb:SetText("5인 풀파티 완성 알림 (소리 + 와우 아이콘 반짝임)")
     fpLb:SetTextColor(0.9, 0.9, 0.9)
     fpCb:SetScript("OnClick", function(self)
@@ -3386,23 +3891,23 @@ local function SA_CreatePartyConfig()
     win.fpCb = fpCb
 
     -- 풀파티 사운드 선택 (내장/커스텀/ID)
-    win.fpTypeRefresh = SA_MakeTypeSelector(win, 15, -550,
+    win.fpTypeRefresh = SA_MakeTypeSelector(win, 15, -464,
         function() return MimDiceDB.partyAlert.fullParty.soundType end,
         function(t) MimDiceDB.partyAlert.fullParty.soundType = t; win.RefreshFpSoundRow() end)
 
     local fpSoundBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
     fpSoundBox:SetSize(135, 22)
-    fpSoundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -550)
-    fpSoundBox:SetAutoFocus(false); fpSoundBox:SetFont("Fonts\\2002.ttf", 11, "")
+    fpSoundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -464)
+    fpSoundBox:SetAutoFocus(false); fpSoundBox:SetFont(MimDiceFontPath(), 11, "")
     win.fpSoundBox = fpSoundBox
     SA_WirePlaceholder(fpSoundBox)
 
     local fpSelectBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     fpSelectBtn:SetSize(135, 22)
-    fpSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -550)
+    fpSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -464)
     do
         local fs = fpSelectBtn:GetFontString()
-        fs:SetFont("Fonts\\2002.ttf", 10, ""); fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
+        fs:SetFont(MimDiceFontPath(), 10, ""); fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
         fs:ClearAllPoints(); fs:SetPoint("LEFT", 6, 0); fs:SetPoint("RIGHT", -6, 0)
     end
     win.fpSelectBtn = fpSelectBtn
@@ -3420,7 +3925,7 @@ local function SA_CreatePartyConfig()
 
     local fpTestBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     fpTestBtn:SetSize(24, 22)
-    fpTestBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -550)
+    fpTestBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -464)
     fpTestBtn:SetText("▶")
     fpTestBtn:SetScript("OnClick", function()
         local fp = MimDiceDB.partyAlert.fullParty
@@ -3458,13 +3963,13 @@ local function SA_CreatePartyConfig()
         function(v) MimDiceDB.partyAlert.y = v end,
         function() SA_PartyRefreshPreview() end)
     win.posRefresh = posRefresh
-    SA_ChainTabEnter({ win.sizeSlider.edit, posX, posY, bgBox, repeatBox, durationBox })
+    SA_ChainTabEnter({ win.sizeSlider.edit, posX, posY, repeatBox, durationBox })
 
     -- ── 위치 잠금 / 기본값 / 미리보기 ──
     local lockBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     lockBtn:SetSize(110, 24)
     lockBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 14)
-    lockBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+    lockBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
     lockBtn:SetScript("OnClick", function()
         local pa = MimDiceDB.partyAlert
         pa.locked = not pa.locked
@@ -3480,7 +3985,7 @@ local function SA_CreatePartyConfig()
     resetBtn:SetSize(70, 24)
     resetBtn:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 155, 14)   -- 340폭 기준 3버튼(110/70/70) 균등 간격 30px
     resetBtn:SetText("기본값")
-    resetBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    resetBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     resetBtn:SetScript("OnClick", function()
         local pa = MimDiceDB.partyAlert
         pa.fontSize, pa.x, pa.y = 30, 0, 400
@@ -3488,6 +3993,8 @@ local function SA_CreatePartyConfig()
         pa.prefix = "새 파티 신청!"
         pa.showName, pa.showSpec, pa.showItemLevel, pa.showScore = true, true, true, true
         pa.bgAlpha = 0.5
+        pa.bgColor = { r = 0, g = 0, b = 0 }
+        pa.statColor = { r = 1, g = 1, b = 1 }
         pa.repeatMode, pa.repeatInterval = "once", 5
         pa.displayMode, pa.duration = "fade", 4
         pa.alertAnyRole = false
@@ -3504,10 +4011,11 @@ local function SA_CreatePartyConfig()
     testBtn:SetSize(70, 24)
     testBtn:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 14)
     testBtn:SetText("테스트")
-    testBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    testBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     testBtn:SetScript("OnClick", function() SA_ShowPartyAlert(true) end)
 
     win:Hide()
+    SA_SkinRegisterWindow(win)   -- 스킨 대상 등록
     SA_PartyConfig = win
     return win
 end
@@ -3523,7 +4031,6 @@ function SA_RefreshPartyConfig()
     win.specCb:SetChecked(pa.showSpec)
     win.ilvlCb:SetChecked(pa.showItemLevel)
     win.scoreCb:SetChecked(pa.showScore)
-    win.bgBox:SetText(tostring(math.floor((pa.bgAlpha or 0.5) * 100 + 0.5)))
     win.repeatCb:SetChecked(pa.repeatMode == "repeat")
     win.repeatBox:SetText(tostring(pa.repeatInterval or 5))
     win.displayCb:SetChecked(pa.displayMode ~= "stay")   -- 자동숨김(fade)=체크, 계속표시(stay)=해제
@@ -3534,13 +4041,9 @@ function SA_RefreshPartyConfig()
     win.sizeSlider.SyncValue()
     win.posRefresh()
     win.RefreshLockBtn()
-    local cc = pa.color or { r = 0.3, g = 1, b = 0.3 }
-    for idx, rgb in ipairs(SA_COLOR_PRESETS) do
-        local match = math.abs(rgb[1]-(cc.r or 0))<0.02 and math.abs(rgb[2]-(cc.g or 0))<0.02 and math.abs(rgb[3]-(cc.b or 0))<0.02
-        if win.swatches[idx] then
-            if match then win.swatches[idx].sel:Show() else win.swatches[idx].sel:Hide() end
-        end
-    end
+    win.colorRefresh()       -- 색상 스와치/코드칸 갱신
+    win.statColorRefresh()
+    win.bgColorRefresh()
 end
 
 function SA_TogglePartyConfig()
@@ -3964,9 +4467,22 @@ end)
 -- UI 기능 구현
 -- =====================================================================
 
--- 탭 켜짐/꺼짐 색상 (사운드/귓말차단 공용)
+-- 탭 켜짐/꺼짐 색상 (사운드/귓말차단/스킨 공용. 스킨 켜짐이면 팔레트 색 사용)
 local function SA_SetTabActive(tab, on)
     if not tab then return end
+    if SA_SkinOn() then
+        local pal = SA_SkinPal()
+        if on then
+            tab:SetBackdropColor(pal.hover[1], pal.hover[2], pal.hover[3], 0.90)
+            tab:SetBackdropBorderColor(pal.border[1], pal.border[2], pal.border[3], 1)
+            tab.text:SetTextColor(pal.accent[1], pal.accent[2], pal.accent[3], pal.accent[4] or 1)
+        else
+            tab:SetBackdropColor(pal.tab[1], pal.tab[2], pal.tab[3], 0.95)
+            tab:SetBackdropBorderColor(pal.border[1], pal.border[2], pal.border[3], 1)
+            tab.text:SetTextColor(0.62, 0.62, 0.62)
+        end
+        return
+    end
     if on then
         tab:SetBackdropColor(0.5, 0.1, 0.1, 0.9)
         tab:SetBackdropBorderColor(1, 0.82, 0, 1)
@@ -3978,15 +4494,78 @@ local function SA_SetTabActive(tab, on)
     end
 end
 
+-- 탭 3개의 모양(각진/원래 테두리)·색·호버를 현재 스킨 상태에 맞춰 일괄 갱신
+-- (전역: SA_SkinRefresh에서 호출)
+function SA_SkinRefreshTabs()
+    -- 0) 가로 배치: 스킨(각진)일 땐 탭을 살짝 띄우고(+2), 기본 모습일 땐 원래처럼 살짝 겹침(-4).
+    --    우측 창들도 탭 위치에 맞춰 함께 움직여서 탭-창 간격이 항상 8px로 일정하게.
+    if SA_TabOption and _G.MainWindow then
+        -- 스킨 켬: 플랫 1px 테두리라 탭을 메인창에 딱 붙임(0) / 끔: 원래 그림 테두리에 살짝 겹침(-4)
+        local tx = SA_SkinOn() and 0 or -4
+        SA_TabOption:ClearAllPoints()
+        SA_TabOption:SetPoint("TOPLEFT", _G.MainWindow, "TOPRIGHT", tx, -30)
+        local wx = tx + 34 + (SA_SkinOn() and 14 or 8)   -- 탭 폭 34 + 우측 창까지 간격 (스킨 켬 14 / 끔 8)
+        for _, w in ipairs({ SA_OptionWindow, SA_WhisperWindow, SA_SkinWindow }) do
+            if w then
+                w:ClearAllPoints()
+                w:SetPoint("TOPLEFT", _G.MainWindow, "TOPRIGHT", wx, 0)
+                w:SetPoint("BOTTOMLEFT", _G.MainWindow, "BOTTOMRIGHT", wx, 0)
+            end
+        end
+    end
+    -- 1) 테두리 모양 전환 (스킨 켬 = 각진 1px / 끔 = 원래 테두리)
+    for _, t in ipairs({ SA_TabOption, SA_TabWhisper, SA_TabSkin }) do
+        if t and t.SetBackdrop then
+            if SA_SkinOn() and not t.MimDiceSkinFlat then
+                if not t.MimDiceSkinOrig then
+                    t.MimDiceSkinOrig = { backdrop = t.GetBackdrop and t:GetBackdrop() or nil }
+                end
+                t:SetBackdrop(SA_SKIN_FLAT_BACKDROP)
+                t.MimDiceSkinFlat = true
+            elseif not SA_SkinOn() and t.MimDiceSkinFlat then
+                if t.MimDiceSkinOrig and t.MimDiceSkinOrig.backdrop then
+                    t:SetBackdrop(t.MimDiceSkinOrig.backdrop)
+                end
+                t.MimDiceSkinFlat = false
+            end
+        end
+    end
+    -- 2) 색 칠하기 (SetBackdrop이 색을 초기화하므로 반드시 그 뒤에)
+    SA_SetTabActive(SA_TabOption, SA_OptionWindow and SA_OptionWindow:IsShown())
+    SA_SetTabActive(SA_TabWhisper, SA_WhisperWindow and SA_WhisperWindow:IsShown())
+    SA_SetTabActive(SA_TabSkin, SA_SkinWindow and SA_SkinWindow:IsShown())
+    -- 3) 호버색
+    for _, t in ipairs({ SA_TabOption, SA_TabWhisper, SA_TabSkin }) do
+        if t then
+            if SA_SkinOn() then
+                if not t.MimHover then
+                    t.MimHover = t:CreateTexture(nil, "HIGHLIGHT")   -- 마우스오버 시 자동 표시
+                    t.MimHover:SetPoint("TOPLEFT", 2, -2)
+                    t.MimHover:SetPoint("BOTTOMRIGHT", -2, 2)
+                end
+                local pal = SA_SkinPal()
+                t.MimHover:SetColorTexture(pal.hover[1], pal.hover[2], pal.hover[3], (pal.hover[4] or 0.30) * 0.85)
+                t.MimHover:Show()
+            elseif t.MimHover then
+                t.MimHover:Hide()
+            end
+        end
+    end
+end
+
 local function SA_ToggleWindow()
     if SA_OptionWindow:IsShown() then
         SA_OptionWindow:Hide()
         SA_SetTabActive(SA_TabOption, false)
     else
-        -- 두 옵션창은 같은 자리를 쓰므로 하나만 표시
+        -- 옵션창들은 같은 자리를 쓰므로 하나만 표시
         if SA_WhisperWindow and SA_WhisperWindow:IsShown() then
             SA_WhisperWindow:Hide()
             SA_SetTabActive(SA_TabWhisper, false)
+        end
+        if SA_SkinWindow and SA_SkinWindow:IsShown() then
+            SA_SkinWindow:Hide()
+            SA_SetTabActive(SA_TabSkin, false)
         end
         SA_OptionWindow:Show()
         SA_RefreshList()
@@ -4004,9 +4583,33 @@ local function SA_ToggleWhisperWindow()
             SA_OptionWindow:Hide()
             SA_SetTabActive(SA_TabOption, false)
         end
+        if SA_SkinWindow and SA_SkinWindow:IsShown() then
+            SA_SkinWindow:Hide()
+            SA_SetTabActive(SA_TabSkin, false)
+        end
         SA_WhisperWindow:Show()
         if SA_RefreshWhisperLog then SA_RefreshWhisperLog() end
         SA_SetTabActive(SA_TabWhisper, true)
+    end
+end
+
+local function SA_ToggleSkinWindow()
+    if not SA_SkinWindow then return end
+    if SA_SkinWindow:IsShown() then
+        SA_SkinWindow:Hide()
+        SA_SetTabActive(SA_TabSkin, false)
+    else
+        if SA_OptionWindow and SA_OptionWindow:IsShown() then
+            SA_OptionWindow:Hide()
+            SA_SetTabActive(SA_TabOption, false)
+        end
+        if SA_WhisperWindow and SA_WhisperWindow:IsShown() then
+            SA_WhisperWindow:Hide()
+            SA_SetTabActive(SA_TabWhisper, false)
+        end
+        SA_SkinWindow:Show()
+        if SA_RefreshSkinWindow then SA_RefreshSkinWindow() end
+        SA_SetTabActive(SA_TabSkin, true)
     end
 end
 
@@ -4031,7 +4634,7 @@ local function SA_CreateTab()
 
     local optText = SA_TabOption:CreateFontString(nil, "OVERLAY")
     optText:SetPoint("CENTER")
-    optText:SetFont("Fonts\\2002.ttf", 12, "OUTLINE")
+    optText:SetFont(MimDiceFontPath(), 12, "OUTLINE")
     optText:SetText("사\n운\n드")
     optText:SetTextColor(0.6, 0.6, 0.6)
     SA_TabOption.text = optText
@@ -4048,12 +4651,32 @@ local function SA_CreateTab()
 
     local wbText = SA_TabWhisper:CreateFontString(nil, "OVERLAY")
     wbText:SetPoint("CENTER")
-    wbText:SetFont("Fonts\\2002.ttf", 12, "OUTLINE")
+    wbText:SetFont(MimDiceFontPath(), 12, "OUTLINE")
     wbText:SetText("귓\n말\n차\n단")
     wbText:SetTextColor(0.6, 0.6, 0.6)
     SA_TabWhisper.text = wbText
 
     SA_TabWhisper:SetScript("OnClick", SA_ToggleWhisperWindow)
+
+    -- 스킨 탭 (플랫 다크 테마 프리셋 + 색 커스텀)
+    SA_TabSkin = CreateFrame("Button", "SA_TabSkin", mainWin, "BackdropTemplate")
+    SA_TabSkin:SetSize(34, 60)
+    SA_TabSkin:SetPoint("TOPLEFT", SA_TabWhisper, "BOTTOMLEFT", 0, -6)
+    SA_TabSkin:SetBackdrop(tabBackdrop)
+    SA_TabSkin:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
+    SA_TabSkin:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
+
+    local skText = SA_TabSkin:CreateFontString(nil, "OVERLAY")
+    skText:SetPoint("CENTER")
+    skText:SetFont(MimDiceFontPath(), 12, "OUTLINE")
+    skText:SetText("스\n킨")
+    skText:SetTextColor(0.6, 0.6, 0.6)
+    SA_TabSkin.text = skText
+
+    SA_TabSkin:SetScript("OnClick", SA_ToggleSkinWindow)
+
+    -- 스킨이 켜져 있으면 탭 색을 팔레트로 정리
+    SA_SkinRefreshTabs()
 end
 
 local function SA_CreateWindow()
@@ -4075,19 +4698,9 @@ local function SA_CreateWindow()
     SA_OptionWindow:SetFrameStrata("HIGH")   -- 메인창과 동일 레이어 → 자원/재사용바에 안 가리게
 
     -- 옵션창 드래그하면 메인창도 이동
-    SA_OptionWindow:RegisterForDrag("LeftButton")
-    SA_OptionWindow:SetScript("OnDragStart", function()
-        if mainWin:IsMovable() then
-            mainWin:StartMoving()
-        end
-    end)
-    SA_OptionWindow:SetScript("OnDragStop", function()
-        mainWin:StopMovingOrSizing()
-        -- MimDice 메인 애드온에 위치 저장 기능이 있다면 호출하여 위치 고정
-        if MimDice_SaveAnchors then MimDice_SaveAnchors() end
-    end)
+    SA_WireBundleDrag(SA_OptionWindow)   -- 점프 없는 번들 드래그
     
-    -- ★ 메인 창이 닫힐 때 옵션 창(사운드/귓말차단)도 함께 닫히도록 연동 ★
+    -- ★ 메인 창이 닫힐 때 옵션 창(사운드/귓말차단/스킨)도 함께 닫히도록 연동 ★
     mainWin:HookScript("OnHide", function()
         if SA_OptionWindow and SA_OptionWindow:IsShown() then
             SA_OptionWindow:Hide()
@@ -4096,6 +4709,10 @@ local function SA_CreateWindow()
         if SA_WhisperWindow and SA_WhisperWindow:IsShown() then
             SA_WhisperWindow:Hide()
             SA_SetTabActive(SA_TabWhisper, false)
+        end
+        if SA_SkinWindow and SA_SkinWindow:IsShown() then
+            SA_SkinWindow:Hide()
+            SA_SetTabActive(SA_TabSkin, false)
         end
     end)
     
@@ -4127,7 +4744,7 @@ local function SA_CreateWindow()
 
     -- ── 밈줌 카페 링크 ──────────────────────────
     local cafeLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    cafeLabel:SetFont("Fonts\\2002.ttf", 11)
+    cafeLabel:SetFont(MimDiceFontPath(), 11)
     cafeLabel:SetTextColor(0.6, 0.8, 1)
     cafeLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 6, -8)
     cafeLabel:SetText("네이버 밈줌 카페  |cff4488ffhttps://cafe.naver.com/mimzoom|r")
@@ -4147,7 +4764,7 @@ local function SA_CreateWindow()
     urlPopup:Hide()
 
     local urlHint = urlPopup:CreateFontString(nil, "OVERLAY")
-    urlHint:SetFont("Fonts\\2002.ttf", 9)
+    urlHint:SetFont(MimDiceFontPath(), 9)
     urlHint:SetTextColor(0.6, 0.6, 0.6)
     urlHint:SetPoint("TOPLEFT", urlPopup, "TOPLEFT", 6, -2)
     urlHint:SetText("Ctrl+C 로 복사, 한번 더 누르면 복사창이 닫힙니다.")
@@ -4155,7 +4772,7 @@ local function SA_CreateWindow()
     local urlBox = CreateFrame("EditBox", nil, urlPopup)
     urlBox:SetSize(298, 18)
     urlBox:SetPoint("BOTTOMLEFT", urlPopup, "BOTTOMLEFT", 6, 4)
-    urlBox:SetFont("Fonts\\2002.ttf", 11, "")
+    urlBox:SetFont(MimDiceFontPath(), 11, "")
     urlBox:SetAutoFocus(false)
     urlBox:SetText("https://cafe.naver.com/mimzoom")
     urlBox:SetScript("OnTextChanged", function(self)
@@ -4189,7 +4806,7 @@ local function SA_CreateWindow()
     -- ── 옵션 섹션 ──────────────────────────
     local optionSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     optionSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -32)
-    optionSectionLabel:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
+    optionSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     optionSectionLabel:SetText("옵 션")
     optionSectionLabel:SetTextColor(1, 0.82, 0)
 
@@ -4211,7 +4828,7 @@ local function SA_CreateWindow()
     end)
     local autoPopupLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     autoPopupLabel:SetPoint("LEFT", autoPopupCb, "RIGHT", 2, 0)
-    autoPopupLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    autoPopupLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     autoPopupLabel:SetText("주사위 굴리면 자동으로 창 열기")
     autoPopupLabel:SetTextColor(0.9, 0.9, 0.9)
 
@@ -4225,7 +4842,7 @@ local function SA_CreateWindow()
     autoResetMinBox:SetSize(30, 20)
     autoResetMinBox:SetPoint("LEFT", autoResetCb, "RIGHT", 4, 0)
     autoResetMinBox:SetAutoFocus(false)
-    autoResetMinBox:SetFont("Fonts\\2002.ttf", 11, "")
+    autoResetMinBox:SetFont(MimDiceFontPath(), 11, "")
     autoResetMinBox:SetNumeric(true)
     autoResetMinBox:SetMaxLetters(3)
     autoResetMinBox:SetText(tostring((MimDiceDB and MimDiceDB.autoResetMinutes) or 5))
@@ -4241,7 +4858,7 @@ local function SA_CreateWindow()
 
     local autoResetSuffix = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     autoResetSuffix:SetPoint("LEFT", autoResetMinBox, "RIGHT", 4, 0)
-    autoResetSuffix:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    autoResetSuffix:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     autoResetSuffix:SetText("분동안 주사위 굴림 없을 시 초기화")
     autoResetSuffix:SetTextColor(0.9, 0.9, 0.9)
 
@@ -4278,7 +4895,7 @@ local function SA_CreateWindow()
     -- ── << 죽음 알림 >> 섹션 (모든 직업 공용) ──────────────
     local deathSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     deathSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -98)
-    deathSectionLabel:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
+    deathSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     deathSectionLabel:SetText("죽음 알림")
     deathSectionLabel:SetTextColor(1, 0.82, 0)
 
@@ -4295,7 +4912,7 @@ local function SA_CreateWindow()
     end)
     local deathLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     deathLabel:SetPoint("LEFT", deathCb, "RIGHT", 2, 0)
-    deathLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    deathLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     deathLabel:SetText("파티/공대원 사망 시 사운드+메시지")
     deathLabel:SetTextColor(0.9, 0.9, 0.9)
 
@@ -4303,13 +4920,13 @@ local function SA_CreateWindow()
     deathCfgBtn:SetSize(50, 22)
     deathCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -116)
     deathCfgBtn:SetText("설정")
-    deathCfgBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    deathCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     deathCfgBtn:SetScript("OnClick", function() SA_ToggleDeathConfig() end)
 
     -- ── << 블러드 >> 섹션 (모든 직업 공용, 지속시간 바) ──────────────
     local buffSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     buffSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -142)
-    buffSectionLabel:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
+    buffSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     buffSectionLabel:SetText("블러드 / 전투부활")
     buffSectionLabel:SetTextColor(1, 0.82, 0)
 
@@ -4324,7 +4941,7 @@ local function SA_CreateWindow()
     end)
     local bloodLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     bloodLabel:SetPoint("LEFT", bloodCb, "RIGHT", 2, 0)
-    bloodLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    bloodLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     bloodLabel:SetText("블러드 (사운드 + 지속시간 바)")
     bloodLabel:SetTextColor(0.9, 0.9, 0.9)
 
@@ -4332,7 +4949,7 @@ local function SA_CreateWindow()
     bloodCfgBtn:SetSize(50, 22)
     bloodCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -160)
     bloodCfgBtn:SetText("설정")
-    bloodCfgBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    bloodCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     bloodCfgBtn:SetScript("OnClick", function() SA_ToggleBuffConfig("BLOODLUST") end)
 
     -- 전투부활 줄: [✓] 전투부활 ............ [설정]  (사운드/아이콘 세부는 전부 "설정" 안으로 이동)
@@ -4348,7 +4965,7 @@ local function SA_CreateWindow()
     end)
     local brLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     brLabel:SetPoint("LEFT", brCb, "RIGHT", 2, 0)
-    brLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    brLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     brLabel:SetText("전투부활 (사운드 + 아이콘)")
     brLabel:SetTextColor(0.9, 0.9, 0.9)
 
@@ -4356,7 +4973,7 @@ local function SA_CreateWindow()
     brCfgBtn:SetSize(50, 22)
     brCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -182)
     brCfgBtn:SetText("설정")
-    brCfgBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    brCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     brCfgBtn:SetScript("OnClick", function() SA_ToggleBattleResIconConfig() end)
 
     -- 파티 신청 줄: [✓] 파티 신청 (사운드+메시지) ..... [설정]
@@ -4376,7 +4993,7 @@ local function SA_CreateWindow()
     end)
     local paLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     paLabel:SetPoint("LEFT", paCb, "RIGHT", 2, 0)
-    paLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    paLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     paLabel:SetText("파티 신청 (사운드 + 메시지)")
     paLabel:SetTextColor(0.9, 0.9, 0.9)
 
@@ -4384,7 +5001,7 @@ local function SA_CreateWindow()
     paCfgBtn:SetSize(50, 22)
     paCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -206)
     paCfgBtn:SetText("설정")
-    paCfgBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    paCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     paCfgBtn:SetScript("OnClick", function() SA_TogglePartyConfig() end)
 
     -- 구분선
@@ -4396,13 +5013,13 @@ local function SA_CreateWindow()
     -- ── << 스킬 사운드 알림 >> 섹션 ─────────────────
     local skillSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     skillSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -250)
-    skillSectionLabel:SetFont("Fonts\\2002.ttf", 13, "OUTLINE")
+    skillSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     skillSectionLabel:SetText("스킬 사운드 알림 (직업별 저장)")
     skillSectionLabel:SetTextColor(1, 0.82, 0)
 
     local inputLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     inputLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -276)
-    inputLabel:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    inputLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     inputLabel:SetText("1. 추가할 스킬의 이름 또는 ID 입력 (꼭 띄어쓰기 지켜야 함)")
     inputLabel:SetTextColor(0.9, 0.9, 0.9)
 
@@ -4410,13 +5027,13 @@ local function SA_CreateWindow()
     inputBox:SetSize(200, 22)
     inputBox:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 20, -296)
     inputBox:SetAutoFocus(false)
-    inputBox:SetFont("Fonts\\2002.ttf", 12, "")
+    inputBox:SetFont(MimDiceFontPath(), 12, "")
 
     local addBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
     addBtn:SetSize(80, 24)
     addBtn:SetPoint("LEFT", inputBox, "RIGHT", 10, 0)
     addBtn:SetText("스킬 추가")
-    addBtn:GetFontString():SetFont("Fonts\\2002.ttf", 11, "")
+    addBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
 
     local function ExecuteAddSkill()
         local text = inputBox:GetText()
@@ -4473,7 +5090,7 @@ local function SA_CreateWindow()
     -- ── 2. 목록 스크롤 프레임 ──────────────────────────────────────────
     local listTitle = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     listTitle:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -336)
-    listTitle:SetFont("Fonts\\2002.ttf", 11, "OUTLINE")
+    listTitle:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     listTitle:SetText("2. 사운드 개별 설정")
     listTitle:SetTextColor(0.8, 0.8, 0.8)
 
@@ -4518,14 +5135,14 @@ function SA_RefreshList()
             local spellText = row:CreateFontString(nil, "OVERLAY")
             spellText:SetPoint("LEFT", cb, "RIGHT", 2, 0)
             spellText:SetSize(85, 14) 
-            spellText:SetFont("Fonts\\2002.ttf", 11)
+            spellText:SetFont(MimDiceFontPath(), 11)
             spellText:SetJustifyH("LEFT")
             row.spellText = spellText
 
             local typeBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
             typeBtn:SetSize(42, 22)
             typeBtn:SetPoint("LEFT", spellText, "RIGHT", 5, 0)
-            typeBtn:GetFontString():SetFont("Fonts\\2002.ttf", 10, "")
+            typeBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
             row.typeBtn = typeBtn
             -- 클릭으로 타입 순환한다는 걸 알리는 툴팁 (좁은 행이라 세그먼트 버튼 대신 안내)
             typeBtn:SetScript("OnEnter", function(self)
@@ -4543,7 +5160,7 @@ function SA_RefreshList()
             soundSelectBtn:SetPoint("LEFT", typeBtn, "RIGHT", 5, 0)
             do
                 local fs = soundSelectBtn:GetFontString()
-                fs:SetFont("Fonts\\2002.ttf", 9, "")
+                fs:SetFont(MimDiceFontPath(), 9, "")
                 fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
                 fs:ClearAllPoints(); fs:SetPoint("LEFT", 5, 0); fs:SetPoint("RIGHT", -5, 0)
             end
@@ -4553,7 +5170,7 @@ function SA_RefreshList()
             customEdit:SetSize(100, 20)
             customEdit:SetPoint("LEFT", typeBtn, "RIGHT", 15, 0)
             customEdit:SetAutoFocus(false)
-            customEdit:SetFont("Fonts\\2002.ttf", 10, "")
+            customEdit:SetFont(MimDiceFontPath(), 10, "")
             row.customEdit = customEdit
 
             local delBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
@@ -4582,11 +5199,11 @@ function SA_RefreshList()
         row.spellText:SetText(entry.spellName)
         if entry.isSystem then
             -- 시스템 엔트리: 연녹색 + 굵은 외곽선
-            row.spellText:SetFont("Fonts\\2002.ttf", 12, "OUTLINE")
+            row.spellText:SetFont(MimDiceFontPath(), 12, "OUTLINE")
             row.spellText:SetTextColor(0.5, 1, 0.5)
             row.delBtn:Hide()
         else
-            row.spellText:SetFont("Fonts\\2002.ttf", 11)
+            row.spellText:SetFont(MimDiceFontPath(), 11)
             row.spellText:SetTextColor(1, 0.82, 0)
             row.delBtn:Show()
             row.delBtn:SetScript("OnClick", function()
@@ -4724,14 +5341,7 @@ local function SA_CreateWhisperWindow()
     win:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
     win:EnableMouse(true)
     -- 드래그하면 메인창과 한 덩어리로 이동 (사운드 옵션창과 동일)
-    win:RegisterForDrag("LeftButton")
-    win:SetScript("OnDragStart", function()
-        if mainWin:IsMovable() then mainWin:StartMoving() end
-    end)
-    win:SetScript("OnDragStop", function()
-        mainWin:StopMovingOrSizing()
-        if MimDice_SaveAnchors then MimDice_SaveAnchors() end
-    end)
+    SA_WireBundleDrag(win)   -- 점프 없는 번들 드래그
     win:Hide()
 
     local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
@@ -4740,7 +5350,7 @@ local function SA_CreateWhisperWindow()
 
     local title = win:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOP", win, "TOP", 0, -12)
-    title:SetFont("Fonts\\2002.ttf", 14, "OUTLINE")
+    title:SetFont(MimDiceFontPath(), 14, "OUTLINE")
     title:SetText("저렙 귓속말 차단")
     title:SetTextColor(1, 0.82, 0)
 
@@ -4756,13 +5366,13 @@ local function SA_CreateWhisperWindow()
     win.enCb = enCb
     local enLabel = win:CreateFontString(nil, "OVERLAY")
     enLabel:SetPoint("LEFT", enCb, "RIGHT", 2, 0)
-    enLabel:SetFont("Fonts\\2002.ttf", 12, "OUTLINE")
+    enLabel:SetFont(MimDiceFontPath(), 12, "OUTLINE")
     enLabel:SetText("차단 켜기 : 레벨")
     enLabel:SetTextColor(0.9, 0.9, 0.9)
     local lvBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
     lvBox:SetSize(38, 20)
     lvBox:SetPoint("LEFT", enLabel, "RIGHT", 10, 0)
-    lvBox:SetAutoFocus(false); lvBox:SetFont("Fonts\\2002.ttf", 12, "")
+    lvBox:SetAutoFocus(false); lvBox:SetFont(MimDiceFontPath(), 12, "")
     lvBox:SetNumeric(true); lvBox:SetMaxLetters(3); lvBox:SetJustifyH("CENTER")
     lvBox:SetScript("OnTextChanged", function(self, userInput)
         if not userInput then return end
@@ -4773,14 +5383,14 @@ local function SA_CreateWhisperWindow()
     win.lvBox = lvBox
     local lvSuffix = win:CreateFontString(nil, "OVERLAY")
     lvSuffix:SetPoint("LEFT", lvBox, "RIGHT", 6, 0)
-    lvSuffix:SetFont("Fonts\\2002.ttf", 12, "OUTLINE")
+    lvSuffix:SetFont(MimDiceFontPath(), 12, "OUTLINE")
     lvSuffix:SetText("미만 귓속말 숨김")
     lvSuffix:SetTextColor(0.9, 0.9, 0.9)
 
     -- ── 쉬운 설명 ──
     local help = win:CreateFontString(nil, "OVERLAY")
     help:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -70)
-    help:SetFont("Fonts\\2002.ttf", 12, "")
+    help:SetFont(MimDiceFontPath(), 12, "")
     help:SetTextColor(0.8, 0.8, 0.8)
     help:SetWidth(350); help:SetJustifyH("LEFT"); help:SetWordWrap(true); help:SetSpacing(5)
     help:SetText(
@@ -4812,6 +5422,606 @@ function SA_RefreshWhisperLog()
 end
 
 -- =====================================================================
+-- 스킨 옵션창 (탭 3번: 프리셋 + 색 커스텀, 바꾸는 즉시 반영)
+-- =====================================================================
+-- 기준색(진한 배경)용 어두운 색 10종 - 기본 색상판은 밝은 색 위주라 진한 배경용을 한 줄 추가
+local SA_SKIN_DARKS = {
+    {0.04,0.04,0.04},{0.09,0.09,0.10},{0.11,0.11,0.12},{0.14,0.14,0.16},{0.09,0.11,0.17},
+    {0.07,0.10,0.10},{0.12,0.10,0.07},{0.10,0.07,0.10},{0.06,0.09,0.06},{0.13,0.08,0.08},
+}
+local SA_SkinColorPop = nil
+
+-- 색 선택 팝업 (기본 색상판 40색 + 진한 배경 10색)
+local function SA_OpenSkinColorPop(anchor, onPick)
+    if not SA_SkinColorPop then
+        local p = CreateFrame("Frame", "MimDice_SkinColorPop", UIParent, "BackdropTemplate")
+        p:SetFrameStrata("FULLSCREEN_DIALOG")
+        p:SetBackdrop({
+            bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true, tileSize = 16, edgeSize = 12,
+            insets = { left = 3, right = 3, top = 3, bottom = 3 }
+        })
+        p:SetBackdropColor(0.05, 0.05, 0.05, 0.97)
+        p:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
+        p:EnableMouse(true)
+        local SW, GAP = 22, 3
+        local all = {}
+        for _, rgb in ipairs(SA_COLOR_PRESETS) do all[#all + 1] = rgb end
+        for _, rgb in ipairs(SA_SKIN_DARKS) do all[#all + 1] = rgb end
+        local rows = math.ceil(#all / 10)
+        p:SetSize(10 * (SW + GAP) - GAP + 16, rows * (SW + GAP) - GAP + 16)
+        for idx, rgb in ipairs(all) do
+            local col = (idx - 1) % 10
+            local row = math.floor((idx - 1) / 10)
+            local b = CreateFrame("Button", nil, p)
+            b:SetSize(SW, SW)
+            b:SetPoint("TOPLEFT", 8 + col * (SW + GAP), -(8 + row * (SW + GAP)))
+            local t = b:CreateTexture(nil, "ARTWORK")
+            t:SetAllPoints(); t:SetColorTexture(rgb[1], rgb[2], rgb[3], 1)
+            local hl = b:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetPoint("TOPLEFT", -2, 2); hl:SetPoint("BOTTOMRIGHT", 2, -2)
+            hl:SetColorTexture(1, 1, 1, 0.35)
+            b.rgb = rgb
+            b:SetScript("OnClick", function(self)
+                if p.onPick then p.onPick(self.rgb) end
+                p:Hide()
+            end)
+        end
+        p:Hide()
+        SA_SkinColorPop = p
+    end
+    SA_SkinColorPop.onPick = onPick
+    SA_SkinColorPop:ClearAllPoints()
+    SA_SkinColorPop:SetPoint("TOPRIGHT", anchor, "BOTTOMRIGHT", 0, -4)
+    SA_SkinColorPop:Show()
+    SA_SkinColorPop:Raise()
+end
+
+-- =====================================================================
+-- 폰트 고르기 창 : 동봉 폰트 목록(그 폰트로 미리보기) + 내 폰트(파일명 등록)
+-- =====================================================================
+local SA_FontWindow
+local function SA_CreateFontWindow()
+    if SA_FontWindow then return SA_FontWindow end
+    local win = CreateFrame("Frame", "SA_FontWindow", UIParent, "BackdropTemplate")
+    win:SetSize(340, 540)
+    win:SetPoint("CENTER", UIParent, "CENTER", 140, 0)
+    win:SetFrameStrata("DIALOG")
+    win:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    win:SetBackdropColor(0, 0, 0, 0.85)
+    win:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+    win:EnableMouse(true)
+    win:SetMovable(true)
+    win:SetClampedToScreen(true)
+    win:RegisterForDrag("LeftButton")
+    win:SetScript("OnDragStart", function(self) self:StartMoving() end)
+    win:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
+    win:Hide()
+
+    local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
+    closeBtn:SetScript("OnClick", function() win:Hide() end)
+
+    local title = win:CreateFontString(nil, "OVERLAY")
+    title:SetPoint("TOP", win, "TOP", 0, -12)
+    title:SetFont(MimDiceFontPath(), 14, "OUTLINE")
+    title:SetText("폰트 고르기")
+    title:SetTextColor(1, 0.82, 0)
+
+    local hint = win:CreateFontString(nil, "OVERLAY")
+    hint:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -34)
+    hint:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    hint:SetText("누르면 선택되고, 리로드하면 전체에 적용돼요")
+    hint:SetTextColor(0.9, 0.9, 0.9)
+
+    -- 폰트 목록 (스크롤)
+    local scroll = CreateFrame("ScrollFrame", "SA_FontWindowScroll", win, "UIPanelScrollFrameTemplate")
+    scroll:SetPoint("TOPLEFT", win, "TOPLEFT", 12, -54)
+    scroll:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -32, 148)
+    local content = CreateFrame("Frame", nil, scroll)
+    content:SetSize(280, 10)
+    scroll:SetScrollChild(content)
+    win.content = content
+    win.rows = {}
+
+    -- 내 폰트 등록칸
+    local addLabel = win:CreateFontString(nil, "OVERLAY")
+    addLabel:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 126)
+    addLabel:SetFont(MimDiceFontPath(), 10, "OUTLINE")
+    addLabel:SetText("내 폰트 : 와우의 Fonts 폴더가 아닌, 밈다이스 안의 Fonts 폴더에")
+    addLabel:SetTextColor(0.8, 0.8, 0.8)
+    local addLabel2 = win:CreateFontString(nil, "OVERLAY")
+    addLabel2:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 114)
+    addLabel2:SetFont(MimDiceFontPath(), 10, "OUTLINE")
+    addLabel2:SetText("폰트 파일을 넣어주세요 (Interface\\AddOns\\MimDice\\Fonts)")
+    addLabel2:SetTextColor(0.8, 0.8, 0.8)
+    local addLabel3 = win:CreateFontString(nil, "OVERLAY")
+    addLabel3:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 102)
+    addLabel3:SetFont(MimDiceFontPath(), 10, "OUTLINE")
+    addLabel3:SetText("ttf, otf 만 돼요 (woff 웹폰트 / ttc 모음 파일은 안 돼요)")
+    addLabel3:SetTextColor(0.8, 0.8, 0.8)
+    local addLabel4 = win:CreateFontString(nil, "OVERLAY")
+    addLabel4:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 90)
+    addLabel4:SetFont(MimDiceFontPath(), 10, "OUTLINE")
+    addLabel4:SetText("게임을 껐다 켠 뒤, 파일 이름을 적고 [추가] (예: 나눔스퀘어.ttf)")
+    addLabel4:SetTextColor(0.8, 0.8, 0.8)
+
+    local addBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    addBox:SetSize(210, 20)
+    addBox:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 22, 62)
+    addBox:SetAutoFocus(false)
+    addBox:SetFont(MimDiceFontPath(), 11, "")
+
+    local addBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    addBtn:SetSize(60, 22)
+    addBtn:SetPoint("LEFT", addBox, "RIGHT", 10, 0)
+    addBtn:SetText("추가")
+    addBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
+
+    local addMsg = win:CreateFontString(nil, "OVERLAY")
+    addMsg:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 44)
+    addMsg:SetFont(MimDiceFontPath(), 10, "OUTLINE")
+    addMsg:SetText("")
+    win.addMsg = addMsg
+
+    local function SA_AddCustomFont()
+        local sk = MimDiceDB.skin
+        local fname = (addBox:GetText() or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if fname == "" then return end
+        local low = fname:lower()
+        if low:find("%.woff2?$") or low:find("%.ttc$") then
+            addMsg:SetText("woff/ttc 는 못 써요. ttf 또는 otf 파일이어야 해요")
+            addMsg:SetTextColor(1, 0.4, 0.4)
+            return
+        end
+        if not (low:find("%.ttf$") or low:find("%.otf$")) then fname = fname .. ".ttf" end
+        for _, f in ipairs(sk.customFonts) do
+            if f == fname then
+                addMsg:SetText("이미 목록에 있어요")
+                addMsg:SetTextColor(1, 0.8, 0.3)
+                return
+            end
+        end
+        if MimDiceFontValid(fname) then
+            table.insert(sk.customFonts, fname)
+            addBox:SetText(""); addBox:ClearFocus()
+            addMsg:SetText("추가했어요! 목록에서 눌러 선택하세요")
+            addMsg:SetTextColor(0.45, 1, 0.45)
+            SA_RefreshFontWindow()
+        else
+            addMsg:SetText("파일을 못 찾았어요. 폴더에 넣고 게임을 껐다 켰는지 확인하세요")
+            addMsg:SetTextColor(1, 0.4, 0.4)
+        end
+    end
+    addBtn:SetScript("OnClick", SA_AddCustomFont)
+    addBox:SetScript("OnEnterPressed", SA_AddCustomFont)
+    addBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+
+    -- 리로드 (폰트는 리로드해야 전체에 적용됨)
+    local reloadBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    reloadBtn:SetSize(150, 24)
+    reloadBtn:SetPoint("BOTTOM", win, "BOTTOM", 0, 12)
+    reloadBtn:SetText("리로드하고 적용")
+    reloadBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
+    reloadBtn:SetScript("OnClick", function() ReloadUI() end)
+
+    SA_SkinRegisterWindow(win)   -- 폰트 창도 스킨 대상
+    SA_FontWindow = win
+    SA_SkinRefresh()             -- 스킨이 켜져 있으면 방금 만든 창에도 즉시 적용
+    return win
+end
+
+-- 폰트 창 목록 새로고침 (전역). 각 줄을 그 폰트로 그려서 미리보기가 된다
+function SA_RefreshFontWindow()
+    local win = SA_FontWindow
+    if not win then return end
+    local sk = MimDiceDB.skin
+    local list = {}
+    for _, f in ipairs(MIMDICE_FONTS) do
+        table.insert(list, { key = f.key, name = f.name, file = f.file })
+    end
+    for _, fname in ipairs(sk.customFonts) do
+        table.insert(list, { key = "file:" .. fname, name = fname, file = fname, custom = true })
+    end
+    local rowH = 24
+    for i, e in ipairs(list) do
+        local row = win.rows[i]
+        if not row then
+            row = CreateFrame("Button", nil, win.content)
+            row:SetSize(280, rowH - 2)
+            row:SetPoint("TOPLEFT", win.content, "TOPLEFT", 0, -(i - 1) * rowH)
+            local selBg = row:CreateTexture(nil, "BACKGROUND")
+            selBg:SetAllPoints(); selBg:SetColorTexture(1, 1, 1, 0.10); selBg:Hide()
+            local hl = row:CreateTexture(nil, "HIGHLIGHT")
+            hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.08)
+            local fsName = row:CreateFontString(nil, "OVERLAY")
+            fsName:SetPoint("LEFT", row, "LEFT", 4, 0)
+            fsName:SetPoint("RIGHT", row, "RIGHT", -22, 0)
+            fsName:SetJustifyH("LEFT")
+            fsName:SetWordWrap(false)
+            local del = CreateFrame("Button", nil, row)   -- 내 폰트 지우기 (X)
+            del:SetSize(16, 16)
+            del:SetPoint("RIGHT", row, "RIGHT", -2, 0)
+            local delFs = del:CreateFontString(nil, "OVERLAY")
+            delFs:SetPoint("CENTER")
+            delFs:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+            delFs:SetText("X")
+            delFs:SetTextColor(1, 0.4, 0.4)
+            local delHl = del:CreateTexture(nil, "HIGHLIGHT")
+            delHl:SetAllPoints(); delHl:SetColorTexture(1, 1, 1, 0.15)
+            row.selBg = selBg
+            row.fsName = fsName
+            row.del = del
+            win.rows[i] = row
+        end
+        local path = e.file and (MIMDICE_FONT_DIR .. e.file) or "Fonts\\2002.ttf"
+        local okFont = (not e.custom) or MimDiceFontValid(e.file)
+        pcall(row.fsName.SetFont, row.fsName, okFont and path or "Fonts\\2002.ttf", 13, "")
+        if okFont then
+            row.fsName:SetText(e.name .. "  가나다 ABC 123")
+        else
+            row.fsName:SetText(e.name .. "  (파일이 없어요)")
+        end
+        if sk.font == e.key then
+            row.selBg:Show()
+            row.fsName:SetTextColor(0.45, 1, 0.45)
+        else
+            row.selBg:Hide()
+            row.fsName:SetTextColor(0.9, 0.9, 0.9)
+        end
+        if e.custom then row.del:Show() else row.del:Hide() end
+        row:SetScript("OnClick", function()
+            MimDiceDB.skin.font = e.key
+            SA_RefreshFontWindow()
+            SA_RefreshSkinWindow()
+        end)
+        row.del:SetScript("OnClick", function()
+            for idx, f in ipairs(MimDiceDB.skin.customFonts) do
+                if f == e.file then table.remove(MimDiceDB.skin.customFonts, idx); break end
+            end
+            if MimDiceDB.skin.font == e.key then MimDiceDB.skin.font = "default" end
+            SA_RefreshFontWindow()
+            SA_RefreshSkinWindow()
+        end)
+        row:Show()
+    end
+    for i = #list + 1, #win.rows do win.rows[i]:Hide() end
+    win.content:SetHeight(#list * rowH)
+end
+
+-- 폰트 창 열고 닫기 (전역: 스킨 창의 [폰트 고르기] 버튼)
+function SA_ToggleFontWindow()
+    local win = SA_CreateFontWindow()
+    if win:IsShown() then
+        win:Hide()
+    else
+        SA_RefreshFontWindow()
+        win:Show()
+    end
+end
+
+local function SA_CreateSkinWindow()
+    local mainWin = _G["MainWindow"]
+    if not mainWin then return end
+
+    local win = CreateFrame("Frame", "SA_SkinWindow", UIParent, "BackdropTemplate")
+    win:SetWidth(380)
+    win:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", 38, 0)
+    win:SetPoint("BOTTOMLEFT", mainWin, "BOTTOMRIGHT", 38, 0)
+    win:SetFrameStrata("HIGH")
+    win:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    win:SetBackdropColor(0, 0, 0, 0.5)
+    win:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+    win:EnableMouse(true)
+    SA_WireBundleDrag(win)   -- 점프 없는 번들 드래그
+    win:SetScript("OnHide", function()
+        if SA_SkinColorPop then SA_SkinColorPop:Hide() end
+    end)
+    win:Hide()
+
+    local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
+    closeBtn:SetScript("OnClick", function() SA_ToggleSkinWindow() end)
+
+    local title = win:CreateFontString(nil, "OVERLAY")
+    title:SetPoint("TOP", win, "TOP", 0, -12)
+    title:SetFont(MimDiceFontPath(), 14, "OUTLINE")
+    title:SetText("스킨")
+    title:SetTextColor(1, 0.82, 0)
+
+    -- ── 스킨 적용 체크 (라벨에 현재 프리셋 이름 표시) ──
+    local enCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
+    enCb:SetSize(24, 24)
+    enCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -34)
+    enCb:SetScript("OnClick", function(self)
+        MimDiceDB.skin.enabled = self:GetChecked() and true or false
+        SA_SkinRefresh()
+        SA_RefreshSkinWindow()
+    end)
+    win.enCb = enCb
+    local enLabel = win:CreateFontString(nil, "OVERLAY")
+    enLabel:SetPoint("LEFT", enCb, "RIGHT", 2, 0)
+    enLabel:SetFont(MimDiceFontPath(), 12, "OUTLINE")
+    enLabel:SetTextColor(0.9, 0.9, 0.9)
+    win.enLabel = enLabel
+
+    -- ── 프리셋 목록 ──
+    local presetLabel = win:CreateFontString(nil, "OVERLAY")
+    presetLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -66)
+    presetLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    presetLabel:SetText("기본 스킨 : 누르면 색이 채워지고 바로 적용됩니다")
+    presetLabel:SetTextColor(0.9, 0.9, 0.9)
+
+    -- 2열 그리드 (9종). 선택된 프리셋은 강조 테두리 + 이름 녹색
+    win.presetRows = {}
+    for i, preset in ipairs(SA_SKIN_PRESETS) do
+        local col = (i - 1) % 2
+        local rowN = math.floor((i - 1) / 2)
+        local row = CreateFrame("Button", nil, win)
+        row:SetSize(170, 20)
+        row:SetPoint("TOPLEFT", win, "TOPLEFT", 15 + col * 178, -84 - rowN * 22)
+        local selBg = row:CreateTexture(nil, "BACKGROUND")   -- 선택 표시 (은은한 배경)
+        selBg:SetAllPoints(); selBg:SetColorTexture(1, 1, 1, 0.10); selBg:Hide()
+        local hl = row:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.08)
+        local swb = row:CreateTexture(nil, "BORDER")   -- 스와치 테두리
+        swb:SetSize(16, 16); swb:SetPoint("LEFT", 2, 0)
+        swb:SetColorTexture(0.5, 0.5, 0.5, 1)
+        local sw = row:CreateTexture(nil, "ARTWORK")
+        sw:SetPoint("TOPLEFT", swb, "TOPLEFT", 1, -1); sw:SetPoint("BOTTOMRIGHT", swb, "BOTTOMRIGHT", -1, 1)
+        sw:SetColorTexture(preset.base[1], preset.base[2], preset.base[3], 1)
+        local acc = row:CreateTexture(nil, "ARTWORK")   -- 강조색 미리보기 (스와치 안 작은 점)
+        acc:SetSize(5, 5); acc:SetPoint("BOTTOMRIGHT", swb, "BOTTOMRIGHT", -2, 2)
+        acc:SetColorTexture(preset.accentText[1], preset.accentText[2], preset.accentText[3], 1)
+        local nameFs = row:CreateFontString(nil, "OVERLAY")
+        nameFs:SetPoint("LEFT", swb, "RIGHT", 7, 0)
+        nameFs:SetFont(MimDiceFontPath(), 11, "")
+        nameFs:SetText(preset.name)
+        nameFs:SetTextColor(0.9, 0.9, 0.9)
+        row.selBg = selBg
+        row.nameFs = nameFs
+        row:SetScript("OnClick", function()
+            local sk = MimDiceDB.skin
+            sk.preset = preset.key
+            sk.enabled = true
+            -- 이 스킨에서 사용자가 조절해 둔 투명도가 있으면 그 값, 없으면 스킨 기본 투명도
+            sk.alpha = sk.alphaByPreset[preset.key] or preset.alpha or 0.93
+            sk.base = { r = preset.base[1], g = preset.base[2], b = preset.base[3] }
+            sk.accentText = { r = preset.accentText[1], g = preset.accentText[2], b = preset.accentText[3] }
+            sk.accentHover = { r = preset.accentHover[1], g = preset.accentHover[2], b = preset.accentHover[3] }
+            SA_SkinRefresh()
+            SA_RefreshSkinWindow()
+        end)
+        win.presetRows[preset.key] = row
+    end
+
+    -- 10번째 칸: '커스텀 (내 색)' - 사용자가 만진 색이 영구 저장되는 슬롯
+    do
+        local row = CreateFrame("Button", nil, win)
+        row:SetSize(170, 20)
+        row:SetPoint("TOPLEFT", win, "TOPLEFT", 15 + 178, -84 - 4 * 22)
+        local selBg = row:CreateTexture(nil, "BACKGROUND")
+        selBg:SetAllPoints(); selBg:SetColorTexture(1, 1, 1, 0.10); selBg:Hide()
+        local hl = row:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetAllPoints(); hl:SetColorTexture(1, 1, 1, 0.08)
+        local swb = row:CreateTexture(nil, "BORDER")
+        swb:SetSize(16, 16); swb:SetPoint("LEFT", 2, 0)
+        swb:SetColorTexture(0.5, 0.5, 0.5, 1)
+        local sw = row:CreateTexture(nil, "ARTWORK")
+        sw:SetPoint("TOPLEFT", swb, "TOPLEFT", 1, -1); sw:SetPoint("BOTTOMRIGHT", swb, "BOTTOMRIGHT", -1, 1)
+        local acc = row:CreateTexture(nil, "ARTWORK")
+        acc:SetSize(5, 5); acc:SetPoint("BOTTOMRIGHT", swb, "BOTTOMRIGHT", -2, 2)
+        local nameFs = row:CreateFontString(nil, "OVERLAY")
+        nameFs:SetPoint("LEFT", swb, "RIGHT", 7, 0)
+        nameFs:SetFont(MimDiceFontPath(), 11, "")
+        nameFs:SetText("커스텀 (내 색)")
+        nameFs:SetTextColor(0.9, 0.9, 0.9)
+        row.selBg = selBg
+        row.nameFs = nameFs
+        row.sw = sw
+        row.acc = acc
+        row:SetScript("OnClick", function()
+            local sk = MimDiceDB.skin
+            local c = sk.custom
+            sk.preset = "custom"
+            sk.enabled = true
+            sk.alpha = c.alpha or 0.93
+            sk.accentTextA = c.accentTextA or 1
+            sk.accentHoverA = c.accentHoverA or 0.30
+            sk.base = { r = c.base.r, g = c.base.g, b = c.base.b }
+            sk.accentText = { r = c.accentText.r, g = c.accentText.g, b = c.accentText.b }
+            sk.accentHover = { r = c.accentHover.r, g = c.accentHover.g, b = c.accentHover.b }
+            SA_SkinRefresh()
+            SA_RefreshSkinWindow()
+        end)
+        win.presetRows["custom"] = row
+    end
+
+    -- 색을 만지는 순간 '커스텀 (내 색)' 스킨으로 저장/전환 (프리셋을 눌러도 내 색이 안 사라짐)
+    local function SA_SkinSaveCustom()
+        local sk = MimDiceDB.skin
+        sk.preset = "custom"
+        sk.custom = {
+            alpha = sk.alpha or 0.93,
+            accentTextA = sk.accentTextA or 1,
+            accentHoverA = sk.accentHoverA or 0.30,
+            base = { r = sk.base.r, g = sk.base.g, b = sk.base.b },
+            accentText = { r = sk.accentText.r, g = sk.accentText.g, b = sk.accentText.b },
+            accentHover = { r = sk.accentHover.r, g = sk.accentHover.g, b = sk.accentHover.b },
+        }
+    end
+
+    -- ── 색 커스텀 (스와치는 우측, 클릭하면 색 팝업) ──
+    local customLabel = win:CreateFontString(nil, "OVERLAY")
+    customLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -204)
+    customLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    customLabel:SetText("색 커스텀 : 오른쪽 네모를 눌러 색을 고르세요")
+    customLabel:SetTextColor(0.9, 0.9, 0.9)
+
+    local function mkColorRow(y, labelText, getFn, setFn, opacityOpt)
+        local lb = win:CreateFontString(nil, "OVERLAY")
+        lb:SetPoint("TOPLEFT", win, "TOPLEFT", 20, y)
+        lb:SetFont(MimDiceFontPath(), 11, "")
+        lb:SetText(labelText)
+        lb:SetTextColor(0.85, 0.85, 0.85)
+        local btn = CreateFrame("Button", nil, win)
+        btn:SetSize(30, 18)
+        btn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -20, y + 2)
+        local border = btn:CreateTexture(nil, "BORDER")
+        border:SetAllPoints(); border:SetColorTexture(0.6, 0.6, 0.6, 1)
+        local swatch = btn:CreateTexture(nil, "ARTWORK")
+        swatch:SetPoint("TOPLEFT", 1, -1); swatch:SetPoint("BOTTOMRIGHT", -1, 1)
+        local hl = btn:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetPoint("TOPLEFT", -2, 2); hl:SetPoint("BOTTOMRIGHT", 2, -2)
+        hl:SetColorTexture(1, 1, 1, 0.3)
+        btn.swatch = swatch
+        local function onPicked(r, g, b)
+            setFn(r, g, b)
+            SA_SkinSaveCustom()   -- 색을 만지면 '커스텀 (내 색)'에 저장
+            SA_SkinRefresh()
+            SA_RefreshSkinWindow()
+        end
+        btn:SetScript("OnClick", function()
+            local cur = getFn()
+            -- 와우 내장 색상환(풀 컬러 팔레트). 드래그하는 동안 실시간으로 반영됨
+            if ColorPickerFrame and ColorPickerFrame.SetupColorPickerAndShow then
+                ColorPickerFrame:SetupColorPickerAndShow({
+                    r = cur.r, g = cur.g, b = cur.b,
+                    hasOpacity = opacityOpt ~= nil,
+                    opacity = opacityOpt and opacityOpt.get() or nil,
+                    swatchFunc = function()
+                        local nr, ng, nb = ColorPickerFrame:GetColorRGB()
+                        onPicked(nr, ng, nb)
+                    end,
+                    opacityFunc = opacityOpt and function()
+                        local a = ColorPickerFrame.GetColorAlpha and ColorPickerFrame:GetColorAlpha() or 1
+                        opacityOpt.set(a)
+                        SA_SkinRefresh()
+                    end or nil,
+                    cancelFunc = function(prev)
+                        if prev then
+                            onPicked(prev.r, prev.g, prev.b)
+                            if opacityOpt and prev.a then opacityOpt.set(prev.a); SA_SkinRefresh() end
+                        end
+                    end,
+                })
+            else
+                -- 구버전 클라이언트 대비: 격자 색상판
+                SA_OpenSkinColorPop(btn, function(rgb) onPicked(rgb[1], rgb[2], rgb[3]) end)
+            end
+        end)
+        return btn
+    end
+    win.swBase = mkColorRow(-226, "메인 배경 색",
+        function() return MimDiceDB.skin.base end,
+        function(r, g, b) MimDiceDB.skin.base = { r = r, g = g, b = b } end,
+        {
+            get = function() return MimDiceDB.skin.alpha or 0.93 end,
+            set = function(a)
+                local sk = MimDiceDB.skin
+                sk.alpha = a
+                sk.alphaByPreset[sk.preset] = a               -- 이 스킨의 투명도로 기억
+                if sk.preset == "custom" and sk.custom then sk.custom.alpha = a end
+            end,
+        })
+    win.swText = mkColorRow(-252, "활성탭 글자색",
+        function() return MimDiceDB.skin.accentText end,
+        function(r, g, b) MimDiceDB.skin.accentText = { r = r, g = g, b = b } end,
+        {
+            get = function() return MimDiceDB.skin.accentTextA or 1 end,
+            set = function(a) MimDiceDB.skin.accentTextA = a end,
+        })
+    win.swHover = mkColorRow(-278, "버튼 마우스오버",
+        function() return MimDiceDB.skin.accentHover end,
+        function(r, g, b) MimDiceDB.skin.accentHover = { r = r, g = g, b = b } end,
+        {
+            get = function() return MimDiceDB.skin.accentHoverA or 0.30 end,
+            set = function(a) MimDiceDB.skin.accentHoverA = a end,
+        })
+
+
+    -- ── 색 기본값 복원 (현재 스킨의 원래 색/투명도로) ──
+    local resetBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    resetBtn:SetSize(110, 22)
+    resetBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -308)
+    resetBtn:SetText("색 기본값 복원")
+    resetBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
+    resetBtn:SetScript("OnClick", function()
+        local sk = MimDiceDB.skin
+        local preset = SA_SkinPresetByKey(sk.preset == "custom" and "darkgray" or sk.preset)
+        sk.alphaByPreset[sk.preset] = nil                 -- 조절해 둔 투명도도 초기화
+        sk.alpha = preset.alpha or 0.93
+        sk.accentTextA, sk.accentHoverA = 1, 0.30
+        sk.base = { r = preset.base[1], g = preset.base[2], b = preset.base[3] }
+        sk.accentText = { r = preset.accentText[1], g = preset.accentText[2], b = preset.accentText[3] }
+        sk.accentHover = { r = preset.accentHover[1], g = preset.accentHover[2], b = preset.accentHover[3] }
+        if sk.preset == "custom" then                     -- 커스텀 슬롯은 다크 그레이 값으로 리셋
+            sk.custom = {
+                alpha = sk.alpha,
+                base = { r = sk.base.r, g = sk.base.g, b = sk.base.b },
+                accentText = { r = sk.accentText.r, g = sk.accentText.g, b = sk.accentText.b },
+                accentHover = { r = sk.accentHover.r, g = sk.accentHover.g, b = sk.accentHover.b },
+            }
+        end
+        SA_SkinRefresh()
+        SA_RefreshSkinWindow()
+    end)
+
+
+    -- ── 폰트 고르기 (버튼에 현재 폰트 이름 표시) ──
+    local fontBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    fontBtn:SetSize(225, 22)
+    fontBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -308)
+    fontBtn:SetText("폰트 고르기")
+    fontBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
+    fontBtn:SetScript("OnClick", function() SA_ToggleFontWindow() end)
+    win.fontBtn = fontBtn
+
+    SA_SkinRegisterWindow(win)   -- 스킨 창 자신도 스킨 대상
+    SA_SkinWindow = win
+end
+
+-- 스킨 창 위젯 값 동기화 (전역: 탭 열 때/설정 변경 시 호출)
+function SA_RefreshSkinWindow()
+    local win = SA_SkinWindow
+    if not win then return end
+    local sk = MimDiceDB.skin
+    local presetName = (sk.preset == "custom") and "커스텀 (내 색)" or SA_SkinPresetByKey(sk.preset).name
+    win.enCb:SetChecked(sk.enabled)
+    win.enLabel:SetText("스킨 적용 (" .. presetName .. ")")
+    -- 커스텀 슬롯 스와치를 저장된 내 색으로 갱신
+    local cr = win.presetRows["custom"]
+    if cr and sk.custom then
+        cr.sw:SetColorTexture(sk.custom.base.r, sk.custom.base.g, sk.custom.base.b, 1)
+        cr.acc:SetColorTexture(sk.custom.accentText.r, sk.custom.accentText.g, sk.custom.accentText.b, 1)
+    end
+    for key, row in pairs(win.presetRows) do
+        if key == sk.preset and sk.enabled then
+            row.selBg:Show()
+            row.nameFs:SetTextColor(0.45, 1, 0.45)
+        else
+            row.selBg:Hide()
+            row.nameFs:SetTextColor(0.9, 0.9, 0.9)
+        end
+    end
+    win.swBase.swatch:SetColorTexture(sk.base.r, sk.base.g, sk.base.b, 1)
+    win.swText.swatch:SetColorTexture(sk.accentText.r, sk.accentText.g, sk.accentText.b, 1)
+    win.swHover.swatch:SetColorTexture(sk.accentHover.r, sk.accentHover.g, sk.accentHover.b, 1)
+    if win.fontBtn then win.fontBtn:SetText("폰트 : " .. MimDiceFontName()) end
+end
+
+-- =====================================================================
 -- 애드온 초기화 호출
 -- =====================================================================
 function SoundAlert_OnLoad()
@@ -4821,6 +6031,12 @@ function SoundAlert_OnLoad()
             SA_CreateTab()
             SA_CreateWindow()
             SA_CreateWhisperWindow()
+            SA_CreateSkinWindow()
+            -- 사운드/귓말차단 창 + 메인창에 스킨 적용 (켜져 있을 때만)
+            SA_SkinRegisterWindow(SA_OptionWindow)
+            SA_SkinRegisterWindow(SA_WhisperWindow)
+            SA_SkinRefresh()
+            MimDiceApplyFontToXML()   -- XML 에 박힌 글자(제목/하이/로우 등)에 선택 폰트 적용
         else
             C_Timer.After(0.1, TryInit)
         end

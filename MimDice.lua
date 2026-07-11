@@ -1,7 +1,7 @@
 -- Author         : BIK
 -- Create Date    : 2023-02-02 오후 05:37:12
 -- Last Updated   : 2026-05-30 오후 04:32:22
--- Version        : v1.14.2
+-- Version        : v1.15.0
 
 ---@diagnostic disable: undefined-global, param-type-mismatch, undefined-field, cast-local-type -- 전역 함수 정의 에러, 매개변수 타입 불일치, 정의되지 않은 필드, 로컬 타입 캐스팅 무시
 
@@ -715,12 +715,8 @@ function MimDice_OnLoad(self)
     -- 서버명 캐싱 초기화
     cachedRealmName = GetRealmName()
     
-    -- 저장된 폰트 설정 불러오기
-    if MimDiceDB.fontName == nil or MimDiceDB.fontName == "" then
-        fontName = "Fonts\\2002.TTF"
-    else
-        fontName = MimDiceDB.fontName
-    end
+    -- 폰트는 스킨 탭에서 고른 폰트를 따른다 (크기만 저장값 사용)
+    fontName = MimDiceFontPath()
 
     if MimDiceDB.fontHeight ~= nil then
         fontHeight = MimDiceDB.fontHeight
@@ -1458,7 +1454,7 @@ function FactoryReset()
         _G["MainWindow"]:SetHeight(460)
     end
     
-    fontName = "Fonts\\2002.ttf"
+    fontName = MimDiceFontPath()
     fontHeight = 13
     
     if _G["RollStrings"] then
