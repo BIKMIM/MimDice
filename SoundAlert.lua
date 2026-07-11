@@ -563,6 +563,10 @@ local function SA_EnsureDeathFrame()
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     f:SetFrameStrata("HIGH")
+    -- 클릭 통과: 전투 중엔 EnableMouse(보호 함수)를 못 꺼서, 편집 상태로 전투에 들어가면
+    -- 마우스가 켜진 채 남을 수 있다. 죽음 메시지는 전투 중 표시되므로 클릭이 아래로
+    -- 통과되게 해서 어떤 상태든 클릭을 막지 않게 한다. (파티 알림 프레임과 동일 패턴)
+    if f.SetPropagateMouseClicks then f:SetPropagateMouseClicks(true) end
     -- 잠금 해제(편집 모드)일 때만 보이는 테두리 (평소엔 투명)
     f:SetBackdrop({ edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border", edgeSize = 18 })
     f:SetBackdropBorderColor(1, 0.85, 0, 0)
@@ -1718,6 +1722,9 @@ local function SA_EnsureBuffBar(key)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     f:SetFrameStrata("MEDIUM")
+    -- 클릭 통과: 블러드 바는 전투 중 표시되는데 전투 중엔 EnableMouse(보호 함수)를 못 끈다.
+    -- 편집 상태로 전투에 들어가도 클릭이 아래로 통과되게. (파티 알림 프레임과 동일 패턴)
+    if f.SetPropagateMouseClicks then f:SetPropagateMouseClicks(true) end
     f:SetBackdrop({
         bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -1943,6 +1950,8 @@ local function SA_EnsureBattleResIcon()
     f:SetClampedToScreen(true)
     f:SetFrameStrata("HIGH")      -- 다른 UI에 안 가리도록 레이어 상향
     f:SetFrameLevel(120)
+    -- 클릭 통과: 편집 상태로 전투에 들어가 클릭 설정을 못 되돌려도 클릭이 아래로 통과되게
+    if f.SetPropagateMouseClicks then f:SetPropagateMouseClicks(true) end
 
     -- 편집(이동 가능) 표시용 반투명 노란 헤일로 — 아이콘보다 살짝 크게, 평소엔 숨김
     local editGlow = f:CreateTexture(nil, "BACKGROUND")
