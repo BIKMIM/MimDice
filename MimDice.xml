@@ -37,91 +37,91 @@
 				<Texture name="C_icon1" file="Interface\AddOns\MimDice\img\ClassIcon_Warrior">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor y="-3" point="TOPLEFT" />
+						<Anchor y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 				<Texture name="C_icon2" file="Interface\AddOns\MimDice\img\ClassIcon_Mage">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor x="20" y="-3" point="TOPLEFT" />
+						<Anchor x="20" y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 				<Texture name="C_icon3" file="Interface\AddOns\MimDice\img\ClassIcon_Rogue">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor x="40" y="-3" point="TOPLEFT" />
+						<Anchor x="40" y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 				<Texture name="C_icon4" file="Interface\AddOns\MimDice\img\ClassIcon_Druid">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor x="60" y="-3" point="TOPLEFT" />
+						<Anchor x="60" y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 				<Texture name="C_icon5" file="Interface\AddOns\MimDice\img\ClassIcon_DeathKnight">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor x="80" y="-3" point="TOPLEFT" />
+						<Anchor x="80" y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 				<Texture name="C_icon6" file="Interface\AddOns\MimDice\img\ClassIcon_Shaman">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor x="100" y="-3" point="TOPLEFT" />
+						<Anchor x="100" y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 				<Texture name="C_icon7" file="Interface\AddOns\MimDice\img\ClassIcon_Priest">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor x="120" y="-3" point="TOPLEFT" />
+						<Anchor x="120" y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 				<Texture name="C_icon8" file="Interface\AddOns\MimDice\img\ClassIcon_Warlock">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor x="140" y="-3" point="TOPLEFT" />
+						<Anchor x="140" y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 				<Texture name="C_icon9" file="Interface\AddOns\MimDice\img\ClassIcon_Paladin">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor x="160" y="-3" point="TOPLEFT" />
+						<Anchor x="160" y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 				<Texture name="C_icon10" file="Interface\AddOns\MimDice\img\ClassIcon_Monk">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor x="180" y="-3" point="TOPLEFT" />
+						<Anchor x="180" y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 				<Texture name="C_icon11" file="Interface\AddOns\MimDice\img\ClassIcon_DemonHunter">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor x="200" y="-3" point="TOPLEFT" />
+						<Anchor x="200" y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 				<Texture name="C_icon12" file="Interface\AddOns\MimDice\img\ClassIcon_Evoker">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor x="220" y="-3" point="TOPLEFT" />
+						<Anchor x="220" y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
 				<Texture name="C_icon13" file="Interface\AddOns\MimDice\img\ClassIcon_Hunter">
 					<Size x="20" y="20" />
 					<Anchors>
-						<Anchor x="240" y="-3" point="TOPLEFT" />
+						<Anchor x="240" y="0" point="TOPLEFT" />
 					</Anchors>
 					<TexCoords left="0" right="1" top="0" bottom="1" />
 				</Texture>
