@@ -272,7 +272,7 @@
 				</ButtonText>
 			</Button>
 			<Button name="Start_Button" inherits="UIPanelButtonTemplate" text="시작">
-				<Size x="60" y="40" />
+				<Size x="60" y="36" />
 				<Anchors>
 					<Anchor x="-11" y="-66" point="TOPRIGHT" relativeTo="MainWindow" />
 				</Anchors>
@@ -300,8 +300,8 @@
 			<EditBox name="MainEditBox" inherits="InputBoxTemplate" resizable="true" autoFocus="false">
 				<Size x="267" y="27" />
 				<Anchors>
-					<Anchor x="17" y="-107" point="TOPLEFT" relativeTo="MainWindow" />
-					<Anchor x="-16" y="-107" point="TOPRIGHT" relativeTo="MainWindow" />
+					<Anchor x="15" y="-107" point="TOPLEFT" relativeTo="MainWindow" />
+					<Anchor x="-12" y="-107" point="TOPRIGHT" relativeTo="MainWindow" />
 				</Anchors>
 			</EditBox>
 			<ScrollFrame name="MimDiceScrollFrame" inherits="UIPanelScrollFrameTemplate" resizable="true">
