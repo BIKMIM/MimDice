@@ -307,6 +307,7 @@ function SA_InitDB()
     if dt.suffix == nil then dt.suffix = " 사망 !!" end
     if dt.fontSize == nil then dt.fontSize = 80 end          -- 크게
     if dt.color == nil then dt.color = { r = 1, g = 0.2, b = 0.2 } end
+    if dt.colorA == nil then dt.colorA = 1 end                    -- 죽음 글자 투명도
     if dt.x == nil then dt.x = 0 end                          -- 중앙
     if dt.y == nil then dt.y = 130 end                        -- 마력주입 바 바로 아래
     dt.locked = true   -- 리로드/재접속 시 항상 잠금으로 시작 (편집 상태 유지 안 함)
@@ -409,6 +410,8 @@ function SA_InitDB()
     if pa.bgAlpha == nil then pa.bgAlpha = 0.5 end               -- 배경 반투명도(0~1)
     if pa.bgColor == nil then pa.bgColor = { r = 0, g = 0, b = 0 } end   -- 배경 색상 (기본 검정)
     if pa.statColor == nil then pa.statColor = { r = 1, g = 1, b = 1 } end -- 템렙/쐐기 글자색
+    if pa.colorA == nil then pa.colorA = 1 end                   -- 알림 글자 전체 투명도
+    if pa.statColorA == nil then pa.statColorA = 1 end           -- 템렙/쐐기 색 투명도(배경색과 섞기)
     -- 반복 알림: "once"=신청 올 때 1회 / "repeat"=대기 신청자 있는 동안 repeatInterval초마다 재알림
     if pa.repeatMode == nil then pa.repeatMode = "once" end
     if pa.repeatInterval == nil then pa.repeatInterval = 5 end
@@ -462,18 +465,24 @@ function SA_InitDB()
     if skn.enabled == nil then skn.enabled = false end                        -- 기본: 클래식(끄기)
     if skn.preset == nil then skn.preset = "darkgray" end
     if skn.base == nil then skn.base = { r = 0.11, g = 0.11, b = 0.12 } end   -- 제일 진한 배경색
-    if skn.accentText == nil then skn.accentText = { r = 1.00, g = 0.45, b = 0.75 } end  -- 강조 글자
-    if skn.accentHover == nil then skn.accentHover = { r = 0.35, g = 0.65, b = 1.00 } end -- 강조 배경
+    if skn.accentText == nil then skn.accentText = { r = 0.90, g = 0.90, b = 0.92 } end  -- 강조 글자
+    if skn.accentHover == nil then skn.accentHover = { r = 0.42, g = 0.44, b = 0.50 } end -- 강조 배경
     if skn.alpha == nil then skn.alpha = 0.93 end                             -- 배경 투명도
     if not skn.alphaByPreset then skn.alphaByPreset = {} end                  -- 스킨별 투명도 (사용자 조절값 기억)
     if skn.accentTextA == nil then skn.accentTextA = 1 end                    -- 강조 글자 투명도
-    if skn.accentHoverA == nil then skn.accentHoverA = 0.30 end               -- 강조 배경(호버) 투명도
+    if skn.accentHoverA == nil then skn.accentHoverA = 0.30 end               -- 활성 탭 배경 투명도
+    if not skn.btnHover then skn.btnHover = { r = 0.42, g = 0.44, b = 0.50 } end -- 버튼 마우스오버/누름 색
+    if skn.btnHoverA == nil then skn.btnHoverA = 0.30 end                      -- 버튼 마우스오버 투명도
+    if not skn.btnText then skn.btnText = { r = 0.92, g = 0.92, b = 0.92 } end -- 버튼 안 글자색
+    if skn.btnTextA == nil then skn.btnTextA = 1 end                           -- 버튼 안 글자 투명도
     if not skn.custom then                                                     -- '커스텀 (내 색)' 슬롯: 사용자가 만진 색 영구 저장
         skn.custom = {
             alpha = 0.93,
             base = { r = 0.11, g = 0.11, b = 0.12 },
-            accentText = { r = 1.00, g = 0.45, b = 0.75 },
-            accentHover = { r = 0.35, g = 0.65, b = 1.00 },
+            accentText = { r = 0.90, g = 0.90, b = 0.92 },
+            accentHover = { r = 0.42, g = 0.44, b = 0.50 },
+            btnHover = { r = 0.42, g = 0.44, b = 0.50 },
+            btnText = { r = 0.92, g = 0.92, b = 0.92 },
         }
     end
     if skn.font == nil then skn.font = "default" end                         -- 선택 폰트 (리로드 시 적용)
@@ -642,16 +651,23 @@ local SA_COLOR_PRESETS = {
 --       색 변경 = 다시 칠하기 / 끄기 = 원본 복원을 즉시 수행.
 -- =====================================================================
 -- 프리셋: 색 3종 + 배경 투명도(alpha)로 서로 다른 분위기 (Details 스킨 라인업 참고)
+-- 다크 그레이 + 와우 13직업 색 테마 (강조색 = 공식 직업색, 배경 = 그 색을 어둡게 깔아낸 색)
 local SA_SKIN_PRESETS = {
-    { key = "darkgray",      name = "다크 그레이",   alpha = 0.93, base = {0.11,0.11,0.12}, accentText = {1.00,0.45,0.75}, accentHover = {0.35,0.65,1.00} },
-    { key = "newgray",       name = "뉴 그레이",     alpha = 0.95, base = {0.17,0.17,0.18}, accentText = {1.00,0.82,0.00}, accentHover = {0.45,0.45,0.50} },
-    { key = "minimalblack",  name = "미니멀 블랙",   alpha = 0.78, base = {0.04,0.04,0.04}, accentText = {0.92,0.92,0.92}, accentHover = {0.32,0.32,0.32} },
-    { key = "elvblue",       name = "Elv 블루",   alpha = 0.97, base = {0.06,0.06,0.06}, accentText = {0.20,0.65,1.00}, accentHover = {0.09,0.42,0.70} },
-    { key = "slateblue",     name = "슬레이트 블루", alpha = 0.93, base = {0.09,0.11,0.17}, accentText = {0.55,0.75,1.00}, accentHover = {0.30,0.45,0.75} },
-    { key = "graphiteteal",  name = "그래파이트 틸", alpha = 0.93, base = {0.07,0.10,0.10}, accentText = {0.20,0.90,0.70}, accentHover = {0.12,0.55,0.48} },
-    { key = "charcoalamber", name = "차콜 앰버",     alpha = 0.93, base = {0.12,0.10,0.07}, accentText = {1.00,0.72,0.25}, accentHover = {0.70,0.50,0.15} },
-    { key = "serenityred",   name = "세레니티 레드", alpha = 0.93, base = {0.09,0.06,0.06}, accentText = {1.00,0.30,0.30}, accentHover = {0.55,0.10,0.10} },
-    { key = "mimpurple",     name = "밈줌 퍼플",     alpha = 0.93, base = {0.10,0.07,0.14}, accentText = {1.00,0.50,0.90}, accentHover = {0.55,0.30,0.80} },
+    { key = "darkgray",    name = "다크 그레이",       alpha = 0.93, base = {0.11,0.11,0.12}, accentText = {0.90,0.90,0.92}, accentHover = {0.42,0.44,0.50} },
+    { key = "minimalblack", name = "어둠의 블랙",      alpha = 0.78, base = {0.04,0.04,0.04}, accentText = {0.92,0.92,0.92}, accentHover = {0.32,0.32,0.32} },
+    { key = "warrior",     name = "전사 브라운",       alpha = 0.93, base = {0.16,0.14,0.11}, accentText = {0.78,0.61,0.43}, accentHover = {0.43,0.34,0.24} },
+    { key = "priest",      name = "사제 화이트",       alpha = 0.93, base = {0.19,0.19,0.19}, accentText = {1.00,1.00,1.00}, accentHover = {0.55,0.55,0.55} },
+    { key = "rogue",       name = "도적 옐로우",       alpha = 0.93, base = {0.19,0.18,0.11}, accentText = {1.00,0.96,0.41}, accentHover = {0.55,0.53,0.22} },
+    { key = "mage",        name = "마법사 스카이블루", alpha = 0.93, base = {0.08,0.16,0.18}, accentText = {0.25,0.78,0.92}, accentHover = {0.14,0.43,0.51} },
+    { key = "monk",        name = "수도사 제이드",     alpha = 0.93, base = {0.05,0.19,0.13}, accentText = {0.00,1.00,0.60}, accentHover = {0.00,0.55,0.33} },
+    { key = "warlock",     name = "흑마법사 퍼플",     alpha = 0.93, base = {0.12,0.13,0.18}, accentText = {0.53,0.53,0.93}, accentHover = {0.29,0.29,0.51} },
+    { key = "hunter",      name = "사냥꾼 그린",       alpha = 0.93, base = {0.14,0.17,0.11}, accentText = {0.67,0.83,0.45}, accentHover = {0.37,0.46,0.25} },
+    { key = "shaman",      name = "주술사 블루",       alpha = 0.93, base = {0.05,0.11,0.17}, accentText = {0.00,0.44,0.87}, accentHover = {0.00,0.24,0.48} },
+    { key = "deathknight", name = "죽음의기사 레드",   alpha = 0.93, base = {0.16,0.07,0.08}, accentText = {0.77,0.12,0.23}, accentHover = {0.42,0.06,0.13} },
+    { key = "paladin",     name = "성기사 핑크",       alpha = 0.93, base = {0.18,0.13,0.15}, accentText = {0.96,0.55,0.73}, accentHover = {0.53,0.30,0.40} },
+    { key = "druid",       name = "드루이드 오렌지",   alpha = 0.93, base = {0.19,0.12,0.06}, accentText = {1.00,0.49,0.04}, accentHover = {0.55,0.27,0.02} },
+    { key = "demonhunter", name = "악마사냥꾼 딥퍼플", alpha = 0.93, base = {0.14,0.08,0.16}, accentText = {0.64,0.19,0.79}, accentHover = {0.35,0.10,0.43} },
+    { key = "evoker",      name = "기원사 에메랄드",   alpha = 0.93, base = {0.08,0.13,0.12}, accentText = {0.20,0.58,0.50}, accentHover = {0.11,0.32,0.28} },
 }
 local function SA_SkinPresetByKey(key)
     for _, p in ipairs(SA_SKIN_PRESETS) do if p.key == key then return p end end
@@ -672,6 +688,8 @@ local function SA_SkinPal()
     end
     local at = sk.accentText or { r = 1, g = 0.45, b = 0.75 }
     local ah = sk.accentHover or { r = 0.35, g = 0.65, b = 1 }
+    local bh = sk.btnHover or ah
+    local bt = sk.btnText or { r = 0.92, g = 0.92, b = 0.92 }
     return {
         win    = { b.r, b.g, b.b, sk.alpha or 0.93 },   -- 창 배경 (기준색 + 투명도)
         border = { shade(0.45) },            -- 테두리: 배경보다 두 단계 어둡게
@@ -680,7 +698,9 @@ local function SA_SkinPal()
         field  = { shade(0.60) },            -- 입력칸/체크박스 안쪽 (배경보다 어둡게 = 파인 느낌)
         tint   = { shade(2.6, 0.12) },       -- 스크롤바/슬라이더 물들이기 색
         accent = { at.r, at.g, at.b, sk.accentTextA or 1 },      -- 강조 글자 (+투명도)
-        hover  = { ah.r, ah.g, ah.b, sk.accentHoverA or 0.30 },  -- 강조 배경 (호버/활성, +투명도)
+        hover  = { ah.r, ah.g, ah.b, sk.accentHoverA or 0.30 },     -- 활성 탭 배경 (강조, +투명도)
+        btnHover = { bh.r, bh.g, bh.b, sk.btnHoverA or 0.30 },       -- 버튼 마우스오버/누름 (+투명도)
+        btnText  = { bt.r, bt.g, bt.b, sk.btnTextA or 1 },           -- 버튼 안 글자색 (+투명도)
     }
 end
 
@@ -691,6 +711,7 @@ local SA_SkinChecks = {}       -- 플랫화된 체크박스들
 local SA_SkinEdits = {}        -- 플랫화된 입력칸들
 local SA_SkinTints = {}        -- 물들인 스크롤바/슬라이더들
 local SA_SkinScrollBars = {}   -- 현대식으로 바꾼 스크롤바들
+local SA_SkinCloses = {}       -- 플랫화된 닫기(X) 버튼들
 local SA_SkinMainState = nil   -- 메인창: 숨긴 원본 그림 목록 + 플랫 덮개
 
 -- 각진 1픽셀 플랫 테두리 백드롭 (동글동글한 툴팁 테두리 대신)
@@ -717,17 +738,25 @@ local function SA_SkinButtonApply(btn, pal)
         st.bd:SetAllPoints()
         st.bg = btn:CreateTexture(nil, "BACKGROUND", nil, 1)   -- 버튼 면
         st.bg:SetPoint("TOPLEFT", 1, -1); st.bg:SetPoint("BOTTOMRIGHT", -1, 1)
-        st.hl = btn:CreateTexture(nil, "HIGHLIGHT")            -- 마우스오버 시 자동 표시
+        st.hl = btn:CreateTexture(nil, "ARTWORK", nil, 1)     -- 마우스오버 표시 (글자보다 아래 = 불투명해도 글자 보임)
         st.hl:SetPoint("TOPLEFT", 1, -1); st.hl:SetPoint("BOTTOMRIGHT", -1, 1)
+        st.hl:Hide()
+        btn:HookScript("OnEnter", function() if st.hlOn then st.hl:Show() end end)
+        btn:HookScript("OnLeave", function() st.hl:Hide() end)
+        st.origPd = btn.GetPushedTexture and btn:GetPushedTexture() or nil   -- 원본 누름 그림 (복원용)
+        st.pt = btn:CreateTexture(nil, "ARTWORK")              -- 누르는 동안 표시 (SetPushedTexture 로 관리)
+        st.pt:SetPoint("TOPLEFT", 1, -1); st.pt:SetPoint("BOTTOMRIGHT", -1, 1)
         table.insert(SA_SkinBtns, btn)
     end
     pcall(function()
         for _, r in ipairs(st.art) do r:SetAlpha(0) end
         st.bd:SetColorTexture(pal.border[1], pal.border[2], pal.border[3], 1); st.bd:Show()
         st.bg:SetColorTexture(pal.btn[1], pal.btn[2], pal.btn[3], 1); st.bg:Show()
-        st.hl:SetColorTexture(pal.hover[1], pal.hover[2], pal.hover[3], pal.hover[4] or 0.30); st.hl:Show()
+        st.hl:SetColorTexture(pal.btnHover[1], pal.btnHover[2], pal.btnHover[3], pal.btnHover[4] or 0.30); st.hlOn = true
+        st.pt:SetColorTexture(pal.btnHover[1], pal.btnHover[2], pal.btnHover[3], math.min(1, (pal.btnHover[4] or 0.30) + 0.25))
+        btn:SetPushedTexture(st.pt)
         local fs = btn:GetFontString()
-        if fs then fs:SetTextColor(0.92, 0.92, 0.92) end
+        if fs then fs:SetTextColor(pal.btnText[1], pal.btnText[2], pal.btnText[3], pal.btnText[4] or 1) end
     end)
 end
 
@@ -737,9 +766,61 @@ local function SA_SkinButtonRestore(btn)
     if not st then return end
     pcall(function()
         for _, r in ipairs(st.art) do r:SetAlpha(1) end
-        st.bd:Hide(); st.bg:Hide(); st.hl:Hide()
+        st.bd:Hide(); st.bg:Hide(); st.hl:Hide(); st.hlOn = false
+        if st.pt then
+            if st.origPd then btn:SetPushedTexture(st.origPd)   -- 원본 누름 그림 객체 복귀
+            else btn:SetPushedTexture("") end
+            st.pt:Hide()
+        end
         local fs = btn:GetFontString()
         if fs and st.fr then fs:SetTextColor(st.fr, st.fg, st.fb) end
+    end)
+end
+
+-- 닫기(X) 버튼 플랫화: 빨간 원형 X 그림을 숨기고 각진 X 글자 버튼으로
+local function SA_SkinCloseApply(btn, pal)
+    local st = btn.MimDiceSkinClose
+    if not st then
+        st = { art = {} }
+        btn.MimDiceSkinClose = st
+        for _, r in ipairs({ btn:GetRegions() }) do
+            if r:IsObjectType("Texture") then table.insert(st.art, r) end
+        end
+        st.bd = btn:CreateTexture(nil, "BACKGROUND", nil, 0)
+        st.bd:SetPoint("TOPLEFT", 6, -6); st.bd:SetPoint("BOTTOMRIGHT", -6, 6)
+        st.bg = btn:CreateTexture(nil, "BACKGROUND", nil, 1)
+        st.bg:SetPoint("TOPLEFT", 7, -7); st.bg:SetPoint("BOTTOMRIGHT", -7, 7)
+        st.hl = btn:CreateTexture(nil, "ARTWORK", nil, 1)     -- X 글자보다 아래
+        st.hl:SetPoint("TOPLEFT", 7, -7); st.hl:SetPoint("BOTTOMRIGHT", -7, 7)
+        st.hl:Hide()
+        btn:HookScript("OnEnter", function() if st.hlOn then st.hl:Show() end end)
+        btn:HookScript("OnLeave", function() st.hl:Hide() end)
+        -- X 표시: 글자는 창마다 여백이 달라 어긋나 보여서, 선 2개로 직접 그린다 (항상 정중앙)
+        st.x1 = btn:CreateLine(nil, "OVERLAY")
+        st.x1:SetThickness(1.5)
+        st.x1:SetStartPoint("CENTER", st.bg, -3.5, 3.5)
+        st.x1:SetEndPoint("CENTER", st.bg, 3.5, -3.5)
+        st.x2 = btn:CreateLine(nil, "OVERLAY")
+        st.x2:SetThickness(1.5)
+        st.x2:SetStartPoint("CENTER", st.bg, -3.5, -3.5)
+        st.x2:SetEndPoint("CENTER", st.bg, 3.5, 3.5)
+        table.insert(SA_SkinCloses, btn)
+    end
+    pcall(function()
+        for _, r in ipairs(st.art) do r:SetAlpha(0) end
+        st.bd:SetColorTexture(pal.border[1], pal.border[2], pal.border[3], 1); st.bd:Show()
+        st.bg:SetColorTexture(pal.btn[1], pal.btn[2], pal.btn[3], 1); st.bg:Show()
+        st.hl:SetColorTexture(pal.btnHover[1], pal.btnHover[2], pal.btnHover[3], pal.btnHover[4] or 0.30); st.hlOn = true
+        st.x1:SetColorTexture(pal.btnText[1], pal.btnText[2], pal.btnText[3], pal.btnText[4] or 1); st.x1:Show()
+        st.x2:SetColorTexture(pal.btnText[1], pal.btnText[2], pal.btnText[3], pal.btnText[4] or 1); st.x2:Show()
+    end)
+end
+local function SA_SkinCloseRestore(btn)
+    local st = btn.MimDiceSkinClose
+    if not st then return end
+    pcall(function()
+        for _, r in ipairs(st.art) do r:SetAlpha(1) end
+        st.bd:Hide(); st.bg:Hide(); st.hl:Hide(); st.x1:Hide(); st.x2:Hide(); st.hlOn = false
     end)
 end
 
@@ -763,8 +844,11 @@ local function SA_SkinCheckApply(cb, pal)
         st.bd:SetPoint("TOPLEFT", 4, -4); st.bd:SetPoint("BOTTOMRIGHT", -4, 4)
         st.bg = cb:CreateTexture(nil, "BACKGROUND", nil, 1)
         st.bg:SetPoint("TOPLEFT", 5, -5); st.bg:SetPoint("BOTTOMRIGHT", -5, 5)
-        st.hl = cb:CreateTexture(nil, "HIGHLIGHT")
+        st.hl = cb:CreateTexture(nil, "ARTWORK", nil, -1)    -- 체크 표시보다 아래
         st.hl:SetPoint("TOPLEFT", 5, -5); st.hl:SetPoint("BOTTOMRIGHT", -5, 5)
+        st.hl:Hide()
+        cb:HookScript("OnEnter", function() if st.hlOn then st.hl:Show() end end)
+        cb:HookScript("OnLeave", function() st.hl:Hide() end)
         st.ck = cb:CreateTexture(nil, "ARTWORK")   -- 강조색 채움 (체크 표시용)
         st.ck:SetPoint("TOPLEFT", 7, -7); st.ck:SetPoint("BOTTOMRIGHT", -7, 7)
         table.insert(SA_SkinChecks, cb)
@@ -773,7 +857,7 @@ local function SA_SkinCheckApply(cb, pal)
     pcall(function()
         st.bd:SetColorTexture(pal.border[1], pal.border[2], pal.border[3], 1); st.bd:Show()
         st.bg:SetColorTexture(pal.field[1], pal.field[2], pal.field[3], 1); st.bg:Show()
-        st.hl:SetColorTexture(pal.hover[1], pal.hover[2], pal.hover[3], pal.hover[4] or 0.30); st.hl:Show()
+        st.hl:SetColorTexture(pal.btnHover[1], pal.btnHover[2], pal.btnHover[3], pal.btnHover[4] or 0.30); st.hlOn = true
         st.ck:SetColorTexture(pal.hover[1], pal.hover[2], pal.hover[3], 1)
         cb:SetCheckedTexture(st.ck)                    -- 체크 표시 = 강조색 채움
         st.ck:SetShown(cb:GetChecked() and true or false)
@@ -787,6 +871,7 @@ local function SA_SkinCheckRestore(cb)
     pcall(st.bd.Hide, st.bd)
     pcall(st.bg.Hide, st.bg)
     pcall(st.hl.Hide, st.hl)
+    st.hlOn = false
     pcall(function()
         if st.origCk then
             cb:SetCheckedTexture(st.origCk)   -- 원본 체크 텍스처 객체를 그대로 복귀
@@ -922,7 +1007,9 @@ local function SA_SkinWalk(frame, pal, depth)
             local fs = child.GetFontString and child:GetFontString()
             local hasArt = (child.GetNormalTexture and child:GetNormalTexture())
                 or child.Left or child.Center or child.Right   -- 요즘 빨간 버튼의 그림 조각
-            if fs and hasArt and not (name and name:find("CloseButton")) then
+            if child.MimDiceIsClose or (name and name:find("CloseButton")) then
+                SA_SkinCloseApply(child, pal)                  -- 닫기(X)는 전용 플랫화
+            elseif fs and hasArt then
                 SA_SkinButtonApply(child, pal)
             end
         elseif ot == "CheckButton" then
@@ -1037,6 +1124,7 @@ function SA_SkinRefresh()
     else
         for _, w in ipairs(SA_SkinWins) do SA_SkinWindowRestore(w) end
         for _, b in ipairs(SA_SkinBtns) do SA_SkinButtonRestore(b) end
+        for _, x in ipairs(SA_SkinCloses) do SA_SkinCloseRestore(x) end
         for _, c in ipairs(SA_SkinChecks) do SA_SkinCheckRestore(c) end
         for _, e in ipairs(SA_SkinEdits) do SA_SkinEditRestore(e) end
         for _, t in ipairs(SA_SkinTints) do SA_SkinTintRestore(t) end
@@ -1185,6 +1273,7 @@ local function SA_SetDeathContent(role, fontSize, coloredText)
     local fs = math.min(fontSize or 24, 120)   -- WoW 폰트 렌더 한계
     f.text:SetFont(MimDiceFontPath(), fs, "THICKOUTLINE")
     f.text:SetText(coloredText)
+    f.text:SetAlpha((MimDiceDB and MimDiceDB.deathTrack and MimDiceDB.deathTrack.colorA) or 1)
 
     local tc = ROLE_TEXCOORD[role]
     if tc then
@@ -1475,6 +1564,65 @@ local function SA_SetBoxValue(box, value, placeholder)
     end
 end
 
+-- 색상환 아래에 붙는 '투명도 % 숫자 입력' 상자 (투명도 있는 색상환에서만 표시)
+local SA_AlphaBox
+local function SA_AlphaBoxSync(a)   -- 슬라이더로 바꿀 때 숫자칸도 따라가게
+    if SA_AlphaBox and SA_AlphaBox:IsShown() and not SA_AlphaBox.eb:HasFocus() then
+        SA_AlphaBox.eb:SetText(tostring(math.floor((a or 1) * 100 + 0.5)))
+    end
+end
+local function SA_ShowAlphaBox(getFn, setFn)
+    if not (ColorPickerFrame and ColorPickerFrame.SetupColorPickerAndShow) then return end
+    if not SA_AlphaBox then
+        local f = CreateFrame("Frame", nil, ColorPickerFrame)
+        f:SetSize(60, 38)
+        -- 색 코드(#RRGGBB) 칸 바로 위에 배치. 구조가 다른 구버전이면 창 아래로.
+        local hex = ColorPickerFrame.Content and ColorPickerFrame.Content.HexBox
+        if hex then
+            f:SetPoint("BOTTOMRIGHT", hex, "TOPRIGHT", 0, 4)
+        else
+            f:SetPoint("TOPRIGHT", ColorPickerFrame, "BOTTOMRIGHT", -10, 2)
+        end
+        f:SetFrameLevel(ColorPickerFrame:GetFrameLevel() + 10)
+        local lb = f:CreateFontString(nil, "OVERLAY")
+        lb:SetPoint("TOP", f, "TOP", 0, 0)
+        lb:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+        lb:SetText("투명도")
+        lb:SetTextColor(0.9, 0.9, 0.9)
+        local eb = CreateFrame("EditBox", nil, f, "InputBoxTemplate")
+        eb:SetSize(40, 18)
+        eb:SetPoint("BOTTOMLEFT", f, "BOTTOMLEFT", 4, 0)
+        eb:SetAutoFocus(false)
+        eb:SetNumeric(true)
+        eb:SetMaxLetters(3)
+        eb:SetFont(MimDiceFontPath(), 11, "")
+        local pct = f:CreateFontString(nil, "OVERLAY")
+        pct:SetPoint("LEFT", eb, "RIGHT", 4, 0)
+        pct:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+        pct:SetText("%")
+        pct:SetTextColor(0.9, 0.9, 0.9)
+        f.eb = eb
+        eb:SetScript("OnEnterPressed", function(self)
+            local v = tonumber(self:GetText())
+            if v and f.setFn then
+                v = math.max(0, math.min(100, v))
+                f.setFn(v / 100)
+                self:SetText(tostring(v))
+            end
+            self:ClearFocus()
+        end)
+        eb:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+        SA_AlphaBox = f
+    end
+    SA_AlphaBox.setFn = setFn
+    SA_AlphaBox.eb:SetText(tostring(math.floor(((getFn and getFn()) or 1) * 100 + 0.5)))
+    SA_AlphaBox.eb:SetCursorPosition(0)
+    SA_AlphaBox:Show()
+end
+local function SA_HideAlphaBox()
+    if SA_AlphaBox then SA_AlphaBox:Hide() end
+end
+
 -- 공용: 색상 한 줄 [라벨] [스와치=색상환 열기] [RRGGBB 코드 입력] [기본색]
 -- 색상환은 와우 내장 풀 컬러 팔레트. 드래그하는 동안 실시간으로 미리보기 반영.
 -- getFn() → {r,g,b} / setFn(r,g,b) / defaults = {r,g,b} 기본색 / onChange() 미리보기 갱신
@@ -1538,6 +1686,7 @@ local function SA_MakeColorRow(win, y, labelText, getFn, setFn, defaults, onChan
                 opacityFunc = opacityOpt and function()
                     local a = ColorPickerFrame.GetColorAlpha and ColorPickerFrame:GetColorAlpha() or 1
                     opacityOpt.set(a)
+                    SA_AlphaBoxSync(a)
                     if onChange then onChange() end
                 end or nil,
                 cancelFunc = function(prev)
@@ -1550,6 +1699,14 @@ local function SA_MakeColorRow(win, y, labelText, getFn, setFn, defaults, onChan
                     end
                 end,
             })
+            if opacityOpt then
+                SA_ShowAlphaBox(opacityOpt.get, function(a)
+                    opacityOpt.set(a)
+                    if onChange then onChange() end
+                end)
+            else
+                SA_HideAlphaBox()
+            end
         end
     end)
 
@@ -1644,6 +1801,7 @@ local function SA_CreateDeathConfig()
     title:SetTextColor(1, 0.82, 0)
 
     local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn.MimDiceIsClose = true   -- 스킨: 닫기(X) 플랫화 대상
     closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
     closeBtn:SetScript("OnClick", function() win:Hide() end)
 
@@ -1751,16 +1909,25 @@ local function SA_CreateDeathConfig()
     end)
     win.enableCb = enableCb
 
+    -- ── 상세 설정 접기/펼치기 (기본: 접힘 = 소리 + 표시 ON/OFF만 보임) ──
+    local advBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    advBtn:SetSize(310, 22)
+    advBtn:SetPoint("TOP", win, "TOP", 0, -114)
+    advBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
+    local adv = CreateFrame("Frame", nil, win)   -- 상세 위젯 컨테이너 (버튼 높이만큼 아래로)
+    adv:SetPoint("TOPLEFT", win, "TOPLEFT", 0, -28)
+    adv:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", 0, 0)
+
     -- 문구 입력
-    local suffixLabel = win:CreateFontString(nil, "OVERLAY")
-    suffixLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -114)
+    local suffixLabel = adv:CreateFontString(nil, "OVERLAY")
+    suffixLabel:SetPoint("TOPLEFT", adv, "TOPLEFT", 15, -114)
     suffixLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     suffixLabel:SetText("닉네임 뒤 문구 (예: 사망 !!)")
     suffixLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    local suffixBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    local suffixBox = CreateFrame("EditBox", nil, adv, "InputBoxTemplate")
     suffixBox:SetSize(200, 22)
-    suffixBox:SetPoint("TOPLEFT", win, "TOPLEFT", 20, -134)
+    suffixBox:SetPoint("TOPLEFT", adv, "TOPLEFT", 20, -134)
     suffixBox:SetAutoFocus(false)
     suffixBox:SetFont(MimDiceFontPath(), 12, "")
     suffixBox:SetScript("OnTextChanged", function(self, userInput)
@@ -1773,21 +1940,25 @@ local function SA_CreateDeathConfig()
     win.suffixBox = suffixBox
 
     -- 글씨 크기 (슬라이더 + 직접 입력)
-    local sizeSlider = SA_MakeNumberSlider(win, "MimDice_DeathSizeSlider", -166, "글씨 크기", 12, 120,
+    local sizeSlider = SA_MakeNumberSlider(adv, "MimDice_DeathSizeSlider", -166, "글씨 크기", 12, 120,
         function() return MimDiceDB.deathTrack.fontSize end,
         function(v) MimDiceDB.deathTrack.fontSize = v end,
         function() SA_RefreshPreviewIfVisible() end)
     win.sizeSlider = sizeSlider
 
     -- 문구 색상 (색상환 풀 팔레트 + 코드 입력 + 기본색)
-    win.colorRefresh = SA_MakeColorRow(win, -222, "문구 색상",
+    win.colorRefresh = SA_MakeColorRow(adv, -222, "문구 색상",
         function() return MimDiceDB.deathTrack.color end,
         function(r, g, b) MimDiceDB.deathTrack.color = { r = r, g = g, b = b } end,
         { 1, 0.2, 0.2 },
-        function() SA_RefreshPreviewIfVisible() end)
+        function() SA_RefreshPreviewIfVisible() end,
+        {
+            get = function() return MimDiceDB.deathTrack.colorA or 1 end,
+            set = function(a) MimDiceDB.deathTrack.colorA = a end,
+        })
 
     -- 위치 X/Y 직접 입력
-    local posRefresh, posX, posY = SA_AddPosRow(win, -258,
+    local posRefresh, posX, posY = SA_AddPosRow(adv, -258,
         function() return MimDiceDB.deathTrack.x end,
         function(v) MimDiceDB.deathTrack.x = v end,
         function() return MimDiceDB.deathTrack.y end,
@@ -1829,6 +2000,7 @@ local function SA_CreateDeathConfig()
         local dt = MimDiceDB.deathTrack
         dt.fontSize, dt.x, dt.y = 80, 0, 130
         dt.color = { r = 1, g = 0.2, b = 0.2 }
+        dt.colorA = 1
         dt.locked, dt.showMessage = true, true
         SA_UpdateDeathFrame()
         SA_RefreshDeathConfig()
@@ -1863,6 +2035,20 @@ local function SA_CreateDeathConfig()
         local was = dt.enabled; dt.enabled = true  -- 테스트는 마스터 off여도 강제 재생
         SA_PlaySound(dt); dt.enabled = was
     end)
+
+    -- 상세 설정 접기/펼치기 적용 (접으면 창도 짧아짐)
+    local function ApplyAdv()
+        local open = MimDiceDB.deathTrack.advOpen and true or false
+        adv:SetShown(open)
+        win:SetHeight(open and 378 or 190)
+        advBtn:SetText(open and "상세 설정 접기" or "상세 설정 열기 : 문구/크기/색/위치")
+    end
+    win.ApplyAdv = ApplyAdv
+    advBtn:SetScript("OnClick", function()
+        MimDiceDB.deathTrack.advOpen = not MimDiceDB.deathTrack.advOpen
+        ApplyAdv()
+    end)
+    ApplyAdv()
 
     SA_SkinRegisterWindow(win)   -- 스킨 대상 등록 (켜져 있으면 즉시 적용)
     win:Hide()  -- 생성 직후 숨김 (CreateFrame 기본은 표시 상태 → 첫 클릭에 닫히는 문제 방지)
@@ -1955,6 +2141,7 @@ local function SA_CreateBuffConfig(key)
     title:SetTextColor(1, 0.82, 0)
 
     local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn.MimDiceIsClose = true   -- 스킨: 닫기(X) 플랫화 대상
     closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
     closeBtn:SetScript("OnClick", function() win:Hide() end)
 
@@ -2067,8 +2254,17 @@ local function SA_CreateBuffConfig(key)
     end)
     win.barCb = barCb
 
+    -- ── 상세 설정 접기/펼치기 (기본: 접힘 = 소리 + 바 표시 ON/OFF만 보임) ──
+    local advBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    advBtn:SetSize(310, 22)
+    advBtn:SetPoint("TOP", win, "TOP", 0, -114)
+    advBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
+    local adv = CreateFrame("Frame", nil, win)
+    adv:SetPoint("TOPLEFT", win, "TOPLEFT", 0, -28)
+    adv:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", 0, 0)
+
     -- 바 색상 (색상환 풀 팔레트 + 코드 입력 + 기본색. 색상환의 투명도 슬라이더 = 바 투명도와 연동)
-    win.colorRefresh = SA_MakeColorRow(win, -112, "바 색상",
+    win.colorRefresh = SA_MakeColorRow(adv, -112, "바 색상",
         function() return MimDiceDB.buffTrack[key].color end,
         function(r, g, b) MimDiceDB.buffTrack[key].color = { r = r, g = g, b = b } end,
         { def.color[1], def.color[2], def.color[3] },
@@ -2081,12 +2277,12 @@ local function SA_CreateBuffConfig(key)
         })
 
     -- 크기/투명도 슬라이더 (가로/세로/글씨/투명도)
-    win.wSlider = SA_AddBuffSlider(win, key, "MimDice_BuffW_" .. key, -148, "바 가로 크기", 100, 1900, "width")
-    win.hSlider = SA_AddBuffSlider(win, key, "MimDice_BuffH_" .. key, -202, "바 세로 크기", 16, 300, "height")
-    win.tfSlider = SA_AddBuffSlider(win, key, "MimDice_BuffTF_" .. key, -256, "글씨 크기 (라벨+남은시간)", 8, 120, "timeFontSize")
+    win.wSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffW_" .. key, -148, "바 가로 크기", 100, 1900, "width")
+    win.hSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffH_" .. key, -202, "바 세로 크기", 16, 300, "height")
+    win.tfSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffTF_" .. key, -256, "글씨 크기 (라벨+남은시간)", 8, 120, "timeFontSize")
 
     -- 위치 X/Y 직접 입력
-    local posRefresh, posX, posY = SA_AddPosRow(win, -302,
+    local posRefresh, posX, posY = SA_AddPosRow(adv, -302,
         function() return MimDiceDB.buffTrack[key].x end,
         function(v) MimDiceDB.buffTrack[key].x = v end,
         function() return MimDiceDB.buffTrack[key].y end,
@@ -2151,6 +2347,21 @@ local function SA_CreateBuffConfig(key)
         win.posRefresh()
         win.colorRefresh()   -- 색상 스와치/코드칸 갱신
     end
+
+    -- 상세 설정 접기/펼치기 적용 (접으면 창도 짧아짐)
+    local function ApplyAdv()
+        local open = MimDiceDB.buffTrack[key].advOpen and true or false
+        adv:SetShown(open)
+        win:SetHeight(open and 444 or 190)
+        advBtn:SetText(open and "상세 설정 접기" or "상세 설정 열기 : 색/크기/위치")
+    end
+    win.ApplyAdv = ApplyAdv
+    advBtn:SetScript("OnClick", function()
+        local bt = MimDiceDB.buffTrack[key]
+        bt.advOpen = not bt.advOpen
+        ApplyAdv()
+    end)
+    ApplyAdv()
 
     win:Hide()
     SA_SkinRegisterWindow(win)   -- 스킨 대상 등록
@@ -2744,6 +2955,7 @@ local function SA_EnsureSoundPicker()
     note:SetTextColor(0.7, 0.7, 0.7)
 
     local closeBtn = CreateFrame("Button", nil, p, "UIPanelCloseButton")
+    closeBtn.MimDiceIsClose = true   -- 스킨: 닫기(X) 플랫화 대상
     closeBtn:SetPoint("TOPRIGHT", -2, -2)
     closeBtn:SetScript("OnClick", function() p:Hide() end)
 
@@ -2871,6 +3083,7 @@ function SA_CreateBattleResIconConfig()
     title:SetTextColor(1, 0.82, 0)
 
     local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn.MimDiceIsClose = true   -- 스킨: 닫기(X) 플랫화 대상
     closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
     closeBtn:SetScript("OnClick", function() win:Hide() end)
 
@@ -2966,14 +3179,23 @@ function SA_CreateBattleResIconConfig()
     end)
     win.enCb = enCb
 
+    -- ── 상세 설정 접기/펼치기 (기본: 접힘 = 소리 + 아이콘 표시 ON/OFF만 보임) ──
+    local advBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    advBtn:SetSize(310, 22)
+    advBtn:SetPoint("TOP", win, "TOP", 0, -134)
+    advBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
+    local adv = CreateFrame("Frame", nil, win)
+    adv:SetPoint("TOPLEFT", win, "TOPLEFT", 0, -28)
+    adv:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", 0, 0)
+
     -- 아이콘 크기 슬라이더
-    win.sizeSlider = SA_MakeNumberSlider(win, "MimDice_BRIconSize", -148, "아이콘 크기", 16, 128,
+    win.sizeSlider = SA_MakeNumberSlider(adv, "MimDice_BRIconSize", -148, "아이콘 크기", 16, 128,
         function() return MimDiceDB.battleRes.iconSize end,
         function(v) MimDiceDB.battleRes.iconSize = v end,
         function() SA_UpdateBattleResIcon() end)
 
     -- 위치 X/Y 직접 입력
-    local posRefresh, posX, posY = SA_AddPosRow(win, -210,
+    local posRefresh, posX, posY = SA_AddPosRow(adv, -210,
         function() return MimDiceDB.battleRes.iconX end,
         function(v) MimDiceDB.battleRes.iconX = v end,
         function() return MimDiceDB.battleRes.iconY end,
@@ -2983,8 +3205,8 @@ function SA_CreateBattleResIconConfig()
     SA_ChainTabEnter({ win.sizeSlider.edit, posX, posY })
 
     -- 안내문
-    local hint = win:CreateFontString(nil, "OVERLAY")
-    hint:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -250)
+    local hint = adv:CreateFontString(nil, "OVERLAY")
+    hint:SetPoint("TOPLEFT", adv, "TOPLEFT", 15, -250)
     hint:SetFont(MimDiceFontPath(), 10, "")
     hint:SetTextColor(0.7, 0.7, 0.7)
     hint:SetWidth(310); hint:SetJustifyH("LEFT")
@@ -3048,6 +3270,20 @@ function SA_CreateBattleResIconConfig()
         win.posRefresh()
         win.RefreshLockBtn()
     end
+
+    -- 상세 설정 접기/펼치기 적용 (접으면 창도 짧아짐)
+    local function ApplyAdv()
+        local open = MimDiceDB.battleRes.advOpen and true or false
+        adv:SetShown(open)
+        win:SetHeight(open and 390 or 210)
+        advBtn:SetText(open and "상세 설정 접기" or "상세 설정 열기 : 크기/위치")
+    end
+    win.ApplyAdv = ApplyAdv
+    advBtn:SetScript("OnClick", function()
+        MimDiceDB.battleRes.advOpen = not MimDiceDB.battleRes.advOpen
+        ApplyAdv()
+    end)
+    ApplyAdv()
 
     win:Hide()
     SA_SkinRegisterWindow(win)   -- 스킨 대상 등록
@@ -3215,8 +3451,14 @@ local function SA_PartyApplicantText(appID)
     if pa.showName ~= false then segs[#segs+1] = disp end
     if #stats > 0 then
         local sc = pa.statColor or { r = 1, g = 1, b = 1 }
+        -- 글자 일부만 진짜 투명하게는 안 되므로, 투명도만큼 배경색 쪽으로 섞어서 표현
+        local sa = pa.statColorA or 1
+        local bgc = pa.bgColor or { r = 0, g = 0, b = 0 }
+        local mr = sc.r * sa + (bgc.r or 0) * (1 - sa)
+        local mg = sc.g * sa + (bgc.g or 0) * (1 - sa)
+        local mb = sc.b * sa + (bgc.b or 0) * (1 - sa)
         segs[#segs+1] = string.format("|cff%02x%02x%02x%s|r",
-            math.floor(sc.r * 255 + 0.5), math.floor(sc.g * 255 + 0.5), math.floor(sc.b * 255 + 0.5),
+            math.floor(mr * 255 + 0.5), math.floor(mg * 255 + 0.5), math.floor(mb * 255 + 0.5),
             table.concat(stats, " / "))
     end
     return table.concat(segs, "  ")
@@ -3279,8 +3521,14 @@ local function SA_PartyPreviewText()
     if pa.showName ~= false then segs[#segs+1] = disp end
     if #stats > 0 then
         local sc = pa.statColor or { r = 1, g = 1, b = 1 }
+        -- 글자 일부만 진짜 투명하게는 안 되므로, 투명도만큼 배경색 쪽으로 섞어서 표현
+        local sa = pa.statColorA or 1
+        local bgc = pa.bgColor or { r = 0, g = 0, b = 0 }
+        local mr = sc.r * sa + (bgc.r or 0) * (1 - sa)
+        local mg = sc.g * sa + (bgc.g or 0) * (1 - sa)
+        local mb = sc.b * sa + (bgc.b or 0) * (1 - sa)
         segs[#segs+1] = string.format("|cff%02x%02x%02x%s|r",
-            math.floor(sc.r * 255 + 0.5), math.floor(sc.g * 255 + 0.5), math.floor(sc.b * 255 + 0.5),
+            math.floor(mr * 255 + 0.5), math.floor(mg * 255 + 0.5), math.floor(mb * 255 + 0.5),
             table.concat(stats, " / "))
     end
     return table.concat(segs, "  ")
@@ -3405,6 +3653,7 @@ local function SA_ShowPartyAlert(preview, appID)
     local info = preview and SA_PartyPreviewText() or SA_PartyApplicantText(appID)
     if info and info ~= "" then msg = msg .. "  " .. info end
     f.text:SetText(msg)
+    f.text:SetAlpha(pa.colorA or 1)
     f.FitToText()
 
     f.fadeAnim:Stop(); f:SetAlpha(1); f:Show()
@@ -3440,6 +3689,7 @@ local function SA_RenderPartyPreview()
     local msg = "|cff" .. hex .. (pa.prefix or "새 파티 신청!") .. "|r"
     if info and info ~= "" then msg = msg .. "  " .. info end
     f.text:SetText(msg)
+    f.text:SetAlpha(pa.colorA or 1)
     f.FitToText()
     f.fadeAnim:Stop(); f:SetAlpha(1); f:Show()
 end
@@ -3650,6 +3900,7 @@ local function SA_CreatePartyConfig()
     title:SetTextColor(1, 0.82, 0)
 
     local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn.MimDiceIsClose = true   -- 스킨: 닫기(X) 플랫화 대상
     closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
     closeBtn:SetScript("OnClick", function() win:Hide() end)
 
@@ -3727,15 +3978,33 @@ local function SA_CreatePartyConfig()
     end)
     soundBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
 
+    -- ── 구분선 + 5인 풀파티 + [상세 설정] : 상세 설정 버튼은 항상 제일 아래 ──
+    local sep = win:CreateTexture(nil, "ARTWORK")
+    sep:SetColorTexture(0.5, 0.5, 0.5, 0.4)
+    sep:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -88)
+    sep:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -88)
+    sep:SetHeight(1)
+    local fpg = CreateFrame("Frame", nil, win)   -- 5인 풀파티 묶음 (구분선 아래 고정)
+    fpg:SetHeight(56)
+    fpg:SetPoint("TOPLEFT", win, "TOPLEFT", 0, -96)
+    fpg:SetPoint("TOPRIGHT", win, "TOPRIGHT", 0, -96)
+    local advBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    advBtn:SetSize(310, 22)
+    advBtn:SetPoint("TOP", win, "TOP", 0, -172)
+    advBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
+    local adv = CreateFrame("Frame", nil, win)   -- 상세 위젯 컨테이너 ([상세 설정] 버튼 아래)
+    adv:SetPoint("TOPLEFT", win, "TOPLEFT", 0, -118)
+    adv:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", 0, 0)
+
     -- ── 문구 입력 (prefix) ──
-    local prefixLabel = win:CreateFontString(nil, "OVERLAY")
-    prefixLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -84)
+    local prefixLabel = adv:CreateFontString(nil, "OVERLAY")
+    prefixLabel:SetPoint("TOPLEFT", adv, "TOPLEFT", 15, -84)
     prefixLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     prefixLabel:SetText("화면 문구 (예: 새 파티 신청!)")
     prefixLabel:SetTextColor(0.9, 0.9, 0.9)
-    local prefixBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    local prefixBox = CreateFrame("EditBox", nil, adv, "InputBoxTemplate")
     prefixBox:SetSize(200, 22)
-    prefixBox:SetPoint("TOPLEFT", win, "TOPLEFT", 20, -104)
+    prefixBox:SetPoint("TOPLEFT", adv, "TOPLEFT", 20, -104)
     prefixBox:SetAutoFocus(false); prefixBox:SetFont(MimDiceFontPath(), 12, "")
     prefixBox:SetScript("OnTextChanged", function(self, userInput)
         if userInput then MimDiceDB.partyAlert.prefix = self:GetText(); SA_PartyRefreshPreview() end
@@ -3744,21 +4013,21 @@ local function SA_CreatePartyConfig()
     win.prefixBox = prefixBox
 
     -- ── 표시 항목 체크 (특성 / 아이템렙 / 쐐기점수) ──
-    local itemLabel = win:CreateFontString(nil, "OVERLAY")
-    itemLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -132)
+    local itemLabel = adv:CreateFontString(nil, "OVERLAY")
+    itemLabel:SetPoint("TOPLEFT", adv, "TOPLEFT", 15, -132)
     itemLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     itemLabel:SetText("표시 항목")
     itemLabel:SetTextColor(0.9, 0.9, 0.9)
 
     local function mkShowCb(x, field, text)
-        local cb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
+        local cb = CreateFrame("CheckButton", nil, adv, "UICheckButtonTemplate")
         cb:SetSize(22, 22)
-        cb:SetPoint("TOPLEFT", win, "TOPLEFT", x, -148)
+        cb:SetPoint("TOPLEFT", adv, "TOPLEFT", x, -148)
         cb:SetScript("OnClick", function(self)
             MimDiceDB.partyAlert[field] = self:GetChecked() and true or false
             SA_PartyRefreshPreview()
         end)
-        local lb = win:CreateFontString(nil, "OVERLAY")
+        local lb = adv:CreateFontString(nil, "OVERLAY")
         lb:SetPoint("LEFT", cb, "RIGHT", 0, 0)
         lb:SetFont(MimDiceFontPath(), 10, "OUTLINE")
         lb:SetText(text); lb:SetTextColor(0.9, 0.9, 0.9)
@@ -3770,27 +4039,35 @@ local function SA_CreatePartyConfig()
     win.scoreCb = mkShowCb(225, "showScore",     "쐐기점수")
 
     -- ── 글씨 크기 ──
-    win.sizeSlider = SA_MakeNumberSlider(win, "MimDice_PartySizeSlider", -180, "글씨 크기", 12, 120,
+    win.sizeSlider = SA_MakeNumberSlider(adv, "MimDice_PartySizeSlider", -180, "글씨 크기", 12, 120,
         function() return MimDiceDB.partyAlert.fontSize end,
         function(v) MimDiceDB.partyAlert.fontSize = v end,
         function() SA_PartyRefreshPreview() end)
 
     -- ── 문구 색상 (색상환 풀 팔레트 + 코드 입력 + 기본색) ──
-    win.colorRefresh = SA_MakeColorRow(win, -268, "문구 색상",
+    win.colorRefresh = SA_MakeColorRow(adv, -268, "문구 색상",
         function() return MimDiceDB.partyAlert.color end,
         function(r, g, b) MimDiceDB.partyAlert.color = { r = r, g = g, b = b } end,
         { 0.3, 1, 0.3 },
-        function() SA_PartyRefreshPreview() end)
+        function() SA_PartyRefreshPreview() end,
+        {
+            get = function() return MimDiceDB.partyAlert.colorA or 1 end,
+            set = function(a) MimDiceDB.partyAlert.colorA = a end,
+        })
 
     -- ── 템렙/쐐기 글자색 ──
-    win.statColorRefresh = SA_MakeColorRow(win, -294, "템렙/쐐기 색상",
+    win.statColorRefresh = SA_MakeColorRow(adv, -294, "템렙/쐐기 색상",
         function() return MimDiceDB.partyAlert.statColor end,
         function(r, g, b) MimDiceDB.partyAlert.statColor = { r = r, g = g, b = b } end,
         { 1, 1, 1 },
-        function() SA_PartyRefreshPreview() end)
+        function() SA_PartyRefreshPreview() end,
+        {
+            get = function() return MimDiceDB.partyAlert.statColorA or 1 end,
+            set = function(a) MimDiceDB.partyAlert.statColorA = a end,
+        })
 
     -- ── 배경 색상 (색상환의 투명도 슬라이더 = 배경 투명도와 연동) ──
-    win.bgColorRefresh = SA_MakeColorRow(win, -320, "배경 색상",
+    win.bgColorRefresh = SA_MakeColorRow(adv, -320, "배경 색상",
         function() return MimDiceDB.partyAlert.bgColor end,
         function(r, g, b) MimDiceDB.partyAlert.bgColor = { r = r, g = g, b = b } end,
         { 0, 0, 0 },
@@ -3803,19 +4080,19 @@ local function SA_CreatePartyConfig()
 
     -- ── 알림 방식: 반복 알림 / 표시 지속 ──
     -- 반복 알림(놓침 방지): 켜면 대기 신청자가 있는 동안 N초마다 재알림, 끄면 신청 올 때 1회만
-    local repeatCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
+    local repeatCb = CreateFrame("CheckButton", nil, adv, "UICheckButtonTemplate")
     repeatCb:SetSize(22, 22)
-    repeatCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -352)
-    local repeatLb = win:CreateFontString(nil, "OVERLAY")
+    repeatCb:SetPoint("TOPLEFT", adv, "TOPLEFT", 15, -352)
+    local repeatLb = adv:CreateFontString(nil, "OVERLAY")
     repeatLb:SetPoint("LEFT", repeatCb, "RIGHT", 0, 0)
     repeatLb:SetFont(MimDiceFontPath(), 10, "OUTLINE")
     repeatLb:SetText("반복 알림"); repeatLb:SetTextColor(0.9, 0.9, 0.9)
-    local repeatBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    local repeatBox = CreateFrame("EditBox", nil, adv, "InputBoxTemplate")
     repeatBox:SetSize(38, 20)
     repeatBox:SetPoint("LEFT", repeatCb, "RIGHT", 58, 0)
     repeatBox:SetAutoFocus(false); repeatBox:SetFont(MimDiceFontPath(), 11, "")
     repeatBox:SetNumeric(true); repeatBox:SetMaxLetters(3); repeatBox:SetJustifyH("CENTER")
-    local repeatSuffix = win:CreateFontString(nil, "OVERLAY")
+    local repeatSuffix = adv:CreateFontString(nil, "OVERLAY")
     repeatSuffix:SetPoint("LEFT", repeatBox, "RIGHT", 6, 0)
     repeatSuffix:SetFont(MimDiceFontPath(), 10, "OUTLINE")
     repeatSuffix:SetText("초마다 (끄면 1회만)"); repeatSuffix:SetTextColor(0.7, 0.7, 0.7)
@@ -3835,19 +4112,19 @@ local function SA_CreatePartyConfig()
     win.repeatCb = repeatCb; win.repeatBox = repeatBox
 
     -- 표시 지속: 켜면 N초 뒤 페이드아웃, 끄면 대기 신청자 없어질 때까지 계속 표시
-    local displayCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
+    local displayCb = CreateFrame("CheckButton", nil, adv, "UICheckButtonTemplate")
     displayCb:SetSize(22, 22)
-    displayCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -380)
-    local displayLb = win:CreateFontString(nil, "OVERLAY")
+    displayCb:SetPoint("TOPLEFT", adv, "TOPLEFT", 15, -380)
+    local displayLb = adv:CreateFontString(nil, "OVERLAY")
     displayLb:SetPoint("LEFT", displayCb, "RIGHT", 0, 0)
     displayLb:SetFont(MimDiceFontPath(), 10, "OUTLINE")
     displayLb:SetText("자동 숨김"); displayLb:SetTextColor(0.9, 0.9, 0.9)
-    local durationBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    local durationBox = CreateFrame("EditBox", nil, adv, "InputBoxTemplate")
     durationBox:SetSize(38, 20)
     durationBox:SetPoint("LEFT", displayCb, "RIGHT", 58, 0)
     durationBox:SetAutoFocus(false); durationBox:SetFont(MimDiceFontPath(), 11, "")
     durationBox:SetNumeric(true); durationBox:SetMaxLetters(3); durationBox:SetJustifyH("CENTER")
-    local durationSuffix = win:CreateFontString(nil, "OVERLAY")
+    local durationSuffix = adv:CreateFontString(nil, "OVERLAY")
     durationSuffix:SetPoint("LEFT", durationBox, "RIGHT", 6, 0)
     durationSuffix:SetFont(MimDiceFontPath(), 10, "OUTLINE")
     durationSuffix:SetText("초 뒤 (끄면 계속표시)"); durationSuffix:SetTextColor(0.7, 0.7, 0.7)
@@ -3863,10 +4140,10 @@ local function SA_CreatePartyConfig()
     win.displayCb = displayCb; win.durationBox = durationBox
 
     -- ── 파티장이 아니어도 알림 받기 ──
-    local anyRoleCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
+    local anyRoleCb = CreateFrame("CheckButton", nil, adv, "UICheckButtonTemplate")
     anyRoleCb:SetSize(22, 22)
-    anyRoleCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -408)
-    local anyRoleLb = win:CreateFontString(nil, "OVERLAY")
+    anyRoleCb:SetPoint("TOPLEFT", adv, "TOPLEFT", 15, -408)
+    local anyRoleLb = adv:CreateFontString(nil, "OVERLAY")
     anyRoleLb:SetPoint("LEFT", anyRoleCb, "RIGHT", 0, 0)
     anyRoleLb:SetFont(MimDiceFontPath(), 10, "OUTLINE")
     anyRoleLb:SetText("파티장/공대장/부공대장이 아닐 때도 알림 받기")
@@ -3879,7 +4156,7 @@ local function SA_CreatePartyConfig()
     -- ── 5인 풀파티 알림 (소리 + 와우 작업표시줄 아이콘 반짝임) ──
     local fpCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
     fpCb:SetSize(22, 22)
-    fpCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -436)
+    fpCb:SetPoint("TOPLEFT", fpg, "TOPLEFT", 15, -2)
     local fpLb = win:CreateFontString(nil, "OVERLAY")
     fpLb:SetPoint("LEFT", fpCb, "RIGHT", 0, 0)
     fpLb:SetFont(MimDiceFontPath(), 10, "OUTLINE")
@@ -3891,20 +4168,20 @@ local function SA_CreatePartyConfig()
     win.fpCb = fpCb
 
     -- 풀파티 사운드 선택 (내장/커스텀/ID)
-    win.fpTypeRefresh = SA_MakeTypeSelector(win, 15, -464,
+    win.fpTypeRefresh = SA_MakeTypeSelector(fpg, 15, -30,
         function() return MimDiceDB.partyAlert.fullParty.soundType end,
         function(t) MimDiceDB.partyAlert.fullParty.soundType = t; win.RefreshFpSoundRow() end)
 
     local fpSoundBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
     fpSoundBox:SetSize(135, 22)
-    fpSoundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -464)
+    fpSoundBox:SetPoint("TOPLEFT", fpg, "TOPLEFT", 157, -30)
     fpSoundBox:SetAutoFocus(false); fpSoundBox:SetFont(MimDiceFontPath(), 11, "")
     win.fpSoundBox = fpSoundBox
     SA_WirePlaceholder(fpSoundBox)
 
     local fpSelectBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     fpSelectBtn:SetSize(135, 22)
-    fpSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -464)
+    fpSelectBtn:SetPoint("TOPLEFT", fpg, "TOPLEFT", 157, -30)
     do
         local fs = fpSelectBtn:GetFontString()
         fs:SetFont(MimDiceFontPath(), 10, ""); fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
@@ -3925,7 +4202,7 @@ local function SA_CreatePartyConfig()
 
     local fpTestBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     fpTestBtn:SetSize(24, 22)
-    fpTestBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -464)
+    fpTestBtn:SetPoint("TOPRIGHT", fpg, "TOPRIGHT", -15, -30)
     fpTestBtn:SetText("▶")
     fpTestBtn:SetScript("OnClick", function()
         local fp = MimDiceDB.partyAlert.fullParty
@@ -3956,7 +4233,7 @@ local function SA_CreatePartyConfig()
     fpSoundBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
 
     -- ── 위치 X/Y ──
-    local posRefresh, posX, posY = SA_AddPosRow(win, -236,
+    local posRefresh, posX, posY = SA_AddPosRow(adv, -236,
         function() return MimDiceDB.partyAlert.x end,
         function(v) MimDiceDB.partyAlert.x = v end,
         function() return MimDiceDB.partyAlert.y end,
@@ -3995,6 +4272,7 @@ local function SA_CreatePartyConfig()
         pa.bgAlpha = 0.5
         pa.bgColor = { r = 0, g = 0, b = 0 }
         pa.statColor = { r = 1, g = 1, b = 1 }
+        pa.colorA, pa.statColorA = 1, 1
         pa.repeatMode, pa.repeatInterval = "once", 5
         pa.displayMode, pa.duration = "fade", 4
         pa.alertAnyRole = false
@@ -4013,6 +4291,20 @@ local function SA_CreatePartyConfig()
     testBtn:SetText("테스트")
     testBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     testBtn:SetScript("OnClick", function() SA_ShowPartyAlert(true) end)
+
+    -- 상세 설정 접기/펼치기 적용 (상세 내용은 버튼 아래로 펼쳐지고, 접으면 창이 짧아짐)
+    local function ApplyAdv()
+        local open = MimDiceDB.partyAlert.advOpen and true or false
+        adv:SetShown(open)
+        win:SetHeight(open and 600 or 246)
+        advBtn:SetText(open and "상세 설정 접기" or "상세 설정 열기 : 문구/크기/색/위치/반복")
+    end
+    win.ApplyAdv = ApplyAdv
+    advBtn:SetScript("OnClick", function()
+        MimDiceDB.partyAlert.advOpen = not MimDiceDB.partyAlert.advOpen
+        ApplyAdv()
+    end)
+    ApplyAdv()
 
     win:Hide()
     SA_SkinRegisterWindow(win)   -- 스킨 대상 등록
@@ -4505,12 +4797,16 @@ function SA_SkinRefreshTabs()
         SA_TabOption:ClearAllPoints()
         SA_TabOption:SetPoint("TOPLEFT", _G.MainWindow, "TOPRIGHT", tx, -30)
         local wx = tx + 34 + (SA_SkinOn() and 14 or 8)   -- 탭 폭 34 + 우측 창까지 간격 (스킨 켬 14 / 끔 8)
-        for _, w in ipairs({ SA_OptionWindow, SA_WhisperWindow, SA_SkinWindow }) do
+        for _, w in ipairs({ SA_OptionWindow, SA_WhisperWindow }) do
             if w then
                 w:ClearAllPoints()
                 w:SetPoint("TOPLEFT", _G.MainWindow, "TOPRIGHT", wx, 0)
                 w:SetPoint("BOTTOMLEFT", _G.MainWindow, "BOTTOMRIGHT", wx, 0)
             end
+        end
+        if SA_SkinWindow then   -- 스킨 창은 내용이 많아 고정 높이 (위쪽만 맞춤)
+            SA_SkinWindow:ClearAllPoints()
+            SA_SkinWindow:SetPoint("TOPLEFT", _G.MainWindow, "TOPRIGHT", wx, 0)
         end
     end
     -- 1) 테두리 모양 전환 (스킨 켬 = 각진 1px / 끔 = 원래 테두리)
@@ -4739,6 +5035,7 @@ local function SA_CreateWindow()
     -- (옛 제목 "스킬 사운드 알림 설정"은 섹션 헤더로 대체되어 제거됨)
 
     local closeBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelCloseButton")
+    closeBtn.MimDiceIsClose = true   -- 스킨: 닫기(X) 플랫화 대상
     closeBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -2, -2)
     closeBtn:SetScript("OnClick", function() SA_ToggleWindow() end)
 
@@ -5345,6 +5642,7 @@ local function SA_CreateWhisperWindow()
     win:Hide()
 
     local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn.MimDiceIsClose = true   -- 스킨: 닫기(X) 플랫화 대상
     closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
     closeBtn:SetScript("OnClick", function() SA_ToggleWhisperWindow() end)
 
@@ -5485,8 +5783,10 @@ local SA_FontWindow
 local function SA_CreateFontWindow()
     if SA_FontWindow then return SA_FontWindow end
     local win = CreateFrame("Frame", "SA_FontWindow", UIParent, "BackdropTemplate")
-    win:SetSize(340, 540)
-    win:SetPoint("CENTER", UIParent, "CENTER", 140, 0)
+    win:SetWidth(340)
+    -- 사운드 설정창처럼 고정 위치: 스킨 창 오른쪽에 붙여서, 창 묶음과 같이 움직인다
+    win:SetPoint("TOPLEFT", SA_SkinWindow, "TOPRIGHT", 8, 0)
+    win:SetPoint("BOTTOMLEFT", SA_SkinWindow, "BOTTOMRIGHT", 8, 0)
     win:SetFrameStrata("DIALOG")
     win:SetBackdrop({
         bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
@@ -5497,14 +5797,10 @@ local function SA_CreateFontWindow()
     win:SetBackdropColor(0, 0, 0, 0.85)
     win:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
     win:EnableMouse(true)
-    win:SetMovable(true)
-    win:SetClampedToScreen(true)
-    win:RegisterForDrag("LeftButton")
-    win:SetScript("OnDragStart", function(self) self:StartMoving() end)
-    win:SetScript("OnDragStop", function(self) self:StopMovingOrSizing() end)
     win:Hide()
 
     local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn.MimDiceIsClose = true   -- 스킨: 닫기(X) 플랫화 대상
     closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
     closeBtn:SetScript("OnClick", function() win:Hide() end)
 
@@ -5523,7 +5819,7 @@ local function SA_CreateFontWindow()
     -- 폰트 목록 (스크롤)
     local scroll = CreateFrame("ScrollFrame", "SA_FontWindowScroll", win, "UIPanelScrollFrameTemplate")
     scroll:SetPoint("TOPLEFT", win, "TOPLEFT", 12, -54)
-    scroll:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -32, 148)
+    scroll:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -32, 200)
     local content = CreateFrame("Frame", nil, scroll)
     content:SetSize(280, 10)
     scroll:SetScrollChild(content)
@@ -5531,26 +5827,23 @@ local function SA_CreateFontWindow()
     win.rows = {}
 
     -- 내 폰트 등록칸
-    local addLabel = win:CreateFontString(nil, "OVERLAY")
-    addLabel:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 126)
-    addLabel:SetFont(MimDiceFontPath(), 10, "OUTLINE")
-    addLabel:SetText("내 폰트 : 와우의 Fonts 폴더가 아닌, 밈다이스 안의 Fonts 폴더에")
-    addLabel:SetTextColor(0.8, 0.8, 0.8)
-    local addLabel2 = win:CreateFontString(nil, "OVERLAY")
-    addLabel2:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 114)
-    addLabel2:SetFont(MimDiceFontPath(), 10, "OUTLINE")
-    addLabel2:SetText("폰트 파일을 넣어주세요 (Interface\\AddOns\\MimDice\\Fonts)")
-    addLabel2:SetTextColor(0.8, 0.8, 0.8)
-    local addLabel3 = win:CreateFontString(nil, "OVERLAY")
-    addLabel3:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 102)
-    addLabel3:SetFont(MimDiceFontPath(), 10, "OUTLINE")
-    addLabel3:SetText("ttf, otf 만 돼요 (woff 웹폰트 / ttc 모음 파일은 안 돼요)")
-    addLabel3:SetTextColor(0.8, 0.8, 0.8)
-    local addLabel4 = win:CreateFontString(nil, "OVERLAY")
-    addLabel4:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 90)
-    addLabel4:SetFont(MimDiceFontPath(), 10, "OUTLINE")
-    addLabel4:SetText("게임을 껐다 켠 뒤, 파일 이름을 적고 [추가] (예: 나눔스퀘어.ttf)")
-    addLabel4:SetTextColor(0.8, 0.8, 0.8)
+    local addHelp = win:CreateFontString(nil, "OVERLAY")
+    addHelp:SetPoint("BOTTOMLEFT", win, "BOTTOMLEFT", 15, 88)
+    addHelp:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -15, 88)
+    addHelp:SetFont(MimDiceFontPath(), 10, "OUTLINE")
+    addHelp:SetJustifyH("LEFT")
+    addHelp:SetWordWrap(true)
+    addHelp:SetSpacing(3)
+    addHelp:SetText("ㅁ 와우의 기본 Fonts 폴더가 아닙니다.\n"
+        .. "(거기는 와우 인게임 글자를 설정하는 곳이에요)\n"
+        .. "ㅁ 밈다이스 안의 Fonts 폴더에 폰트 파일을 넣어주세요.\n"
+        .. "ㅁ 위치는 Interface\\AddOns\\MimDice\\Fonts 입니다.\n"
+        .. "ㅁ 폰트 타입은 TTF, OTF 만 가능합니다.\n"
+        .. "ㅁ 파일 이름을 정확하게 적고 [추가]를 누른 다음,\n"
+        .. "게임을 껐다가 켜야 폰트 로딩이 됩니다.\n"
+        .. "ㅁ 폰트를 새로 넣고나서 게임을 완전히 재시작했다면\n"
+        .. "폰트 선택 후 리로드하면 폰트가 적용됩니다.")
+    addHelp:SetTextColor(0.8, 0.8, 0.8)
 
     local addBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
     addBox:SetSize(210, 20)
@@ -5610,6 +5903,8 @@ local function SA_CreateFontWindow()
     reloadBtn:SetText("리로드하고 적용")
     reloadBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     reloadBtn:SetScript("OnClick", function() ReloadUI() end)
+
+    table.insert(UISpecialFrames, "SA_FontWindow")   -- ESC 키로 닫히게 등록
 
     SA_SkinRegisterWindow(win)   -- 폰트 창도 스킨 대상
     SA_FontWindow = win
@@ -5712,8 +6007,8 @@ local function SA_CreateSkinWindow()
 
     local win = CreateFrame("Frame", "SA_SkinWindow", UIParent, "BackdropTemplate")
     win:SetWidth(380)
+    win:SetHeight(505)   -- 내용에 맞춘 고정 높이 (메인창 높이와 무관)
     win:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", 38, 0)
-    win:SetPoint("BOTTOMLEFT", mainWin, "BOTTOMRIGHT", 38, 0)
     win:SetFrameStrata("HIGH")
     win:SetBackdrop({
         bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
@@ -5727,10 +6022,12 @@ local function SA_CreateSkinWindow()
     SA_WireBundleDrag(win)   -- 점프 없는 번들 드래그
     win:SetScript("OnHide", function()
         if SA_SkinColorPop then SA_SkinColorPop:Hide() end
+        if SA_FontWindow then SA_FontWindow:Hide() end   -- 스킨 창 닫으면 폰트 창도 같이
     end)
     win:Hide()
 
     local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn.MimDiceIsClose = true   -- 스킨: 닫기(X) 플랫화 대상
     closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
     closeBtn:SetScript("OnClick", function() SA_ToggleSkinWindow() end)
 
@@ -5758,7 +6055,7 @@ local function SA_CreateSkinWindow()
 
     -- ── 프리셋 목록 ──
     local presetLabel = win:CreateFontString(nil, "OVERLAY")
-    presetLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -66)
+    presetLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -80)
     presetLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     presetLabel:SetText("기본 스킨 : 누르면 색이 채워지고 바로 적용됩니다")
     presetLabel:SetTextColor(0.9, 0.9, 0.9)
@@ -5770,7 +6067,7 @@ local function SA_CreateSkinWindow()
         local rowN = math.floor((i - 1) / 2)
         local row = CreateFrame("Button", nil, win)
         row:SetSize(170, 20)
-        row:SetPoint("TOPLEFT", win, "TOPLEFT", 15 + col * 178, -84 - rowN * 22)
+        row:SetPoint("TOPLEFT", win, "TOPLEFT", 15 + col * 178, -98 - rowN * 22)
         local selBg = row:CreateTexture(nil, "BACKGROUND")   -- 선택 표시 (은은한 배경)
         selBg:SetAllPoints(); selBg:SetColorTexture(1, 1, 1, 0.10); selBg:Hide()
         local hl = row:CreateTexture(nil, "HIGHLIGHT")
@@ -5800,6 +6097,10 @@ local function SA_CreateSkinWindow()
             sk.base = { r = preset.base[1], g = preset.base[2], b = preset.base[3] }
             sk.accentText = { r = preset.accentText[1], g = preset.accentText[2], b = preset.accentText[3] }
             sk.accentHover = { r = preset.accentHover[1], g = preset.accentHover[2], b = preset.accentHover[3] }
+            sk.btnHover = { r = preset.accentHover[1], g = preset.accentHover[2], b = preset.accentHover[3] }
+            sk.btnHoverA = 0.30
+            sk.btnText = { r = 0.92, g = 0.92, b = 0.92 }
+            sk.btnTextA = 1
             SA_SkinRefresh()
             SA_RefreshSkinWindow()
         end)
@@ -5810,7 +6111,7 @@ local function SA_CreateSkinWindow()
     do
         local row = CreateFrame("Button", nil, win)
         row:SetSize(170, 20)
-        row:SetPoint("TOPLEFT", win, "TOPLEFT", 15 + 178, -84 - 4 * 22)
+        row:SetPoint("TOPLEFT", win, "TOPLEFT", 15 + 178, -98 - 7 * 22)
         local selBg = row:CreateTexture(nil, "BACKGROUND")
         selBg:SetAllPoints(); selBg:SetColorTexture(1, 1, 1, 0.10); selBg:Hide()
         local hl = row:CreateTexture(nil, "HIGHLIGHT")
@@ -5842,6 +6143,12 @@ local function SA_CreateSkinWindow()
             sk.base = { r = c.base.r, g = c.base.g, b = c.base.b }
             sk.accentText = { r = c.accentText.r, g = c.accentText.g, b = c.accentText.b }
             sk.accentHover = { r = c.accentHover.r, g = c.accentHover.g, b = c.accentHover.b }
+            local cbh = c.btnHover or c.accentHover
+            sk.btnHover = { r = cbh.r, g = cbh.g, b = cbh.b }
+            sk.btnHoverA = c.btnHoverA or 0.30
+            local cbt = c.btnText or { r = 0.92, g = 0.92, b = 0.92 }
+            sk.btnText = { r = cbt.r, g = cbt.g, b = cbt.b }
+            sk.btnTextA = c.btnTextA or 1
             SA_SkinRefresh()
             SA_RefreshSkinWindow()
         end)
@@ -5859,12 +6166,16 @@ local function SA_CreateSkinWindow()
             base = { r = sk.base.r, g = sk.base.g, b = sk.base.b },
             accentText = { r = sk.accentText.r, g = sk.accentText.g, b = sk.accentText.b },
             accentHover = { r = sk.accentHover.r, g = sk.accentHover.g, b = sk.accentHover.b },
+            btnHover = { r = sk.btnHover.r, g = sk.btnHover.g, b = sk.btnHover.b },
+            btnHoverA = sk.btnHoverA or 0.30,
+            btnText = { r = sk.btnText.r, g = sk.btnText.g, b = sk.btnText.b },
+            btnTextA = sk.btnTextA or 1,
         }
     end
 
     -- ── 색 커스텀 (스와치는 우측, 클릭하면 색 팝업) ──
     local customLabel = win:CreateFontString(nil, "OVERLAY")
-    customLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -204)
+    customLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -298)
     customLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     customLabel:SetText("색 커스텀 : 오른쪽 네모를 눌러 색을 고르세요")
     customLabel:SetTextColor(0.9, 0.9, 0.9)
@@ -5907,6 +6218,7 @@ local function SA_CreateSkinWindow()
                     opacityFunc = opacityOpt and function()
                         local a = ColorPickerFrame.GetColorAlpha and ColorPickerFrame:GetColorAlpha() or 1
                         opacityOpt.set(a)
+                        SA_AlphaBoxSync(a)
                         SA_SkinRefresh()
                     end or nil,
                     cancelFunc = function(prev)
@@ -5916,6 +6228,14 @@ local function SA_CreateSkinWindow()
                         end
                     end,
                 })
+                if opacityOpt then
+                    SA_ShowAlphaBox(opacityOpt.get, function(a)
+                        opacityOpt.set(a)
+                        SA_SkinRefresh()
+                    end)
+                else
+                    SA_HideAlphaBox()
+                end
             else
                 -- 구버전 클라이언트 대비: 격자 색상판
                 SA_OpenSkinColorPop(btn, function(rgb) onPicked(rgb[1], rgb[2], rgb[3]) end)
@@ -5923,7 +6243,7 @@ local function SA_CreateSkinWindow()
         end)
         return btn
     end
-    win.swBase = mkColorRow(-226, "메인 배경 색",
+    win.swBase = mkColorRow(-320, "메인 배경 색",
         function() return MimDiceDB.skin.base end,
         function(r, g, b) MimDiceDB.skin.base = { r = r, g = g, b = b } end,
         {
@@ -5935,26 +6255,40 @@ local function SA_CreateSkinWindow()
                 if sk.preset == "custom" and sk.custom then sk.custom.alpha = a end
             end,
         })
-    win.swText = mkColorRow(-252, "활성탭 글자색",
+    win.swText = mkColorRow(-346, "활성탭 글자색",
         function() return MimDiceDB.skin.accentText end,
         function(r, g, b) MimDiceDB.skin.accentText = { r = r, g = g, b = b } end,
         {
             get = function() return MimDiceDB.skin.accentTextA or 1 end,
             set = function(a) MimDiceDB.skin.accentTextA = a end,
         })
-    win.swHover = mkColorRow(-278, "버튼 마우스오버",
+    win.swHover = mkColorRow(-372, "활성 탭 배경색",
         function() return MimDiceDB.skin.accentHover end,
         function(r, g, b) MimDiceDB.skin.accentHover = { r = r, g = g, b = b } end,
         {
             get = function() return MimDiceDB.skin.accentHoverA or 0.30 end,
             set = function(a) MimDiceDB.skin.accentHoverA = a end,
         })
+    win.swBtnHover = mkColorRow(-398, "버튼 마우스오버",
+        function() return MimDiceDB.skin.btnHover end,
+        function(r, g, b) MimDiceDB.skin.btnHover = { r = r, g = g, b = b } end,
+        {
+            get = function() return MimDiceDB.skin.btnHoverA or 0.30 end,
+            set = function(a) MimDiceDB.skin.btnHoverA = a end,
+        })
+    win.swBtnText = mkColorRow(-424, "버튼 글자색",
+        function() return MimDiceDB.skin.btnText end,
+        function(r, g, b) MimDiceDB.skin.btnText = { r = r, g = g, b = b } end,
+        {
+            get = function() return MimDiceDB.skin.btnTextA or 1 end,
+            set = function(a) MimDiceDB.skin.btnTextA = a end,
+        })
 
 
     -- ── 색 기본값 복원 (현재 스킨의 원래 색/투명도로) ──
     local resetBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     resetBtn:SetSize(110, 22)
-    resetBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -308)
+    resetBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -468)
     resetBtn:SetText("색 기본값 복원")
     resetBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
     resetBtn:SetScript("OnClick", function()
@@ -5963,15 +6297,21 @@ local function SA_CreateSkinWindow()
         sk.alphaByPreset[sk.preset] = nil                 -- 조절해 둔 투명도도 초기화
         sk.alpha = preset.alpha or 0.93
         sk.accentTextA, sk.accentHoverA = 1, 0.30
+        sk.btnHoverA = 0.30
+        sk.btnText = { r = 0.92, g = 0.92, b = 0.92 }
+        sk.btnTextA = 1
         sk.base = { r = preset.base[1], g = preset.base[2], b = preset.base[3] }
         sk.accentText = { r = preset.accentText[1], g = preset.accentText[2], b = preset.accentText[3] }
         sk.accentHover = { r = preset.accentHover[1], g = preset.accentHover[2], b = preset.accentHover[3] }
+        sk.btnHover = { r = preset.accentHover[1], g = preset.accentHover[2], b = preset.accentHover[3] }
         if sk.preset == "custom" then                     -- 커스텀 슬롯은 다크 그레이 값으로 리셋
             sk.custom = {
                 alpha = sk.alpha,
                 base = { r = sk.base.r, g = sk.base.g, b = sk.base.b },
                 accentText = { r = sk.accentText.r, g = sk.accentText.g, b = sk.accentText.b },
                 accentHover = { r = sk.accentHover.r, g = sk.accentHover.g, b = sk.accentHover.b },
+                btnHover = { r = sk.btnHover.r, g = sk.btnHover.g, b = sk.btnHover.b },
+                btnText = { r = sk.btnText.r, g = sk.btnText.g, b = sk.btnText.b },
             }
         end
         SA_SkinRefresh()
@@ -5982,7 +6322,7 @@ local function SA_CreateSkinWindow()
     -- ── 폰트 고르기 (버튼에 현재 폰트 이름 표시) ──
     local fontBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     fontBtn:SetSize(225, 22)
-    fontBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -308)
+    fontBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -468)
     fontBtn:SetText("폰트 고르기")
     fontBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
     fontBtn:SetScript("OnClick", function() SA_ToggleFontWindow() end)
@@ -6018,6 +6358,9 @@ function SA_RefreshSkinWindow()
     win.swBase.swatch:SetColorTexture(sk.base.r, sk.base.g, sk.base.b, 1)
     win.swText.swatch:SetColorTexture(sk.accentText.r, sk.accentText.g, sk.accentText.b, 1)
     win.swHover.swatch:SetColorTexture(sk.accentHover.r, sk.accentHover.g, sk.accentHover.b, 1)
+    win.swBtnHover.swatch:SetColorTexture(sk.btnHover.r, sk.btnHover.g, sk.btnHover.b, 1)
+    local bt = sk.btnText or { r = 0.92, g = 0.92, b = 0.92 }
+    win.swBtnText.swatch:SetColorTexture(bt.r, bt.g, bt.b, 1)
     if win.fontBtn then win.fontBtn:SetText("폰트 : " .. MimDiceFontName()) end
 end
 
