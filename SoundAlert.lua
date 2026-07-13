@@ -1623,6 +1623,40 @@ local function SA_HideAlphaBox()
     if SA_AlphaBox then SA_AlphaBox:Hide() end
 end
 
+-- 와우 내장 색상환의 '# 코드' 칸을 폴링해서 6자리 색코드가 들어오면 applyFn(r,g,b)로 즉시 적용.
+-- (이 칸이 붙여넣기 때 OnTextChanged를 안 쏘는 클라 대비 — 이벤트에 의존하지 않는 폴링 방식)
+-- 색상환을 SetupColorPickerAndShow로 연 직후에 호출한다.
+local function SA_WatchColorPickerHex(applyFn)
+    local cp = ColorPickerFrame
+    if not cp then return end
+    local hb = (cp.Content and cp.Content.HexBox) or cp.hexBox or _G["ColorPickerFrameHexBox"]
+    if not hb then   -- 못 찾으면 자식 EditBox 탐색
+        for _, parent in ipairs({ cp, cp.Content, cp.Footer }) do
+            if parent and parent.GetChildren then
+                for _, ch in ipairs({ parent:GetChildren() }) do
+                    if ch.GetObjectType and ch:GetObjectType() == "EditBox" then hb = ch; break end
+                end
+            end
+            if hb then break end
+        end
+    end
+    if cp.mimPoller then cp.mimPoller:Cancel(); cp.mimPoller = nil end
+    if not hb then return end
+    local lastHex
+    cp.mimPoller = C_Timer.NewTicker(0.12, function(t)
+        if not cp:IsShown() then t:Cancel(); cp.mimPoller = nil; return end
+        local raw = (hb:GetText() or ""):gsub("#", ""):gsub("%s", "")
+        if raw:match("^%x%x%x%x%x%x$") and raw ~= lastHex then
+            lastHex = raw
+            local r = tonumber(raw:sub(1, 2), 16) / 255
+            local g = tonumber(raw:sub(3, 4), 16) / 255
+            local b = tonumber(raw:sub(5, 6), 16) / 255
+            applyFn(r, g, b)                    -- 설정에 직접 적용
+            pcall(cp.SetColorRGB, cp, r, g, b)  -- 색상환(휠) 시각도 갱신
+        end
+    end)
+end
+
 -- 공용: 색상 한 줄 [라벨] [스와치=색상환 열기] [RRGGBB 코드 입력] [기본색]
 -- 색상환은 와우 내장 풀 컬러 팔레트. 드래그하는 동안 실시간으로 미리보기 반영.
 -- getFn() → {r,g,b} / setFn(r,g,b) / defaults = {r,g,b} 기본색 / onChange() 미리보기 갱신
@@ -1660,11 +1694,13 @@ local function SA_MakeColorRow(win, y, labelText, getFn, setFn, defaults, onChan
     local function refresh()
         local c = getFn() or { r = 1, g = 1, b = 1 }
         sw:SetColorTexture(c.r or 1, c.g or 1, c.b or 1, 1)
+        hexBox.setting = true   -- 아래 SetText가 OnTextChanged를 되먹임하지 않도록 표시
         hexBox:SetText(string.format("%02X%02X%02X",
             math.floor((c.r or 1) * 255 + 0.5),
             math.floor((c.g or 1) * 255 + 0.5),
             math.floor((c.b or 1) * 255 + 0.5)))
         hexBox:SetCursorPosition(0)
+        hexBox.setting = false
     end
     local function applyColor(r, g, b)
         setFn(r, g, b)
@@ -1699,6 +1735,8 @@ local function SA_MakeColorRow(win, y, labelText, getFn, setFn, defaults, onChan
                     end
                 end,
             })
+            -- 색상환의 '# 코드' 칸 붙여넣기 즉시 적용 (엔터 불필요)
+            SA_WatchColorPickerHex(function(r, g, b) applyColor(r, g, b) end)
             if opacityOpt then
                 SA_ShowAlphaBox(opacityOpt.get, function(a)
                     opacityOpt.set(a)
@@ -1707,6 +1745,21 @@ local function SA_MakeColorRow(win, y, labelText, getFn, setFn, defaults, onChan
             else
                 SA_HideAlphaBox()
             end
+        end
+    end)
+
+    -- 붙여넣기/타이핑으로 6자리 색코드가 완성되면 엔터 없이도 즉시 적용
+    -- (텍스트/커서는 건드리지 않아 입력 흐름을 방해하지 않음)
+    hexBox:SetScript("OnTextChanged", function(self)
+        if self.setting then return end   -- refresh()가 넣은 값만 무시 (붙여넣기는 userInput=false여도 잡음)
+        local t = self:GetText():gsub("#", ""):gsub("%s", "")
+        if t:match("^%x%x%x%x%x%x$") then
+            local r = tonumber(t:sub(1, 2), 16) / 255
+            local g = tonumber(t:sub(3, 4), 16) / 255
+            local b = tonumber(t:sub(5, 6), 16) / 255
+            setFn(r, g, b)
+            sw:SetColorTexture(r, g, b, 1)
+            if onChange then onChange() end
         end
     end)
 
@@ -2803,6 +2856,8 @@ local function SA_SetBattleResIconMouse(f, clickable)
         f:EnableMouse(true)
         if f.SetMouseClickEnabled then f:SetMouseClickEnabled(clickable) end
         if f.SetMouseMotionEnabled then f:SetMouseMotionEnabled(true) end
+        -- 편집중(clickable)엔 프레임이 클릭을 잡아 드래그, 잠금엔 클릭을 아래로 통과
+        if f.SetPropagateMouseClicks then f:SetPropagateMouseClicks(not clickable) end
     end)
 end
 
@@ -6228,6 +6283,8 @@ local function SA_CreateSkinWindow()
                         end
                     end,
                 })
+                -- 색상환의 '# 코드' 칸 붙여넣기 즉시 적용 (엔터 불필요)
+                SA_WatchColorPickerHex(function(r, g, b) onPicked(r, g, b) end)
                 if opacityOpt then
                     SA_ShowAlphaBox(opacityOpt.get, function(a)
                         opacityOpt.set(a)
