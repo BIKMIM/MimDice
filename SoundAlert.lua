@@ -2852,6 +2852,10 @@ end
 --   clickable=false(잠금/표시중): 클릭은 통과(아래 UI·월드 클릭 방해 안 함) + 모션만 받아 툴팁
 --   clickable=true (편집중): 클릭/드래그 허용
 local function SA_SetBattleResIconMouse(f, clickable)
+    -- EnableMouse/SetPropagateMouseClicks 등은 전투 중 보호 함수라 호출하면
+    -- ADDON_ACTION_BLOCKED가 뜬다(pcall로도 못 막음). 전투 중엔 건드리지 않고,
+    -- 전투가 끝나면 PLAYER_REGEN_ENABLED에서 SA_RefreshBattleResIconState가 다시 적용한다.
+    if InCombatLockdown() then return end
     pcall(function()
         f:EnableMouse(true)
         if f.SetMouseClickEnabled then f:SetMouseClickEnabled(clickable) end
@@ -4717,6 +4721,7 @@ SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
 SA_EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")   -- 인스턴스 진입 시 전투부활 충전 기준값 동기화
 SA_EventFrame:RegisterEvent("UNIT_DIED")
 SA_EventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")     -- 전투부활 충전 변화 감지
+SA_EventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")     -- 전투 종료: 미뤄둔 마우스 모드 재적용
 SA_EventFrame:RegisterEvent("LFG_LIST_APPLICANT_LIST_UPDATED")  -- 파티 신청 감지
 SA_EventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")              -- 5인 풀파티 감지
 SA_EventFrame:RegisterUnitEvent("UNIT_AURA", "player")
@@ -4755,6 +4760,9 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "SPELL_UPDATE_CHARGES" then
         SA_CheckBattleResCharge()
         SA_RefreshBattleResIconState()   -- 충전 변화 즉시 아이콘 반영
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        -- 전투 종료: 전투 중 미뤄둔 아이콘 마우스 모드(클릭 통과/편집)를 지금 적용
+        SA_RefreshBattleResIconState()
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
         if unit ~= "player" then return end
