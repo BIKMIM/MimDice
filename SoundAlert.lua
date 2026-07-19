@@ -4420,6 +4420,10 @@ end
 -- 안전/정확성 원칙:
 --  * 상태는 단일값 SA_wbState[name]="safe"|"blocked"|"pending". pending 종료는
 --    반드시 SA_wbFinishPending(단일 함수)로만 한다(카운트/임시친구/음소거 일괄 정리).
+--  * safe = 레벨 60+ 실제 확인 / 내가 먼저 귓말 / fail-open(비연결서버.시간초과)에만 굳힌다.
+--    친구.길드.파티.배틀넷 신뢰는 캐싱하지 않고 매 귓말 동적 확인(관계 변화 즉시 반영).
+--    blocked.미확인도 매번 동적 신뢰 판정 -> 나중에 친구가 되면 즉시 통과된다.
+--    기준 레벨을 바꾸면 SA_WhisperBlockResetJudgments 로 확정 판정을 비운다.
 --  * pending 마다 고유 토큰(SA_wbGen[name]). 5초/토스트 타이머는 토큰이 일치할 때만
 --    동작 -> 옵션 OFF 후 재개 등으로 생긴 '오래된 타이머'가 새 pending을 오염 못 함.
 --  * 필터/이벤트 둘 다 SA_wbReadable로 text/player/flag/guid 접근 가능성을 먼저
@@ -4613,11 +4617,12 @@ local function SA_wbChatFilter(self, event, text, ...)
     local name = Ambiguate(player, "none")
     local state = SA_wbState[name]
     if state == "safe" then return end                       -- 통과 확정 -> 원문 그대로
-    if state == nil and SA_wbTrusted(name, flag, guid) then
-        return                                               -- 미확인 + 신뢰 대상 -> 통과
+    if state == "pending" then                               -- 확인 중: 즉시 가림 (임시친구 오인 방지)
+        return false, SA_WB_HOLD_MSG, ...
     end
-    -- blocked.pending.미확인(비신뢰): 내용만 무해 문구로 교체, 나머지 인자 보존
-    return false, SA_WB_HOLD_MSG, ...
+    -- blocked 또는 미확인: 신뢰 판정을 매번 동적으로 (친구 추가/삭제 즉시 반영)
+    if SA_wbTrusted(name, flag, guid) then return end        -- 신뢰 대상 -> 통과
+    return false, SA_WB_HOLD_MSG, ...                         -- 비신뢰 -> 내용만 문구 교체
 end
 
 -- 레벨 확인 시작 (독립 이벤트 프레임에서 C_Timer.After(0)로 예약 실행)
@@ -4657,12 +4662,12 @@ local function SA_wbOnWhisper(...)
     if not SA_wbReadable(player, text, flag, guid) then return end   -- fail-open (필터와 동일)
     local name = Ambiguate(player, "none")
     local state = SA_wbState[name]
-    if state == "safe" or state == "blocked" then return end
-    if state == nil then
-        if SA_wbTrusted(name, flag, guid) then
-            SA_wbState[name] = "safe"
-            return
-        end
+    if state == "safe" then return end
+    if state ~= "pending" then
+        -- blocked 또는 미확인: 신뢰 판정을 매번 동적으로 (관계 변화 즉시 반영, safe로 캐싱 안 함)
+        if SA_wbTrusted(name, flag, guid) then return end    -- 신뢰 대상 -> 통과
+        if state == "blocked" then return end                -- 비신뢰 + 이미 차단: 필터가 가림, 원문 안 담음
+        -- 미확인 + 비신뢰: 레벨 확인 시작
         SA_wbState[name] = "pending"
         SA_wbPendingCount = SA_wbPendingCount + 1
         C_Timer.After(0, function() SA_wbStartCheck(name) end)
@@ -4684,13 +4689,10 @@ local function SA_wbOnFriendsUpdate()
         for i = num, 1, -1 do
             local ok, info = pcall(C_FriendList.GetFriendInfoByIndex, i)
             if ok and info and type(info.name) == "string" then
-                if info.notes == SA_WB_NOTE then
-                    if SA_wbState[info.name] ~= "pending" then       -- 이번 세션 pending 은 보존
-                        pcall(C_FriendList.RemoveFriendByIndex, i)
-                    end
-                elseif SA_wbState[info.name] == nil then
-                    SA_wbState[info.name] = "safe"                    -- 기존 진짜 친구는 통과
+                if info.notes == SA_WB_NOTE and SA_wbState[info.name] ~= "pending" then
+                    pcall(C_FriendList.RemoveFriendByIndex, i)        -- 이전 세션 임시 항목만 청소
                 end
+                -- 기존 친구를 safe 로 미리 굳히지 않는다: 친구/길드/파티는 매 귓말 동적 확인
             end
         end
     end
@@ -4749,6 +4751,15 @@ function SA_WhisperBlockCancelAll()
     wipe(SA_wbToastQ)
     SA_wbToastBusy = false
     if SA_wbToast then SA_wbToast.fadeAnim:Stop(); SA_wbToast:Hide() end
+end
+
+-- 기준 레벨 변경 등으로 이전 판정이 무의미해질 때: 확정 판정(safe/blocked)을 모두 비운다 (전역).
+-- 다음 귓말부터 새 기준으로 다시 판정한다.
+function SA_WhisperBlockResetJudgments()
+    SA_WhisperBlockCancelAll()   -- pending/임시친구/음소거/토스트 정리
+    wipe(SA_wbState)
+    local me = UnitName("player")
+    if me then SA_wbState[me] = "safe" end
 end
 
 SA_WBFrame:SetScript("OnEvent", function(_, event, ...)
@@ -5843,7 +5854,10 @@ local function SA_CreateWhisperWindow()
     lvBox:SetScript("OnTextChanged", function(self, userInput)
         if not userInput then return end
         local v = tonumber(self:GetText())
-        if v and v >= 2 and MimDiceDB.whisperBlock then MimDiceDB.whisperBlock.minLevel = v end
+        if v and v >= 2 and MimDiceDB.whisperBlock and MimDiceDB.whisperBlock.minLevel ~= v then
+            MimDiceDB.whisperBlock.minLevel = v
+            if SA_WhisperBlockResetJudgments then SA_WhisperBlockResetJudgments() end
+        end
     end)
     lvBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
     win.lvBox = lvBox
