@@ -4454,14 +4454,53 @@ local function SA_wbDbg(msg)
     if #SA_wbLog > SA_WB_LOG_MAX then table.remove(SA_wbLog, 1) end
 end
 
+-- 진짜 '배틀넷 친구'인지 확인.
+-- 주의: C_BattleNet.GetGameAccountInfoByGUID 는 친구가 아니어도 계정 정보를 돌려주므로
+-- (같은 계정의 다른 캐릭터, 최근 접점 등) 그것만으로 친구라고 판정하면 안 된다.
+-- 실제 배틀넷 친구 목록에서 확인해야 '친구 끊기'가 즉시 반영된다.
+local function SA_wbIsBNetFriend(guid)
+    if not guid then return false end
+    -- 계정 단위 정보의 실제 친구 플래그를 우선 사용 (빠름).
+    -- GameAccountInfo에는 isFriend가 없으므로 반드시 AccountInfo를 조회해야 한다.
+    local okB, acc = pcall(function()
+        return C_BattleNet and C_BattleNet.GetAccountInfoByGUID
+            and C_BattleNet.GetAccountInfoByGUID(guid)
+    end)
+    if okB and type(acc) == "table" then
+        local isFriend = acc.isFriend
+        if not SA_IsSecret(isFriend) and isFriend ~= nil then
+            return isFriend == true
+        end
+    end
+
+    -- 계정 단위 판정이 불가능하면 친구 목록의 모든 게임 계정을 직접 확인한다.
+    local okNum, num = pcall(function()
+        return BNGetNumFriends and BNGetNumFriends() or 0
+    end)
+    if not okNum or type(num) ~= "number" then return false end
+    for i = 1, num do
+        local okCount, count = pcall(function()
+            return C_BattleNet and C_BattleNet.GetFriendNumGameAccounts
+                and C_BattleNet.GetFriendNumGameAccounts(i) or 0
+        end)
+        if okCount and type(count) == "number" then
+            for j = 1, count do
+                local okGame, game = pcall(C_BattleNet.GetFriendGameAccountInfo, i, j)
+                local playerGuid = okGame and game and game.playerGuid
+                if not SA_IsSecret(playerGuid) and playerGuid ~= nil and playerGuid == guid then
+                    return true
+                end
+            end
+        end
+    end
+    return false
+end
+
 -- 원래부터 믿을 수 있는 상대인지 (동기.순수. 부작용 없음). 호출 전 SA_wbReadable 통과 가정.
 local function SA_wbTrusted(name, flag, guid)
     if flag == "GM" or flag == "DEV" then return "GM" end
     if guid then
-        local okB, acc = pcall(function()
-            return C_BattleNet and C_BattleNet.GetGameAccountInfoByGUID(guid)
-        end)
-        if okB and acc then return "배틀넷 친구" end
+        if SA_wbIsBNetFriend(guid) then return "배틀넷 친구" end
         local okF, fr = pcall(C_FriendList.IsFriend, guid)
         if okF and fr then return "캐릭터 친구" end
         local okG, gm = pcall(IsGuildMember, guid)
@@ -4479,6 +4518,97 @@ local function SA_wbReadable(player, text, flag, guid)
     if flag ~= nil and SA_IsSecret(flag) then flag = nil end
     if guid ~= nil and SA_IsSecret(guid) then guid = nil end
     return true, flag, guid
+end
+
+-- GUID를 받지 않는 외부 귓속말 창에서 사용할 이름 기반 신뢰 판정.
+-- 첫 귓속말 시 밈다이스 이벤트가 아직 실행되지 않았어도 친구 메시지는 통과시킨다.
+local function SA_wbNamesMatch(a, b)
+    if SA_IsSecret(a) or SA_IsSecret(b) or type(a) ~= "string" or type(b) ~= "string" then
+        return false
+    end
+    local fullA, fullB = Ambiguate(a, "none"), Ambiguate(b, "none")
+    if fullA == fullB then return true end
+    -- 한쪽에 서버명이 생략된 경우에만 짧은 이름 비교를 허용한다.
+    if not fullA:find("-", 1, true) or not fullB:find("-", 1, true) then
+        return Ambiguate(a, "short") == Ambiguate(b, "short")
+    end
+    return false
+end
+
+local function SA_wbTrustedByName(name)
+    if SA_IsSecret(name) or type(name) ~= "string" then return nil end
+    local normalized = Ambiguate(name, "none")
+
+    if UnitInParty(normalized) or UnitInRaid(normalized) then return "파티/공대원" end
+
+    local okFriend, friendInfo = pcall(C_FriendList.GetFriendInfo, normalized)
+    if okFriend and friendInfo then return "캐릭터 친구" end
+
+    local okNum, num = pcall(function()
+        return BNGetNumFriends and BNGetNumFriends() or 0
+    end)
+    if okNum and type(num) == "number" then
+        for i = 1, num do
+            local okCount, count = pcall(function()
+                return C_BattleNet and C_BattleNet.GetFriendNumGameAccounts
+                    and C_BattleNet.GetFriendNumGameAccounts(i) or 0
+            end)
+            if okCount and type(count) == "number" then
+                for j = 1, count do
+                    local okGame, game = pcall(C_BattleNet.GetFriendGameAccountInfo, i, j)
+                    local charName = okGame and game and game.characterName
+                    local realmName = okGame and game and game.realmName
+                    if not SA_IsSecret(charName) and type(charName) == "string" then
+                        local fullName = charName
+                        if not SA_IsSecret(realmName) and type(realmName) == "string" and realmName ~= "" then
+                            fullName = charName .. "-" .. realmName:gsub("%s", "")
+                        end
+                        if SA_wbNamesMatch(fullName, normalized) then return "배틀넷 친구" end
+                    end
+                end
+            end
+        end
+    end
+
+    if IsInGuild() then
+        local okGuild, total = pcall(GetNumGuildMembers)
+        if okGuild and type(total) == "number" then
+            for i = 1, total do
+                local okInfo, memberName = pcall(GetGuildRosterInfo, i)
+                if okInfo and SA_wbNamesMatch(memberName, normalized) then
+                    return "길드원"
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function SA_wbShouldHideExternalWhisper(player)
+    local wbdb = MimDiceDB and MimDiceDB.whisperBlock
+    if not wbdb or not wbdb.enabled then return false end
+    if SA_IsSecret(player) or type(player) ~= "string" then return true end
+    local name = Ambiguate(player, "none")
+    if SA_wbState[name] == "safe" then return false end
+    if SA_wbTrustedByName(name) then return false end
+    return true
+end
+
+-- EnhanceQoL의 즉시 대화창은 와우 채팅 필터를 거치지 않으므로 표시 직전에만 연동한다.
+-- 외부 애드온 파일이나 이벤트 등록 순서는 건드리지 않는다.
+local SA_wbEnhanceHooked = false
+local function SA_wbHookEnhanceQoL()
+    if SA_wbEnhanceHooked then return end
+    local chatIM = _G.EnhanceQoL and _G.EnhanceQoL.ChatIM
+    if not chatIM or type(chatIM.AddMessage) ~= "function" then return end
+    local originalAddMessage = chatIM.AddMessage
+    chatIM.AddMessage = function(self, partner, text, outbound, isBN, ...)
+        if not outbound and not isBN and SA_wbShouldHideExternalWhisper(partner) then
+            return
+        end
+        return originalAddMessage(self, partner, text, outbound, isBN, ...)
+    end
+    SA_wbEnhanceHooked = true
 end
 
 -- 우리가 등록한 임시 친구(SA_WB_NOTE)만 골라 삭제 (진짜 친구는 안 건드림)
@@ -4796,6 +4926,9 @@ SA_WBFrame:SetScript("OnEvent", function(_, event, ...)
         if not SA_IsSecret(msg) and msg == ERR_FRIEND_LIST_FULL then
             SA_wbToastEnqueue("|cffff5555친구 목록이 가득 차 저렙 귓속말 차단이 동작할 수 없습니다.\n친구 자리를 2칸 비워주세요.|r", 2)
         end
+    elseif event == "ADDON_LOADED" then
+        local addonName = ...
+        if addonName == "EnhanceQoLChatSocial" then SA_wbHookEnhanceQoL() end
     elseif event == "PLAYER_LOGOUT" then
         if SA_wbDidMute then pcall(UnmuteSoundFile, 567518); SA_wbDidMute = false end   -- 리로드/로그아웃 음소거 정리
     end
@@ -4835,8 +4968,10 @@ local function SA_WhisperBlockInit()
     SA_WBFrame:RegisterEvent("CHAT_MSG_WHISPER_INFORM")
     SA_WBFrame:RegisterEvent("FRIENDLIST_UPDATE")
     SA_WBFrame:RegisterEvent("CHAT_MSG_SYSTEM")
+    SA_WBFrame:RegisterEvent("ADDON_LOADED")
     SA_WBFrame:RegisterEvent("PLAYER_LOGOUT")
     C_FriendList.ShowFriends()   -- 친구목록 첫 갱신 유도 (임시 항목 청소)
+    SA_wbHookEnhanceQoL()
 end
 
 local SA_EventFrame = CreateFrame("Frame")
@@ -5892,8 +6027,8 @@ local function SA_CreateWhisperWindow()
         "ㅁ 귓속말 내용은 저장하지 않고 기록도 남기지 않습니다.\n\n" ..
         "ㅁ 낯선 사람의 첫 귓속말은 확인하는 동안 숨겨지고,\n" ..
         "    정상 레벨로 확인되면 화면 위쪽에 원래 내용이 보입니다.\n\n" ..
-        "ㅁ 와우 기본 채팅창에서 동작합니다. WIM 처럼 귓속말을\n" ..
-        "    자체 창에 따로 그리는 애드온은 가려지지 않을 수 있어요.\n\n" ..
+        "ㅁ 와우 기본 채팅창과 EnhanceQoL 즉시 대화창에서 동작합니다.\n" ..
+        "    그 밖에 귓속말을 자체 창에 그리는 애드온은 가려지지 않을 수 있어요.\n\n" ..
         "ㅁ 다른 애드온에서 귓속말 소리를 재생하도록 설정되어 있다면\n" ..
         "    소리는 날 수 있지만 화면에 표시는 되지 않습니다.\n\n" ..
         "ㅁ 차단이 되지 않는 애드온이 있다면 밈줌까페에 알려주세요.\n\n" ..
