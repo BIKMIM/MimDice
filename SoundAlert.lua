@@ -4598,7 +4598,7 @@ end)
 -- UI 기능 구현
 -- =====================================================================
 
--- 탭 켜짐/꺼짐 색상 (사운드/스킨 공용. 스킨 켜짐이면 팔레트 색 사용)
+-- 탭 켜짐/꺼짐 색상 (옵션/스킨 공용. 스킨 켜짐이면 팔레트 색 사용)
 local function SA_SetTabActive(tab, on)
     if not tab then return end
     if SA_SkinOn() then
@@ -4721,6 +4721,11 @@ local function SA_CreateTab()
     local mainWin = _G["MainWindow"]
     if not mainWin then return end
 
+    local function VerticalTabHeight(label)
+        local _, lineBreaks = label:gsub("\n", "")
+        return math.max(60, 18 + (lineBreaks + 1) * 12)
+    end
+
     local tabBackdrop = {
         bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -4728,9 +4733,10 @@ local function SA_CreateTab()
         insets = { left = 3, right = 3, top = 3, bottom = 3 }
     }
 
-    -- 사운드 탭 (기존 옵션창: 소리/알림 관련)
+    -- 옵션 탭 (일반 설정 + 소리/알림 관련)
+    local optionTabLabel = L("옵\n션")
     SA_TabOption = CreateFrame("Button", "SA_TabOption", mainWin, "BackdropTemplate")
-    SA_TabOption:SetSize(34, 80)
+    SA_TabOption:SetSize(34, VerticalTabHeight(optionTabLabel))
     SA_TabOption:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", -4, -30)
     SA_TabOption:SetBackdrop(tabBackdrop)
     SA_TabOption:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
@@ -4739,15 +4745,16 @@ local function SA_CreateTab()
     local optText = SA_TabOption:CreateFontString(nil, "OVERLAY")
     optText:SetPoint("CENTER")
     optText:SetFont(MimDiceFontPath(), 12, "OUTLINE")
-    optText:SetText(L("사\n운\n드"))
+    optText:SetText(optionTabLabel)
     optText:SetTextColor(0.6, 0.6, 0.6)
     SA_TabOption.text = optText
 
     SA_TabOption:SetScript("OnClick", SA_ToggleWindow)
 
     -- 스킨 탭 (플랫 다크 테마 프리셋 + 색 커스텀)
+    local skinTabLabel = L("스\n킨")
     SA_TabSkin = CreateFrame("Button", "SA_TabSkin", mainWin, "BackdropTemplate")
-    SA_TabSkin:SetSize(34, 60)
+    SA_TabSkin:SetSize(34, VerticalTabHeight(skinTabLabel))
     SA_TabSkin:SetPoint("TOPLEFT", SA_TabOption, "BOTTOMLEFT", 0, -6)
     SA_TabSkin:SetBackdrop(tabBackdrop)
     SA_TabSkin:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
@@ -4756,7 +4763,7 @@ local function SA_CreateTab()
     local skText = SA_TabSkin:CreateFontString(nil, "OVERLAY")
     skText:SetPoint("CENTER")
     skText:SetFont(MimDiceFontPath(), 12, "OUTLINE")
-    skText:SetText(L("스\n킨"))
+    skText:SetText(skinTabLabel)
     skText:SetTextColor(0.6, 0.6, 0.6)
     SA_TabSkin.text = skText
 
@@ -4787,7 +4794,7 @@ local function SA_CreateWindow()
     -- 옵션창 드래그하면 메인창도 이동
     SA_WireBundleDrag(SA_OptionWindow)   -- 점프 없는 번들 드래그
     
-    -- ★ 메인 창이 닫힐 때 옵션 창(사운드/스킨)도 함께 닫히도록 연동 ★
+    -- ★ 메인 창이 닫힐 때 옵션 창(옵션/스킨)도 함께 닫히도록 연동 ★
     mainWin:HookScript("OnHide", function()
         if SA_OptionWindow and SA_OptionWindow:IsShown() then
             SA_OptionWindow:Hide()

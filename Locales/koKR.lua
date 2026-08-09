@@ -168,7 +168,7 @@ MimDice_RegisterLocale("koKR", "한국어", {
     ["Alert without leader or assistant privileges"] = "파티장/공대장/부공대장이 아닐 때도 알림 받기",
     ["Full 5-player party alert (sound + WoW icon flash)"] = "5인 풀파티 완성 알림 (소리 + 와우 아이콘 반짝임)",
     ["|cff00ff00[MimDice]|r Group application alert settings reset."] = "|cff00ff00[MimDice]|r 파티 신청 알림 설정 초기화됨",
-    ["S\nO\nU\nN\nD"] = "사\n운\n드",
+    ["O\nP\nT\nI\nO\nN\nS"] = "옵\n션",
     ["S\nK\nI\nN"] = "스\n킨",
     ["Mimzoom Naver Cafe  |cff4488ffhttps://cafe.naver.com/mimzoom|r"] = "네이버 밈줌 카페  |cff4488ffhttps://cafe.naver.com/mimzoom|r",
     ["Press Ctrl+C to copy; click again to close this box."] = "Ctrl+C 로 복사, 한번 더 누르면 복사창이 닫힙니다.",

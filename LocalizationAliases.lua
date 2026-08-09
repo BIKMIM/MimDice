@@ -171,7 +171,7 @@ MimDice_RegisterSourceAliases({
     ["|cff00ff00[MimDice]|r 파티 신청 알림 설정 초기화됨"] = "|cff00ff00[MimDice]|r Group application alert settings reset.",
 
     -- Main options and custom spell alerts
-    ["사\n운\n드"] = "S\nO\nU\nN\nD",
+    ["옵\n션"] = "O\nP\nT\nI\nO\nN\nS",
     ["스\n킨"] = "S\nK\nI\nN",
     ["네이버 밈줌 카페  |cff4488ffhttps://cafe.naver.com/mimzoom|r"] = "Mimzoom Naver Cafe  |cff4488ffhttps://cafe.naver.com/mimzoom|r",
     ["Ctrl+C 로 복사, 한번 더 누르면 복사창이 닫힙니다."] = "Press Ctrl+C to copy; click again to close this box.",
