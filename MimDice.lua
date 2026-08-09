@@ -1426,7 +1426,7 @@ function Prefix()
 end
 
 -- 폰트 크기 증가 함수
-function FontSizePlus()
+function MimDice_FontSizePlus()
     if _G["RollStrings"] then
         fontName, fontHeight, _ = _G["RollStrings"]:GetFont()
         _G["RollStrings"]:SetFont(fontName, fontHeight + 1)
@@ -1436,7 +1436,7 @@ function FontSizePlus()
 end
 
 -- 폰트 크기 감소 함수
-function FontSizeMinus()
+function MimDice_FontSizeMinus()
     if _G["RollStrings"] then
         fontName, fontHeight, _ = _G["RollStrings"]:GetFont()
         _G["RollStrings"]:SetFont(fontName, fontHeight - 1)

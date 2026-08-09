@@ -351,7 +351,7 @@
 				</Anchors>
 				<Scripts>
 					<OnClick>
-						FontSizePlus()
+						MimDice_FontSizePlus()
 					</OnClick>
 				</Scripts>
 			</Button>
@@ -362,7 +362,7 @@
 				</Anchors>
 				<Scripts>
 					<OnClick>
-						FontSizeMinus()
+						MimDice_FontSizeMinus()
 					</OnClick>
 				</Scripts>
 			</Button>
