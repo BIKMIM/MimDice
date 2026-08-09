@@ -5,6 +5,8 @@
 
 ---@diagnostic disable: undefined-global, param-type-mismatch, undefined-field, cast-local-type -- 전역 함수 정의 에러, 매개변수 타입 불일치, 정의되지 않은 필드, 로컬 타입 캐스팅 무시
 
+local L = MimDice_L
+
 -- UI 리로드 명령어 등록 (편의성 증대)
 SLASH_RELOAD3 = "/rl"
 SLASH_RELOAD2 = "/리"
@@ -455,7 +457,8 @@ function GetPlayerList(unsort)
 
                 -- 중복 체크
                 if not retNameMap[fullName] then
-                    local englishClass = ConvertClassToEnglish(class)
+                    -- fileName은 클라이언트 언어와 무관한 영문 직업 토큰이다.
+                    local englishClass = fileName or ConvertClassToEnglish(class)
 
                     local entry = {
                         ["name"] = shortName,
@@ -664,7 +667,7 @@ function NotRolled()
             local partyMembers = partyGroups[partyNum]
 
             if IsInRaid() and #partyMembers > 0 then
-                namesText = namesText .. string.format("|cff00ff00=== %d파티 ===|r\n", partyNum)
+                namesText = namesText .. string.format(L("|cff00ff00=== %d파티 ===|r\n"), partyNum)
             end
 
             for _, p in ipairs(partyMembers) do
@@ -691,7 +694,7 @@ function NotRolled()
         if namesText ~= "" then
             return namesText
         else
-            return "<주사위 모두 굴림>"
+            return L("<주사위 모두 굴림>")
         end
     else
         return ""
@@ -712,6 +715,16 @@ end
 -- 애드온 초기 로딩 시 호출되는 함수
 -- @param self frame 메인 프레임 객체
 function MimDice_OnLoad(self)
+    -- XML의 정적 텍스트도 선택된 언어로 교체한다.
+    if _G["DiceString"] then _G["DiceString"]:SetText(L("주사위")) end
+    if _G["MimDiceStatusTextFrame"] then _G["MimDiceStatusTextFrame"]:SetText(L("  0 명 굴림")) end
+    if _G["SortTextHigh"] then _G["SortTextHigh"]:SetText(L("하이")) end
+    if _G["SortTextLow"] then _G["SortTextLow"]:SetText(L("로우")) end
+    if _G["Announce_Button"] then _G["Announce_Button"]:SetText(L("보고")) end
+    if _G["Reset_Button"] then _G["Reset_Button"]:SetText(L("리셋")) end
+    if _G["Start_Button"] then _G["Start_Button"]:SetText(L("시작")) end
+    if _G["RollStrings"] then _G["RollStrings"]:SetText(L("굴려굴려 주사위~!")) end
+
     -- 서버명 캐싱 초기화
     cachedRealmName = GetRealmName()
     
@@ -921,7 +934,7 @@ function MimDice_CHAT_MSG_SYSTEM(msg)
                         if MimDiceDB.autoReset and (GetTime() - MimDice_LastRollTime) >= (delay - 1) then
                             MimDice_ClearRolls()
                             local mins = MimDiceDB.autoResetMinutes or 5
-                            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[MimDice]|r " .. mins .. "분동안 주사위 굴림이 감지되지 않아 주사위를 초기화 합니다.")
+                            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[MimDice]|r " .. mins .. L("분동안 주사위 굴림이 감지되지 않아 주사위를 초기화 합니다."))
                         end
                     end)
                 end
@@ -940,7 +953,7 @@ function MimDice_CHAT_MSG_SYSTEM(msg)
         if isDiceRollDetected and MimDiceDB.autoPopup then
             if _G["MainWindow"] and not _G["MainWindow"]:IsVisible() then
                 _G["MainWindow"]:Show()
-                DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[MimDice]|r 주사위 굴림이 감지되어 창을 자동으로 열었습니다.")
+                DEFAULT_CHAT_FRAME:AddMessage(L("|cff00ff00[MimDice]|r 주사위 굴림이 감지되어 창을 자동으로 열었습니다."))
             end
         end
     end)
@@ -950,7 +963,7 @@ function MimDice_CHAT_MSG_SYSTEM(msg)
         -- 오류 메시지가 secret value 관련이 아닐 때만 출력
         local errorString = SafeToString(errorMsg)
         if errorString ~= "" and not string.find(errorString, "secret") then
-            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[MimDice 오류]|r " .. errorString)
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffff0000[MimDice 오류]|r ") .. errorString)
         end
     end
 end
@@ -1081,7 +1094,7 @@ function MimDice_UpdateList()
                     rangeText = string.format(" |c%s(%d-%d)|r", rangeTextColor, roll.Min, roll.Max)
                 end
                 
-                local countText = roll.Count > 1 and format(" [%2d번굴림]", roll.Count) or ""
+                local countText = roll.Count > 1 and format(L(" [%2d번굴림]"), roll.Count) or ""
 
                 rollText = string.format("%s|c%s%d|r : %s%s%s|r%s%s\n",
                                  brkt,
@@ -1106,11 +1119,11 @@ function MimDice_UpdateList()
         -- table.getn()은 Lua 5.1부터 사용 중단 권고됨
         if #rollArray > 0 then
             if _G["RollStrings"] then
-                _G["RollStrings"]:SetText(rollText .. "\n" .. "--- 아직 주사위 안 굴린 사람 ---" .. "\n" .. NotRolled())
+                _G["RollStrings"]:SetText(rollText .. "\n" .. L("--- 아직 주사위 안 굴린 사람 ---") .. "\n" .. NotRolled())
             end
         else
             if _G["RollStrings"] then
-                _G["RollStrings"]:SetText("굴려굴려 주사위~!")
+                _G["RollStrings"]:SetText(L("굴려굴려 주사위~!"))
             end
         end
 
@@ -1122,12 +1135,12 @@ function MimDice_UpdateList()
         end
 
         if _G["MimDiceStatusTextFrame"] then
-            _G["MimDiceStatusTextFrame"]:SetText(string.format("%d 명 굴림", uniqueRollers))
+            _G["MimDiceStatusTextFrame"]:SetText(string.format(L("%d 명 굴림"), uniqueRollers))
         end
     end)
 
     if not success then
-        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[MimDice 업데이트 오류]|r " .. tostring(errorMsg))
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffff0000[MimDice 업데이트 오류]|r ") .. tostring(errorMsg))
     end
 end
 
@@ -1138,14 +1151,14 @@ function MimDice_RollAnnounce()
         local selectedChannel = SelectChannel()
         
         if not selectedChannel or selectedChannel == "SAY" then
-            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00-------주사위결과-------|r")
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cff00ff00-------주사위결과-------|r"))
             
             table.sort(rollArray, Choice_Sort_Reverse)
             local currentPlayerRealm = GetSafeRealmName()
 
             for i, roll in ipairs(rollArray) do
                 if not roll then
-                    DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[MimDice 오류]|r roll 데이터가 nil입니다.")
+                    DEFAULT_CHAT_FRAME:AddMessage(L("|cffff0000[MimDice 오류]|r roll 데이터가 nil입니다."))
                     return
                 end
                 
@@ -1161,7 +1174,7 @@ function MimDice_RollAnnounce()
                              (rollArray[i - 1] and roll.Roll == rollArray[i - 1].Roll)
 
                 if tied then
-                    brkt = "동탈"
+                    brkt = L("동탈")
                 else
                     brkt = "    "
                 end
@@ -1193,7 +1206,7 @@ function MimDice_RollAnnounce()
                 
                 local countText = ""
                 if roll.Count > 1 then
-                    countText = string.format(" [%2d번굴림]", roll.Count)
+                    countText = string.format(L(" [%2d번굴림]"), roll.Count)
                 end
 
                 local finalMessage = brkt .. rollColorCode .. roll.Roll .. "|r : " .. 
@@ -1203,17 +1216,17 @@ function MimDice_RollAnnounce()
                 table.insert(RankList, finalMessage)
                 DEFAULT_CHAT_FRAME:AddMessage(finalMessage)
             end
-            DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00----------끝----------|r")
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cff00ff00----------끝----------|r"))
             
         else
-            MimSendChat("-------주사위결과-------", selectedChannel)
+            MimSendChat(L("-------주사위결과-------"), selectedChannel)
 
             table.sort(rollArray, Choice_Sort_Reverse)
             local currentPlayerRealm = GetSafeRealmName()
 
             for i, roll in ipairs(rollArray) do
                 if not roll then
-                    DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[MimDice 오류]|r roll 데이터가 nil입니다.")
+                    DEFAULT_CHAT_FRAME:AddMessage(L("|cffff0000[MimDice 오류]|r roll 데이터가 nil입니다."))
                     return
                 end
                 
@@ -1229,7 +1242,7 @@ function MimDice_RollAnnounce()
                              (rollArray[i - 1] and roll.Roll == rollArray[i - 1].Roll)
 
                 if tied then
-                    brkt = "동탈"
+                    brkt = L("동탈")
                 else
                     brkt = "    "
                 end
@@ -1248,8 +1261,8 @@ function MimDice_RollAnnounce()
                     end
                 end
 
-                local rollDisplayColor = tied and "동탈" or "    "
-                local nameDisplayColor = diff and "[오류]" or ""
+                local rollDisplayColor = tied and L("동탈") or "    "
+                local nameDisplayColor = diff and L("[오류]") or ""
                 
                 local rangeText = ""
                 if (roll.Min ~= 0 or roll.Max ~= 0) then
@@ -1258,7 +1271,7 @@ function MimDice_RollAnnounce()
                 
                 local countText = ""
                 if roll.Count > 1 then
-                    countText = string.format(" [%2d번굴림]", roll.Count)
+                    countText = string.format(L(" [%2d번굴림]"), roll.Count)
                 end
 
                 local finalMessage = brkt .. roll.Roll .. " : " .. 
@@ -1268,12 +1281,12 @@ function MimDice_RollAnnounce()
                 table.insert(RankList, finalMessage)
                 MimSendChat(finalMessage, selectedChannel)
             end
-            MimSendChat("----------끝----------", selectedChannel)
+            MimSendChat(L("----------끝----------"), selectedChannel)
         end
     end)
 
     if not success then
-        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[MimDice 결과 보고 오류]|r " .. tostring(errorMsg))
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffff0000[MimDice 결과 보고 오류]|r ") .. tostring(errorMsg))
     end
 end
 
@@ -1312,7 +1325,7 @@ function MimDice_ClearRolls()
     RankList = {}
     MimDice_LastRollTime = 0
     
-    DEFAULT_CHAT_FRAME:AddMessage("주사위가 초기화 되었습니다.")
+    DEFAULT_CHAT_FRAME:AddMessage(L("주사위가 초기화 되었습니다."))
     
     UpdateClassIconsBasedOnParty()
     MimDice_UpdateList()
@@ -1347,7 +1360,7 @@ function SelectChannelSafe()
         SendChatMessageChannel = "PARTY"
     else
         if UnitAffectingCombat("player") then
-            DEFAULT_CHAT_FRAME:AddMessage("주사위 결과:")
+            DEFAULT_CHAT_FRAME:AddMessage(L("주사위 결과:"))
             return nil
         else
             SendChatMessageChannel = "SAY"
@@ -1360,14 +1373,14 @@ end
 -- 주사위 시작 메시지 전송 함수
 function Prefix()
     local success, errorMsg = pcall(function()
-        local T_Prefix = "탱커님들 "
-        local D_Prefix = "딜러님들 "
-        local H_Prefix = "힐러님들 "
-        local Dice_Text = "주사위 "
+        local T_Prefix = L("탱커님들 ")
+        local D_Prefix = L("딜러님들 ")
+        local H_Prefix = L("힐러님들 ")
+        local Dice_Text = L("주사위 ")
         local Space = " "
         local Num_Dice = _G["DiceEditBox"] and _G["DiceEditBox"]:GetText() or "100"
-        local High_Text = "하이 "
-        local Low_Text = "로우 "
+        local High_Text = L("하이 ")
+        local Low_Text = L("로우 ")
         local Suffix = _G["MainEditBox"] and _G["MainEditBox"]:GetText() or ""
         local StartLine = "=============================="
         local Final_Text = ""
@@ -1421,7 +1434,7 @@ function Prefix()
     end)
 
     if not success then
-        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[MimDice Prefix 오류]|r " .. tostring(errorMsg))
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffff0000[MimDice Prefix 오류]|r ") .. tostring(errorMsg))
     end
 end
 
@@ -1474,10 +1487,10 @@ function ToggleAutoPopup()
     if _G["AutopopupCheckBox"] then
         MimDiceDB.autoPopup = _G["AutopopupCheckBox"]:GetChecked()
 
-        local status = MimDiceDB.autoPopup and "켜짐" or "꺼짐"
-        DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[MimDice]|r 자동 팝업: " .. status)
+        local status = MimDiceDB.autoPopup and L("켜짐") or L("꺼짐")
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cff00ff00[MimDice]|r 자동 팝업: ") .. status)
     else
-        DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[MimDice 오류]|r 자동 팝업 체크박스를 찾을 수 없습니다. 애드온 UI 설정을 확인해주세요.")
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffff0000[MimDice 오류]|r 자동 팝업 체크박스를 찾을 수 없습니다. 애드온 UI 설정을 확인해주세요."))
     end
 end
 
@@ -1510,7 +1523,7 @@ MimFrame:SetScript("OnEvent", function(self, event, ...)
                         if not tooltip or not tooltip.AddLine then
                             return
                         end
-                        tooltip:AddLine("MIM DICE\n좌클릭 : 창 열기/닫기\n우클릭 : 위치,크기 초기화")
+                        tooltip:AddLine(L("MIM DICE\n좌클릭 : 창 열기/닫기\n우클릭 : 위치,크기 초기화"))
                     end,
                 })
 
@@ -1522,7 +1535,7 @@ MimFrame:SetScript("OnEvent", function(self, event, ...)
         end)
 
         if not success then
-            DEFAULT_CHAT_FRAME:AddMessage("|cffff0000[MimDice LibDBIcon 오류]|r " .. tostring(errorMsg))
+            DEFAULT_CHAT_FRAME:AddMessage(L("|cffff0000[MimDice LibDBIcon 오류]|r ") .. tostring(errorMsg))
         end
 
     elseif (event == "CHAT_MSG_SYSTEM") then
