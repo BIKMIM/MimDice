@@ -2695,11 +2695,42 @@ end
 -- =====================================================================
 local SA_brLastCharges = nil   -- 마지막 충전 수 (증가 감지용)
 
+-- secret value나 숫자가 아닌 값은 비교/문자열 변환 전에 제거한다.
+-- GetSpellCharges의 반환 테이블 접근도 pcall 안에서 처리해 제한 상태에서는 nil로 폴백한다.
+local function SA_GetPublicNumber(value)
+    if SA_IsSecret(value) then return nil end
+    if type(value) ~= "number" then return nil end
+    return value
+end
+
+local function SA_GetBattleResChargeInfo()
+    if type(C_Spell) ~= "table" or type(C_Spell.GetSpellCharges) ~= "function" then
+        return nil
+    end
+
+    local ok, currentCharges, maxCharges, cooldownStartTime, cooldownDuration = pcall(function()
+        local info = C_Spell.GetSpellCharges(BREZ_SPELL_ID)
+        if SA_IsSecret(info) or type(info) ~= "table" then return nil end
+
+        return SA_GetPublicNumber(info.currentCharges),
+               SA_GetPublicNumber(info.maxCharges),
+               SA_GetPublicNumber(info.cooldownStartTime),
+               SA_GetPublicNumber(info.cooldownDuration)
+    end)
+    if not ok or currentCharges == nil then return nil end
+
+    return {
+        currentCharges = currentCharges,
+        maxCharges = maxCharges,
+        cooldownStartTime = cooldownStartTime,
+        cooldownDuration = cooldownDuration,
+    }
+end
+
 -- 현재 충전 수 조회 (없으면 nil) — 직업 무관하게 레이드 공용 풀 조회
 local function SA_GetBattleResCharges()
-    local ok, info = pcall(C_Spell.GetSpellCharges, BREZ_SPELL_ID)
-    if ok and info and info.currentCharges then return info.currentCharges end
-    return nil
+    local info = SA_GetBattleResChargeInfo()
+    return info and info.currentCharges or nil
 end
 
 -- 추적 기준값을 현재 충전으로 동기화 (로그인/인스턴스 진입 시 오발동 방지)
@@ -2806,13 +2837,13 @@ local function SA_EnsureBattleResIcon()
         pcall(function()
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:AddLine("전투부활", 1, 0.82, 0)
-            local ok, info = pcall(C_Spell.GetSpellCharges, BREZ_SPELL_ID)
-            if ok and info and info.currentCharges then
+            local info = SA_GetBattleResChargeInfo()
+            if info then
                 local mx = info.maxCharges and ("/" .. info.maxCharges) or ""
                 GameTooltip:AddLine("남은 충전: " .. info.currentCharges .. mx, 1, 1, 1)
                 if info.maxCharges and info.currentCharges < info.maxCharges
-                   and info.cooldownDuration and info.cooldownDuration > 0 then
-                    local remain = (info.cooldownStartTime or 0) + info.cooldownDuration - GetTime()
+                   and info.cooldownStartTime and info.cooldownDuration and info.cooldownDuration > 0 then
+                    local remain = info.cooldownStartTime + info.cooldownDuration - GetTime()
                     if remain > 0 then
                         GameTooltip:AddLine(string.format("다음 충전까지: %.0f초", remain), 0.7, 0.7, 0.7)
                     end
@@ -2922,13 +2953,14 @@ function SA_RefreshBattleResIconState()
     -- 잠금 + 아이콘 ON이면 항상 표시 (그룹/장소 무관)
     --   충전 풀이 읽히면 충전 수/스와이프 라이브, 안 읽히면(야외 등) 숫자 없이 아이콘만
     if br.iconEnabled then
-        local ok, info = pcall(C_Spell.GetSpellCharges, BREZ_SPELL_ID)
-        local cur = ok and info and info.currentCharges
-        if cur ~= nil then
+        local info = SA_GetBattleResChargeInfo()
+        if info then
+            local cur = info.currentCharges
             f.count:SetText(tostring(cur))
             f.icon:SetDesaturated(cur <= 0)
-            if info.maxCharges and cur < info.maxCharges and info.cooldownDuration and info.cooldownDuration > 0 then
-                f.cd:SetCooldown(info.cooldownStartTime or 0, info.cooldownDuration)
+            if info.maxCharges and cur < info.maxCharges
+               and info.cooldownStartTime and info.cooldownDuration and info.cooldownDuration > 0 then
+                f.cd:SetCooldown(info.cooldownStartTime, info.cooldownDuration)
             else
                 f.cd:Clear()
             end
