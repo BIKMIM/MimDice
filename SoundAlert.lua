@@ -193,6 +193,7 @@ local BLOODLUST_DEBUFFS = {
     57724,  -- Sated (Bloodlust)
     80354,  -- Temporal Displacement (Time Warp)
     95809,  -- Insanity (Ancient Hysteria)
+    160455, -- Fatigued (Netherwinds)
     264689, -- Fatigued (Primal Rage)
     390435, -- Exhaustion (Fury of the Aspects)
 }
@@ -205,13 +206,18 @@ local BLOODLUST_CAST_SPELLS = {
     [80353] = true,   -- Time Warp
     [90355] = true,   -- Ancient Hysteria
     [160452] = true,  -- Netherwinds
-    [244639] = true,  -- Drums of the Mountain
+    [146555] = true,  -- Drums of Rage
+    [178207] = true,  -- Drums of Fury
+    [230935] = true,  -- Drums of the Mountain
+    [256740] = true,  -- Drums of the Maelstrom
     [264667] = true,  -- Primal Rage
+    [309658] = true,  -- Drums of Deathly Ferocity
     [381301] = true,  -- Feral Hide Drums
     [390386] = true,  -- Fury of the Aspects
     [441076] = true,  -- Timeless Drums
     [444257] = true,  -- Thunderous Drums
     [466904] = true,  -- Harrier's Cry
+    [1243972] = true, -- Void-Touched Drums
 }
 
 -- AddAuraSound는 SoundKit ID를 받지 않고 FileData ID/파일 경로만 받는다.
@@ -227,16 +233,36 @@ local function SA_IsBloodlustSoundKitID(value)
     return id <= 500000
 end
 
--- UNIT_SPELLCAST_SUCCEEDED는 target/nameplate/arena 유닛도 전달할 수 있으므로
--- API로 소속을 조회하지 않고(12.1 secret 반환 가능) 안전한 아군 그룹 토큰만 허용한다.
-local function SA_IsGroupCasterToken(unit)
+-- UNIT_SPELLCAST_SUCCEEDED는 파티원이 아닌 우호 NPC도 target/nameplate 등의 토큰으로
+-- 전달한다. 먼저 안전한 그룹 토큰을 허용하고, 나머지는 공개된 우호/플레이어 판정으로
+-- 적 플레이어의 블러드를 걸러 낸다. 제한 상태에서 판정값이 secret이면 알려진 NPC 토큰만
+-- 허용한다(정확한 블러드 주문 ID가 다시 한 번 게이트하므로 일반 NPC 주문은 영향 없음).
+local function SA_IsBloodlustCasterToken(unit)
     if type(issecretvalue) == "function" and issecretvalue(unit) then return false end
     if type(unit) ~= "string" then return false end
     if unit == "player" or unit == "pet" or unit == "vehicle" then return true end
-    return unit:match("^party%d+$") ~= nil
+    if unit:match("^party%d+$") ~= nil
         or unit:match("^partypet%d+$") ~= nil
         or unit:match("^raid%d+$") ~= nil
-        or unit:match("^raidpet%d+$") ~= nil
+        or unit:match("^raidpet%d+$") ~= nil then
+        return true
+    end
+
+    local npcToken = unit == "target" or unit == "focus" or unit == "mouseover"
+        or unit:match("^nameplate%d+$") ~= nil
+        or unit:match("^boss%d+$") ~= nil
+    if not npcToken then return false end
+
+    local okPlayer, isPlayer = pcall(UnitIsPlayer, unit)
+    if okPlayer and not (type(issecretvalue) == "function" and issecretvalue(isPlayer)) and isPlayer then
+        return false
+    end
+
+    local okAssist, canAssist = pcall(UnitCanAssist, "player", unit)
+    if okAssist and not (type(issecretvalue) == "function" and issecretvalue(canAssist)) then
+        return canAssist and true or false
+    end
+    return true
 end
 
 -- addedAuras에서 aura.spellId가 블러드 계열 디버프인지 확인 (pcall로 secret value 안전 처리)
@@ -404,7 +430,7 @@ function SA_InitDB()
             if bt.enabled   == nil then bt.enabled   = migrated.enabled end
         end
 
-        if bt.enabled == nil then bt.enabled = false end        -- 마스터 on/off
+        if bt.enabled == nil then bt.enabled = true end         -- 신규 사용자는 기본 ON, 기존 선택은 보존
         if bt.soundType == nil then bt.soundType = "custom" end
         if bt.soundFile == nil or bt.soundFile == "" then bt.soundFile = d.file end  -- 빈 값이면 기본 복원
         -- soundKey(내장 preset 전용) / soundName(내장 표시명)은 기본 nil → 내장 미선택 상태
@@ -625,7 +651,9 @@ local SA_bloodlustAuraSoundPending = false
 
 local function SA_CanChangeAuraSounds()
     if InCombatLockdown and InCombatLockdown() then return false end
-    if C_Secrets and C_Secrets.ShouldAurasBeSecret and C_Secrets.ShouldAurasBeSecret() then return false end
+    -- AddAuraSound는 비밀 오라에서도 알림을 제공하기 위해 마련된 API다. 쐐기/인카운터라는
+    -- 이유만으로 등록을 막으면 그 안에서 /reload 또는 재접속한 뒤에는 해당 제한이 끝날 때까지
+    -- 영원히 등록되지 않는다. 실제 API 거부는 호출부 pcall/반환값으로 처리하고 전투 중만 미룬다.
     return true
 end
 
@@ -704,7 +732,7 @@ local function SA_RefreshBloodlustAuraSounds()
     end
 
     -- 일부 ID만 등록된 상태를 성공으로 보면, 등록에 실패한 블러드에서는 native도 수동
-    -- 폴백도 울리지 않을 수 있다. 6종 전부 등록됐을 때만 수동 폴백을 끈다.
+    -- 폴백도 울리지 않을 수 있다. 알려진 디버프 전부 등록됐을 때만 수동 폴백을 끈다.
     SA_nativeBloodlustSoundReady = #SA_bloodlustAuraSoundIDs == #BLOODLUST_DEBUFFS
     SA_bloodlustAuraSoundPending = not SA_nativeBloodlustSoundReady
 end
@@ -2489,7 +2517,7 @@ local function SA_CreateBuffConfig(key)
     adv:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", 0, 0)
 
     -- 바 색상 (색상환 풀 팔레트 + 코드 입력 + 기본색. 색상환의 투명도 슬라이더 = 바 투명도와 연동)
-    win.colorRefresh = SA_MakeColorRow(adv, -112, L("바 색상"),
+    win.colorRefresh = SA_MakeColorRow(adv, -136, L("바 색상"),
         function() return MimDiceDB.buffTrack[key].color end,
         function(r, g, b) MimDiceDB.buffTrack[key].color = { r = r, g = g, b = b } end,
         { def.color[1], def.color[2], def.color[3] },
@@ -2502,12 +2530,12 @@ local function SA_CreateBuffConfig(key)
         })
 
     -- 크기/투명도 슬라이더 (가로/세로/글씨/투명도)
-    win.wSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffW_" .. key, -148, L("바 가로 크기"), 100, 1900, "width")
-    win.hSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffH_" .. key, -202, L("바 세로 크기"), 16, 300, "height")
-    win.tfSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffTF_" .. key, -256, L("글씨 크기 (라벨+남은시간)"), 8, 120, "timeFontSize")
+    win.wSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffW_" .. key, -172, L("바 가로 크기"), 100, 1900, "width")
+    win.hSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffH_" .. key, -226, L("바 세로 크기"), 16, 300, "height")
+    win.tfSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffTF_" .. key, -280, L("글씨 크기 (라벨+남은시간)"), 8, 120, "timeFontSize")
 
     -- 위치 X/Y 직접 입력
-    local posRefresh, posX, posY = SA_AddPosRow(adv, -302,
+    local posRefresh, posX, posY = SA_AddPosRow(adv, -326,
         function() return MimDiceDB.buffTrack[key].x end,
         function(v) MimDiceDB.buffTrack[key].x = v end,
         function() return MimDiceDB.buffTrack[key].y end,
@@ -2695,6 +2723,9 @@ local function SA_EnsureBuffBar(key)
 
     local f = CreateFrame("Frame", "MimDice_BuffBar_" .. key, UIParent, "BackdropTemplate")
     f:SetSize(bt.width or 220, bt.height or 24)
+    -- 첫 발동은 전투 중일 수 있으므로 생성 시점(로그인)에 저장 위치를 먼저 고정한다.
+    -- 이후 전투 중에는 보호될 수 있는 레이아웃 변경 없이 Show만 해도 바로 보인다.
+    f:SetPoint("CENTER", UIParent, "CENTER", bt.x or 0, bt.y or -150)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     f:SetFrameStrata("MEDIUM")
@@ -2736,6 +2767,13 @@ local function SA_EnsureBuffBar(key)
     timeTxt:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     timeTxt:SetShadowColor(0, 0, 0, 1); timeTxt:SetShadowOffset(1, -1)
     f.timeTxt = timeTxt
+
+    -- 생성 직후에도 저장된 모양을 완전히 적용해 첫 전투 표시가 기본 초록색으로 뜨지 않게 한다.
+    local initialColor = bt.color or { r = 1, g = 0.2, b = 0.2 }
+    sb:SetStatusBarColor(initialColor.r, initialColor.g, initialColor.b, (bt.alphaPct or 70) / 100)
+    local initialFontSize = bt.timeFontSize or 14
+    timeTxt:SetFont(MimDiceFontPath(), initialFontSize, "OUTLINE")
+    lbl:SetFont(MimDiceFontPath(), initialFontSize, "OUTLINE")
 
     -- 현재 위치를 DB에 저장하고, 설정창이 열려있으면 X/Y 입력칸도 실시간 갱신
     local function savePos(self)
@@ -2832,7 +2870,9 @@ local function SA_StartBuffBar(key, duration, force)
     if not bt then return end
     if not force and (not bt.enabled or not bt.barEnabled) then return end
     local f = SA_EnsureBuffBar(key)
-    SA_UpdateBuffBar(key)
+    -- 설정 변경 때와 로그인 때 레이아웃을 선적용한다. 실제 발동이 전투 중이면
+    -- 보호될 수 있는 SetPoint/SetSize는 건드리지 않고 카운트다운만 시작한다.
+    if not InCombatLockdown() then SA_UpdateBuffBar(key) end
     -- 실제 발동은 편집 테두리 없이 일반 모양으로 카운트다운
     f:SetBackdropColor(0, 0, 0, 0.25)
     f:SetBackdropBorderColor(0.4, 0.4, 0.4, 0.6)
@@ -2963,6 +3003,9 @@ local function SA_EnsureBattleResIcon()
 
     local f = CreateFrame("Frame", "MimDice_BattleResIcon", UIParent, "BackdropTemplate")
     f:SetSize(size, size)
+    -- 마스터 옵션이 꺼진 로그인 시점에도 앵커를 미리 둔다. 첫 표시가 전투 중이어도
+    -- 위치 잠금 토글을 거치지 않고 저장 위치에서 바로 나타난다.
+    f:SetPoint("CENTER", UIParent, "CENTER", (br and br.iconX) or 0, (br and br.iconY) or 0)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     f:SetFrameStrata("HIGH")      -- 다른 UI에 안 가리도록 레이어 상향
@@ -3106,11 +3149,15 @@ end
 function SA_RefreshBattleResIconState()
     local br = MimDiceDB and MimDiceDB.battleRes
     if not br then return end
-    local f = SA_BattleResIcon
+    -- 표시 옵션과 무관하게 레이아웃을 먼저 준비한다. 예전에는 마스터가 꺼져 있으면
+    -- 여기서 일찍 반환해 첫 ON 때까지 아이콘에 앵커가 없는 상태가 될 수 있었다.
+    local f = SA_EnsureBattleResIcon()
+    -- 실제 전투에서는 로그인/설정 변경 때 선적용한 앵커를 그대로 사용한다.
+    if not InCombatLockdown() then SA_ApplyBattleResIconLayout(f, br) end
 
     -- 마스터(전투부활) 꺼져 있으면 아이콘 자체를 완전히 무시
     if not br.enabled then
-        if f then f.editGlow:Hide(); f:Hide() end
+        f.editGlow:Hide(); f:Hide()
         return
     end
 
@@ -3123,9 +3170,6 @@ function SA_RefreshBattleResIconState()
         if f then f:Hide() end
         return
     end
-
-    f = SA_EnsureBattleResIcon()
-    SA_ApplyBattleResIconLayout(f, br)
 
     -- 로그인 직후 아이콘이 미캐시였으면 지금 다시 시도
     if not f.iconSet then
@@ -3656,28 +3700,49 @@ local SA_paSeen = {}         -- 이미 알림한 applicantID 집합 (목록 순�
 local SA_paLastShownID = nil -- 마지막으로 표시한 신청자 ID (반복 알림 재표시용)
 local SA_paTestUntil = 0     -- 테스트 중복 방지: 이 시각(GetTime)까지 테스트 재실행 억제
 
--- 최근 신청자 정보 문자열 ([특성아이콘 특성명] 직업색이름  아이템렙  쐐기점수). 전부 pcall 보호.
+-- applicantID 하나는 개인뿐 아니라 묶음 신청 전체를 뜻할 수 있다. 구조체/구형 다중 반환을
+-- 모두 지원해 실제 멤버 수를 얻고, 데이터가 아직 도착하지 않은 신청은 다음 이벤트에서 재확인한다.
+local function SA_PartyApplicantMemberCount(appID)
+    if not (C_LFGList and C_LFGList.GetApplicantInfo) then return 1, false end
+    local r = { pcall(C_LFGList.GetApplicantInfo, appID) }
+    if not r[1] then return 1, false end
+
+    local count
+    local data = r[2]
+    if type(data) == "table"
+       and not (type(issecretvalue) == "function" and issecretvalue(data))
+       and not (type(issecrettable) == "function" and issecrettable(data)) then
+        local ok, n = pcall(function() return data.numMembers end)
+        if ok then count = n end
+    else
+        count = r[5] -- 구형 반환 4번 numMembers (r[1]은 pcall 성공 여부)
+    end
+    if type(count) ~= "number" or SA_IsSecret(count) or count < 1 then return 1, false end
+    return math.max(1, math.floor(count)), true
+end
+
+-- 신청 이벤트가 멤버 상세보다 먼저 올 수 있다. 이름이 준비되기 전에 seen 처리하면
+-- 뒤이어 LFG_LIST_APPLICANT_UPDATED가 와도 실제 이름 알림을 놓치므로 전원 준비 후 기록한다.
+local function SA_PartyApplicantDataReady(appID)
+    if not (C_LFGList and C_LFGList.GetApplicantMemberInfo) then return false end
+    local count, countKnown = SA_PartyApplicantMemberCount(appID)
+    if not countKnown then return false end
+    for memberIndex = 1, count do
+        local ok, name = pcall(C_LFGList.GetApplicantMemberInfo, appID, memberIndex)
+        if not ok or SA_IsSecret(name) or type(name) ~= "string" or name == "" then return false end
+    end
+    return true
+end
+
+-- 신청 멤버 한 명의 정보 문자열 ([특성아이콘 특성명] 직업색이름  아이템렙  쐐기점수).
 -- GetApplicantMemberInfo 반환값 순서(확인됨): 1 name, 2 class, 3 locClass, 4 level,
 --   5 itemLevel, 6 honor, 7 tank, 8 healer, 9 damager, 10 role, 11 rel, 12 dungeonScore,
 --   13 pvpIlvl, 14 ?, 15 ?, 16 specID, ...  (pcall로 감싸면 인덱스가 +1 밀림)
-local function SA_PartyApplicantText(appID)
-    local pa = MimDiceDB and MimDiceDB.partyAlert
-    if not pa or not C_LFGList then return "" end
-    local ok, apps = pcall(C_LFGList.GetApplicants)
-    if not ok or type(apps) ~= "table" or #apps == 0 then return "" end
-    -- 표시 대상: 지정 신청자 → (반복 알림) 마지막 표시했던 신청자가 아직 대기 중이면 그 사람 → 목록 마지막
-    -- (GetApplicants() 목록 순서는 "최신이 마지막"이 보장되지 않으므로 순서에 의존하지 않는다)
-    local target = appID
-    if not target and SA_paLastShownID then
-        for _, id in ipairs(apps) do
-            if id == SA_paLastShownID then target = id; break end
-        end
-    end
-    target = target or apps[#apps]
-    local r = { pcall(C_LFGList.GetApplicantMemberInfo, target, 1) }
+local function SA_PartyApplicantMemberText(appID, memberIndex, pa)
+    local r = { pcall(C_LFGList.GetApplicantMemberInfo, appID, memberIndex) }
     if not r[1] then return "" end              -- r[1] = pcall ok
     local name  = r[2]
-    if not name or SA_IsSecret(name) then return "" end
+    if SA_IsSecret(name) or type(name) ~= "string" or name == "" then return "" end
     local class = r[3]
     local ilvl  = r[6]      -- 반환 5 (itemLevel)
     local score = r[13]     -- 반환 12 (dungeonScore, 전체 쐐기점수)
@@ -3691,7 +3756,7 @@ local function SA_PartyApplicantText(appID)
     local nameDisp = shortName
     if srv and srv ~= "" and srv ~= realm then nameDisp = shortName .. "-" .. srv end
     local disp = nameDisp
-    if class and not SA_IsSecret(class) and C_ClassColor then
+    if not SA_IsSecret(class) and class and C_ClassColor then
         local c = C_ClassColor.GetClassColor(class)
         if c then disp = "|c" .. c:GenerateHexColor() .. nameDisp .. "|r" end
     end
@@ -3735,6 +3800,30 @@ local function SA_PartyApplicantText(appID)
             table.concat(stats, " / "))
     end
     return table.concat(segs, "  ")
+end
+
+-- 최근 신청 정보. 묶음 신청이면 첫 번째 멤버만 반복하지 않고 전원을 줄별로 표시한다.
+local function SA_PartyApplicantText(appID)
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa or not C_LFGList then return "" end
+    local ok, apps = pcall(C_LFGList.GetApplicants)
+    if not ok or type(apps) ~= "table" or #apps == 0 then return "" end
+    -- 표시 대상: 지정 신청 → 마지막 표시 신청이 아직 대기 중이면 그 신청 → 목록 마지막.
+    local target = appID
+    if not target and SA_paLastShownID then
+        for _, id in ipairs(apps) do
+            if id == SA_paLastShownID then target = id; break end
+        end
+    end
+    target = target or apps[#apps]
+
+    local members = {}
+    local count = SA_PartyApplicantMemberCount(target)
+    for memberIndex = 1, count do
+        local text = SA_PartyApplicantMemberText(target, memberIndex, pa)
+        if text ~= "" then members[#members + 1] = text end
+    end
+    return table.concat(members, "\n")
 end
 
 -- 미리보기용: 본인 정보 + 현재 표시항목 설정 반영 (실제와 동일한 형식)
@@ -4047,11 +4136,11 @@ local function SA_CheckPartyApplicants()
     if not ok or type(apps) ~= "table" then return end
     local count = #apps
 
-    -- 새 신청자 = SA_paSeen에 없는 ID (여러 명 동시면 마지막 새 ID로 표시)
+    -- 새 신청자 = SA_paSeen에 없고 멤버 상세가 준비된 ID (여러 명 동시면 마지막 새 ID로 표시)
     local present, newID = {}, nil
     for _, id in ipairs(apps) do
         present[id] = true
-        if not SA_paSeen[id] then
+        if not SA_paSeen[id] and SA_PartyApplicantDataReady(id) then
             SA_paSeen[id] = true
             newID = id
         end
@@ -4710,14 +4799,98 @@ local function SA_HandlePlayerAuraUpdate(updateInfo)
     SA_ScanAddedAuras(addedAuras)
 end
 
+-- 12.1 제한 상태에서는 UNIT_AURA의 addedAuras가 통째로 secret이어도, NeverSecret으로
+-- 분류된 정확한 주문 ID 조회는 허용될 수 있다. 알려진 블러드 후유증의 없음→있음 전이를
+-- 별도로 추적해 파티원 시전 이벤트가 secret인 경우에도 지속바를 시작한다.
+local SA_bloodlustAuraWasPresent = false
+local SA_bloodlustAuraBaselineReady = false
+
+local function SA_ShouldAurasBeSecret()
+    if not (C_Secrets and C_Secrets.ShouldAurasBeSecret) then return false end
+    local ok, restricted = pcall(C_Secrets.ShouldAurasBeSecret)
+    return ok and restricted == true
+end
+
+local function SA_CanQueryBloodlustAura(spellID, restricted)
+    if not restricted then return true end
+    local getter = C_Secrets and C_Secrets.GetSpellAuraSecrecy
+    local neverSecret = Enum and Enum.SecrecyLevel and Enum.SecrecyLevel.NeverSecret
+    if not getter or neverSecret == nil then return false end
+    local ok, secrecy = pcall(getter, spellID)
+    return ok and not SA_IsSecret(secrecy) and secrecy == neverSecret
+end
+
+local function SA_QueryPlayerAuraBySpellID(spellID)
+    local playerGetter = C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID
+    local unitGetter = C_UnitAuras and C_UnitAuras.GetUnitAuraBySpellID
+    if not playerGetter and not unitGetter then return false, false end
+
+    -- 오라 테이블을 밖으로 꺼내지 않고 pcall 안에서 공개 boolean으로만 바꾼다.
+    local ok, present = pcall(function()
+        local aura
+        if playerGetter then
+            aura = playerGetter(spellID)
+        else
+            aura = unitGetter("player", spellID)
+        end
+        return aura ~= nil
+    end)
+    if not ok or SA_IsSecret(present) or type(present) ~= "boolean" then return false, false end
+    return present, true
+end
+
+local function SA_QueryBloodlustAuraPresence()
+    local restricted = SA_ShouldAurasBeSecret()
+    local allKnown = true
+    for i = 1, #BLOODLUST_DEBUFFS do
+        local spellID = BLOODLUST_DEBUFFS[i]
+        if SA_CanQueryBloodlustAura(spellID, restricted) then
+            local present, known = SA_QueryPlayerAuraBySpellID(spellID)
+            if known and present then return true, true end
+            if not known then allKnown = false end
+        else
+            allKnown = false
+        end
+    end
+    return false, allKnown
+end
+
+local function SA_SyncBloodlustAuraPresence(suppressTrigger)
+    local present, known = SA_QueryBloodlustAuraPresence()
+    if suppressTrigger then
+        -- 초기 조회가 부분적으로 제한돼도 기준선 자체는 세워 둔다. 그렇지 않으면 다음 실제
+        -- 없음→있음 전이가 '첫 조회'로 취급되어 알림 없이 소비될 수 있다.
+        SA_bloodlustAuraWasPresent = known and present or false
+        SA_bloodlustAuraBaselineReady = true
+        return known
+    end
+
+    if not known then return false end
+    if not SA_bloodlustAuraBaselineReady then
+        SA_bloodlustAuraWasPresent = present
+        SA_bloodlustAuraBaselineReady = true
+        return true
+    end
+
+    if present and not SA_bloodlustAuraWasPresent then
+        SA_TriggerBloodlust(not SA_nativeBloodlustSoundReady or SA_nativeBloodlustUsesFallback)
+    end
+    SA_bloodlustAuraWasPresent = present
+    return true
+end
+
 local SA_EventFrame = CreateFrame("Frame")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
 SA_EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")   -- 인스턴스 진입 시 전투부활 충전 기준값 동기화
+SA_EventFrame:RegisterEvent("ENCOUNTER_START")         -- 전투부활 풀이 활성화된 뒤 지연 재조회
+SA_EventFrame:RegisterEvent("CHALLENGE_MODE_START")    -- 쐐기 시작 직후 전투부활 풀이 늦게 준비되는 경우 보완
 SA_EventFrame:RegisterEvent("UNIT_DIED")
 SA_EventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")     -- 전투부활 충전 변화 감지
 SA_EventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")     -- 전투 종료: 미뤄둔 마우스 모드 재적용
+SA_EventFrame:RegisterEvent("ADDON_RESTRICTION_STATE_CHANGED")  -- secret 상태 전환 시 native/정확 조회 재평가
 SA_EventFrame:RegisterEvent("LFG_LIST_APPLICANT_LIST_UPDATED")  -- 파티 신청 감지
+SA_EventFrame:RegisterEvent("LFG_LIST_APPLICANT_UPDATED")       -- 신청 멤버 상세가 늦게 도착하는 경우 재확인
 SA_EventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")              -- 5인 풀파티 감지
 SA_EventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 
@@ -4725,10 +4898,12 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
         SA_InitDB()
         SA_RefreshBloodlustAuraSounds()
+        SA_SyncBloodlustAuraPresence(true) -- 재접속 당시 남아 있던 후유증은 새 발동으로 보지 않음
         -- 전투 중 프레임 생성 차단(SetPropagateMouseClicks protected)을 피하기 위해
         -- 로그인 시점(비전투)에 미리 생성
         for _, def in ipairs(BUFF_DEFS) do
             SA_EnsureBuffBar(def.key)
+            SA_UpdateBuffBar(def.key)   -- 저장 위치/크기/색을 첫 전투 전에 선적용
         end
         -- 죽음 프레임도 미리 생성 (첫 사망=전투 중 생성 지연/위험 제거)
         SA_EnsureDeathFrame()
@@ -4749,10 +4924,23 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         -- 인스턴스 진입/이동 시 충전 기준값 재동기화 (진입 직후 충전 변화 오발동 방지)
         SA_SyncBattleResCharges()
         SA_RefreshBattleResIconState()
-        -- 지역 이동 때도 native 등록을 다시 검증한다. 전투/제한 중이면 pending으로 남아
+        -- 지역 이동 때도 native 등록을 다시 검증한다. 전투 중이면 pending으로 남아
         -- 전투 종료 시 재시도된다.
         SA_RefreshBloodlustAuraSounds()
-    elseif event == "LFG_LIST_APPLICANT_LIST_UPDATED" then
+        SA_SyncBloodlustAuraPresence(true) -- 로딩으로 재전송된 기존 후유증 오발동 방지
+        -- 지역 진입 직후에는 전투부활 충전 풀이 아직 준비되지 않을 수 있다.
+        -- 짧게 한 번 더 읽어 위치 잠금 토글 없이 첫 숫자를 채운다.
+        C_Timer.After(1, function()
+            SA_SyncBattleResCharges()
+            SA_RefreshBattleResIconState()
+        end)
+    elseif event == "ENCOUNTER_START" or event == "CHALLENGE_MODE_START" then
+        -- Blizzard 충전 API가 전투/쐐기 상태보다 한 박자 늦게 활성화될 수 있다.
+        C_Timer.After(1, function()
+            SA_SyncBattleResCharges()
+            SA_RefreshBattleResIconState()
+        end)
+    elseif event == "LFG_LIST_APPLICANT_LIST_UPDATED" or event == "LFG_LIST_APPLICANT_UPDATED" then
         SA_CheckPartyApplicants()
     elseif event == "GROUP_ROSTER_UPDATE" then
         SA_CheckFullParty()
@@ -4763,6 +4951,10 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         -- 전투 종료: 전투 중 미뤄둔 아이콘 마우스 모드(클릭 통과/편집)를 지금 적용
         SA_RefreshBattleResIconState()
         if SA_bloodlustAuraSoundPending then SA_RefreshBloodlustAuraSounds() end
+    elseif event == "ADDON_RESTRICTION_STATE_CHANGED" then
+        -- 제한 상태가 바뀌면 실패했던 native 등록과 정확 주문 ID 조회 가능 여부를 다시 확인한다.
+        SA_RefreshBloodlustAuraSounds()
+        SA_SyncBloodlustAuraPresence(false)
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
         -- secret UNIT_AURA에서는 지속바를 직접 시작할 수 없으므로 시전 이벤트로 보완한다.
@@ -4770,7 +4962,7 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         local spellIDIsSecret = issecretvalue and issecretvalue(spellID)
         local unitIsSecret = issecretvalue and issecretvalue(unit)
         if not spellIDIsSecret and not unitIsSecret
-           and SA_IsGroupCasterToken(unit) and BLOODLUST_CAST_SPELLS[spellID] then
+           and SA_IsBloodlustCasterToken(unit) and BLOODLUST_CAST_SPELLS[spellID] then
             SA_TriggerBloodlust(not SA_nativeBloodlustSoundReady or SA_nativeBloodlustUsesFallback)
         end
         if unitIsSecret or unit ~= "player" then return end
@@ -4784,12 +4976,12 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
     elseif event == "UNIT_AURA" then
-        -- 12.1+ 제한 상황에서는 payload 전체가 secret이다. secret 값은 순회하지 않고
-        -- native aura sound + 위 시전 이벤트 경로를 사용한다.
+        -- 공개 payload는 기존 fast path로 읽고, secret payload에서도 정확 주문 ID 전이 조회는 시도한다.
         local unit, updateInfo = ...
-        if type(issecretvalue) == "function" and issecretvalue(unit) then return end
-        if unit ~= "player" then return end
-        pcall(SA_HandlePlayerAuraUpdate, updateInfo)
+        local unitIsSecret = type(issecretvalue) == "function" and issecretvalue(unit)
+        if not unitIsSecret and unit ~= "player" then return end
+        if not unitIsSecret then pcall(SA_HandlePlayerAuraUpdate, updateInfo) end
+        pcall(SA_SyncBloodlustAuraPresence, false)
     elseif event == "UNIT_DIED" then
         -- 파티/공대원/본인 사망 감지
         local deadGUID = ...
