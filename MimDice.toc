@@ -4,7 +4,7 @@
 ## Notes: Roll helper with sound, combat resurrection, and group alerts.
 ## Notes-koKR: 밈주머니를 위한 주사위 애드온. 애기야 사랑해!!
 ## SavedVariables: MimDiceDB
-## Version: 1.15.10
+## Version: 1.15.11
 ## IconTexture: Interface\AddOns\MimDice\img\Mim_minimap_icon.tga
 ## OptionalDeps: LibStub, LibDataBroker-1.1, LibDBIcon-1.0 
 

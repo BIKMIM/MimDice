@@ -198,83 +198,6 @@ local BLOODLUST_DEBUFFS = {
     390435, -- Exhaustion (Fury of the Aspects)
 }
 
--- UNIT_AURA payload가 secret인 12.1+에서 지속바 시작 시점을 보완하기 위한
--- 블러드 계열 시전/버프 ID. UNIT_SPELLCAST_SUCCEEDED가 전달되는 경우에 사용한다.
-local BLOODLUST_CAST_SPELLS = {
-    [2825] = true,    -- Bloodlust
-    [32182] = true,   -- Heroism
-    [80353] = true,   -- Time Warp
-    [90355] = true,   -- Ancient Hysteria
-    [160452] = true,  -- Netherwinds
-    [146555] = true,  -- Drums of Rage
-    [178207] = true,  -- Drums of Fury
-    [230935] = true,  -- Drums of the Mountain
-    [256740] = true,  -- Drums of the Maelstrom
-    [264667] = true,  -- Primal Rage
-    [309658] = true,  -- Drums of Deathly Ferocity
-    [381301] = true,  -- Feral Hide Drums
-    [390386] = true,  -- Fury of the Aspects
-    [441076] = true,  -- Timeless Drums
-    [444257] = true,  -- Thunderous Drums
-    [466904] = true,  -- Harrier's Cry
-    [1243972] = true, -- Void-Touched Drums
-}
-
--- AddAuraSound는 SoundKit ID를 받지 않고 FileData ID/파일 경로만 받는다.
--- 입력을 막지는 않고, 블러드 설정에서만 조용한 안내를 표시하기 위한 판별 함수다.
-local function SA_IsBloodlustSoundKitID(value)
-    local id = tonumber(value)
-    if not id or id <= 0 or id ~= math.floor(id) then return false end
-
-    if type(GetSoundEntryCount) == "function" then
-        local ok, count = pcall(GetSoundEntryCount, id)
-        if ok and type(count) == "number" and count > 0 then return true end
-    end
-    return id <= 500000
-end
-
--- UNIT_SPELLCAST_SUCCEEDED는 파티원이 아닌 우호 NPC도 target/nameplate 등의 토큰으로
--- 전달한다. 먼저 안전한 그룹 토큰을 허용하고, 나머지는 공개된 우호/플레이어 판정으로
--- 적 플레이어의 블러드를 걸러 낸다. 제한 상태에서 판정값이 secret이면 알려진 NPC 토큰만
--- 허용한다(정확한 블러드 주문 ID가 다시 한 번 게이트하므로 일반 NPC 주문은 영향 없음).
-local function SA_IsBloodlustCasterToken(unit)
-    if type(issecretvalue) == "function" and issecretvalue(unit) then return false end
-    if type(unit) ~= "string" then return false end
-    if unit == "player" or unit == "pet" or unit == "vehicle" then return true end
-    if unit:match("^party%d+$") ~= nil
-        or unit:match("^partypet%d+$") ~= nil
-        or unit:match("^raid%d+$") ~= nil
-        or unit:match("^raidpet%d+$") ~= nil then
-        return true
-    end
-
-    local npcToken = unit == "target" or unit == "focus" or unit == "mouseover"
-        or unit:match("^nameplate%d+$") ~= nil
-        or unit:match("^boss%d+$") ~= nil
-    if not npcToken then return false end
-
-    local okPlayer, isPlayer = pcall(UnitIsPlayer, unit)
-    if okPlayer and not (type(issecretvalue) == "function" and issecretvalue(isPlayer)) and isPlayer then
-        return false
-    end
-
-    local okAssist, canAssist = pcall(UnitCanAssist, "player", unit)
-    if okAssist and not (type(issecretvalue) == "function" and issecretvalue(canAssist)) then
-        return canAssist and true or false
-    end
-    return true
-end
-
--- addedAuras에서 aura.spellId가 블러드 계열 디버프인지 확인 (pcall로 secret value 안전 처리)
-local function SA_IsBloodlustAura(aura)
-    local sid = aura and aura.spellId
-    if not sid then return false end
-    for j = 1, #BLOODLUST_DEBUFFS do
-        if sid == BLOODLUST_DEBUFFS[j] then return true end
-    end
-    return false
-end
-
 function SA_InitDB()
     if not MimDiceDB then MimDiceDB = {} end
     if MimDiceDB.language == nil then MimDiceDB.language = "auto" end
@@ -642,107 +565,14 @@ local function SA_PlaySound(entry, channel)
     end
 end
 
--- 12.1부터 전투 중 UNIT_AURA payload 전체가 secret이 될 수 있다. 이때 애드온이
--- aura를 읽어서 소리를 재생하는 대신 Blizzard의 전용 API에 소리를 미리 등록한다.
-local SA_bloodlustAuraSoundIDs = {}
-local SA_nativeBloodlustSoundReady = false
-local SA_nativeBloodlustUsesFallback = false
-local SA_bloodlustAuraSoundPending = false
-
+-- 정확 주문 ID 조회 전에 현재 오라 데이터가 제한되는 환경인지 확인한다.
+-- 블러드 후유증은 NeverSecret으로 실측됐지만, 제한 중에는 등급 확인을 먼저 거친다.
 local function SA_AuraEnvironmentRestricted()
     if not (C_Secrets and C_Secrets.ShouldAurasBeSecret) then return false end
     local ok, restricted = pcall(C_Secrets.ShouldAurasBeSecret)
     if not ok then return true end
     if type(issecretvalue) == "function" and issecretvalue(restricted) then return true end
     return restricted == true
-end
-
-local function SA_CanChangeAuraSounds()
-    if InCombatLockdown and InCombatLockdown() then return false end
-    if SA_AuraEnvironmentRestricted() then return false end
-    -- Blizzard는 제한 전에 등록된 오라 사운드는 재생할 수 있지만, 제한 중에
-    -- AddAuraSound로 다시 등록하면 보호 함수 차단이 발생한다.
-    return true
-end
-
-local function SA_ClearBloodlustAuraSounds()
-    if not (C_UnitAuras and C_UnitAuras.RemoveAuraSound) then
-        SA_bloodlustAuraSoundIDs = {}
-        SA_nativeBloodlustSoundReady = false
-        SA_nativeBloodlustUsesFallback = false
-        return
-    end
-    for i = 1, #SA_bloodlustAuraSoundIDs do
-        pcall(C_UnitAuras.RemoveAuraSound, SA_bloodlustAuraSoundIDs[i])
-    end
-    SA_bloodlustAuraSoundIDs = {}
-    SA_nativeBloodlustSoundReady = false
-    SA_nativeBloodlustUsesFallback = false
-end
-
-local function SA_GetBloodlustAuraSoundMedia(bt)
-    if bt.soundType == "custom" and type(bt.soundFile) == "string" and bt.soundFile ~= "" then
-        return "Interface\\AddOns\\MimDice\\sounds\\" .. bt.soundFile, nil, false
-    end
-
-    local fileID
-    if bt.soundType == "preset" then
-        fileID = tonumber(bt.soundKey)
-    elseif bt.soundType == "id" then
-        fileID = tonumber(bt.soundID)
-    end
-    -- AddAuraSound는 SoundKit ID가 아니라 FileData ID를 받는다.
-    if fileID and fileID > 500000 then return nil, fileID, false end
-
-    -- 직접 입력한 SoundKit ID처럼 native API가 받을 수 없는 설정이어도 감지를 포기하지 않는다.
-    -- 이 경우에는 번들된 기본 블러드 파일을 native 안전망으로 등록하고, 읽을 수 있는 시전
-    -- 이벤트에서는 사용자가 고른 사운드도 기존 방식으로 재생한다. 중복보다 누락 방지가 우선이다.
-    local def = BUFF_DEF_BY_KEY.BLOODLUST
-    if def and type(def.file) == "string" and def.file ~= "" then
-        return "Interface\\AddOns\\MimDice\\sounds\\" .. def.file, nil, true
-    end
-    return nil, nil, false
-end
-
-local function SA_RefreshBloodlustAuraSounds()
-    if not (C_UnitAuras and C_UnitAuras.AddAuraSound and C_UnitAuras.RemoveAuraSound) then
-        SA_nativeBloodlustSoundReady = false
-        SA_nativeBloodlustUsesFallback = false
-        SA_bloodlustAuraSoundPending = false
-        return
-    end
-    if not SA_CanChangeAuraSounds() then
-        SA_bloodlustAuraSoundPending = true
-        return
-    end
-
-    SA_bloodlustAuraSoundPending = false
-    SA_ClearBloodlustAuraSounds()
-
-    local bt = MimDiceDB and MimDiceDB.buffTrack and MimDiceDB.buffTrack.BLOODLUST
-    if not bt or not bt.enabled then return end
-    local soundFileName, soundFileID, usesFallback = SA_GetBloodlustAuraSoundMedia(bt)
-    if not soundFileName and not soundFileID then return end
-    SA_nativeBloodlustUsesFallback = usesFallback
-
-    local trigger = Enum and Enum.UnitAuraSoundTrigger and Enum.UnitAuraSoundTrigger.Added or 0
-    for i = 1, #BLOODLUST_DEBUFFS do
-        local info = {
-            unitToken = "player",
-            spellID = BLOODLUST_DEBUFFS[i],
-            outputChannel = "Dialog",
-        }
-        if soundFileName then info.soundFileName = soundFileName else info.soundFileID = soundFileID end
-        local ok, registrationID = pcall(C_UnitAuras.AddAuraSound, trigger, info)
-        if ok and type(registrationID) == "number" then
-            SA_bloodlustAuraSoundIDs[#SA_bloodlustAuraSoundIDs + 1] = registrationID
-        end
-    end
-
-    -- 일부 ID만 등록된 상태를 성공으로 보면, 등록에 실패한 블러드에서는 native도 수동
-    -- 폴백도 울리지 않을 수 있다. 알려진 디버프 전부 등록됐을 때만 수동 폴백을 끈다.
-    SA_nativeBloodlustSoundReady = #SA_bloodlustAuraSoundIDs == #BLOODLUST_DEBUFFS
-    SA_bloodlustAuraSoundPending = not SA_nativeBloodlustSoundReady
 end
 
 -- =====================================================================
@@ -2387,7 +2217,6 @@ local function SA_CreateBuffConfig(key)
         function(t)
             MimDiceDB.buffTrack[key].soundType = t
             win.RefreshSoundRow()
-            if key == "BLOODLUST" then SA_RefreshBloodlustAuraSounds() end
         end)
 
     -- 커스텀/ID 입력칸 (직접 타이핑)
@@ -2398,17 +2227,6 @@ local function SA_CreateBuffConfig(key)
     soundBox:SetFont(MimDiceFontPath(), 11, "")
     win.soundBox = soundBox
     SA_WirePlaceholder(soundBox)
-
-    -- 블러드에서 SoundKit ID를 선택한 경우에만 보이는 조용한 안내.
-    -- 입력은 그대로 허용하며 기존 저장값도 건드리지 않는다.
-    local soundIDNotice = win:CreateFontString(nil, "OVERLAY")
-    soundIDNotice:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -80)
-    soundIDNotice:SetWidth(310)
-    soundIDNotice:SetJustifyH("LEFT")
-    soundIDNotice:SetFont(MimDiceFontPath(), 9, "OUTLINE")
-    soundIDNotice:SetText(L("이 효과음 번호는 블러드 때 기본 노래가 함께 나오거나 대신 나올 수 있어요."))
-    soundIDNotice:SetTextColor(1, 0.82, 0)
-    soundIDNotice:Hide()
 
     -- 내장 선택 시: 사운드 선택 팝업 버튼 (soundBox 자리, 토글로 교체 표시)
     local soundSelectBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
@@ -2428,7 +2246,6 @@ local function SA_CreateBuffConfig(key)
                 local bt = MimDiceDB.buffTrack[key]
                 bt.soundType = "preset"; bt.soundKey = snd.id; bt.soundName = snd.name
                 win.RefreshSoundRow()
-                if key == "BLOODLUST" then SA_RefreshBloodlustAuraSounds() end
                 local was = bt.enabled; bt.enabled = true
                 SA_PlaySound(bt); bt.enabled = was
             end)
@@ -2445,12 +2262,6 @@ local function SA_CreateBuffConfig(key)
         SA_PlaySound(bt)
         bt.enabled = was
     end)
-
-    local function RefreshSoundIDNotice()
-        local bt = MimDiceDB.buffTrack[key]
-        soundIDNotice:SetShown(key == "BLOODLUST" and bt.soundType == "id"
-            and SA_IsBloodlustSoundKitID(bt.soundID))
-    end
 
     function win.RefreshSoundRow()
         local bt = MimDiceDB.buffTrack[key]
@@ -2472,7 +2283,6 @@ local function SA_CreateBuffConfig(key)
             soundSelectBtn:Hide(); soundBox:Show()
             SA_SetBoxValue(soundBox, bt.soundFile, L("예: MySound.mp3"))
         end
-        RefreshSoundIDNotice()
     end
 
     soundBox:SetScript("OnTextChanged", function(self, userInput)
@@ -2480,21 +2290,16 @@ local function SA_CreateBuffConfig(key)
         local bt = MimDiceDB.buffTrack[key]
         if bt.soundType == "id" then
             bt.soundID = tonumber(self:GetText()) or self:GetText()
-            RefreshSoundIDNotice()
         else
             bt.soundFile = self:GetText()   -- soundName 은 내장(preset) 표시 전용이라 안 건드림
-            soundIDNotice:Hide()
         end
     end)
     soundBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
-    soundBox:SetScript("OnEditFocusLost", function()
-        if key == "BLOODLUST" then SA_RefreshBloodlustAuraSounds() end
-    end)
 
     -- 바 표시 체크박스
     local barCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
     barCb:SetSize(22, 22)
-    barCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -100)
+    barCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -86)
     local barLabel = win:CreateFontString(nil, "OVERLAY")
     barLabel:SetPoint("LEFT", barCb, "RIGHT", 2, 0)
     barLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
@@ -2518,14 +2323,14 @@ local function SA_CreateBuffConfig(key)
     -- ── 상세 설정 접기/펼치기 (기본: 접힘 = 소리 + 바 표시 ON/OFF만 보임) ──
     local advBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     advBtn:SetSize(310, 22)
-    advBtn:SetPoint("TOP", win, "TOP", 0, -128)
+    advBtn:SetPoint("TOP", win, "TOP", 0, -114)
     advBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
     local adv = CreateFrame("Frame", nil, win)
     adv:SetPoint("TOPLEFT", win, "TOPLEFT", 0, -28)
     adv:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", 0, 0)
 
     -- 바 색상 (색상환 풀 팔레트 + 코드 입력 + 기본색. 색상환의 투명도 슬라이더 = 바 투명도와 연동)
-    win.colorRefresh = SA_MakeColorRow(adv, -136, L("바 색상"),
+    win.colorRefresh = SA_MakeColorRow(adv, -112, L("바 색상"),
         function() return MimDiceDB.buffTrack[key].color end,
         function(r, g, b) MimDiceDB.buffTrack[key].color = { r = r, g = g, b = b } end,
         { def.color[1], def.color[2], def.color[3] },
@@ -2538,12 +2343,12 @@ local function SA_CreateBuffConfig(key)
         })
 
     -- 크기/투명도 슬라이더 (가로/세로/글씨/투명도)
-    win.wSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffW_" .. key, -172, L("바 가로 크기"), 100, 1900, "width")
-    win.hSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffH_" .. key, -226, L("바 세로 크기"), 16, 300, "height")
-    win.tfSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffTF_" .. key, -280, L("글씨 크기 (라벨+남은시간)"), 8, 120, "timeFontSize")
+    win.wSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffW_" .. key, -148, L("바 가로 크기"), 100, 1900, "width")
+    win.hSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffH_" .. key, -202, L("바 세로 크기"), 16, 300, "height")
+    win.tfSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffTF_" .. key, -256, L("글씨 크기 (라벨+남은시간)"), 8, 120, "timeFontSize")
 
     -- 위치 X/Y 직접 입력
-    local posRefresh, posX, posY = SA_AddPosRow(adv, -326,
+    local posRefresh, posX, posY = SA_AddPosRow(adv, -302,
         function() return MimDiceDB.buffTrack[key].x end,
         function(v) MimDiceDB.buffTrack[key].x = v end,
         function() return MimDiceDB.buffTrack[key].y end,
@@ -2613,7 +2418,7 @@ local function SA_CreateBuffConfig(key)
     local function ApplyAdv()
         local open = MimDiceDB.buffTrack[key].advOpen and true or false
         adv:SetShown(open)
-        win:SetHeight(open and 458 or 204)
+        win:SetHeight(open and 444 or 190)
         advBtn:SetText(open and L("상세 설정 접기") or L("상세 설정 열기 : 색/크기/위치"))
     end
     win.ApplyAdv = ApplyAdv
@@ -2902,13 +2707,25 @@ local function SA_PlayBuff(key)
     SA_PlaySound(bt, "Dialog")
 end
 
--- UNIT_AURA와 UNIT_SPELLCAST_SUCCEEDED가 같은 블러드를 함께 알려도 한 번만 처리한다.
+-- 같은 오라 적용으로 UNIT_AURA가 여러 번 와도 블러드를 한 번만 처리한다.
 local SA_lastBloodlustTrigger
-local function SA_TriggerBloodlust(playSound)
+local SA_bloodlustTriggerSuppressUntil = 0
+
+local function SA_SuppressBloodlustTriggers(seconds)
+    local untilTime = GetTime() + (seconds or 3)
+    if untilTime > SA_bloodlustTriggerSuppressUntil then
+        SA_bloodlustTriggerSuppressUntil = untilTime
+    end
+end
+
+local function SA_TriggerBloodlust()
     local now = GetTime()
+    -- 로딩/지역 이동 때 재전송된 기존 후유증과 실제 새 발동을 구분할 공개 정보가 없으므로
+    -- 짧은 전환 구간은 모든 감지 경로에서 공통으로 무시한다.
+    if now < SA_bloodlustTriggerSuppressUntil then return end
     if SA_lastBloodlustTrigger and now - SA_lastBloodlustTrigger < 2 then return end
     SA_lastBloodlustTrigger = now
-    if playSound then SA_PlayBuff("BLOODLUST") end
+    SA_PlayBuff("BLOODLUST")
     SA_StartBuffBar("BLOODLUST", BUFF_DEF_BY_KEY.BLOODLUST.duration)
 end
 
@@ -4767,49 +4584,9 @@ local function SA_StartLegacyWhisperCleanup()
 end
 
 -- =====================================================================
--- 블러드 감지 보조 함수
--- payload를 읽을 수 있는 환경에서는 기존의 남은시간 판정도 계속 사용한다.
+-- 블러드 감지: UNIT_AURA payload는 읽지 않고 NeverSecret 후유증 7종을 정확 ID로 조회한다.
+-- 없음→있음 전이만 새 블러드로 처리하며, 남은 시간이 560초 이상일 때만 발동한다.
 -- =====================================================================
--- 방금 걸린 Sated는 남은 시간이 ~600s. 560 미만이면 이미 있던 것(존 전환 재전송).
--- expirationTime이 secret이면 산술/비교에서 에러 → pcall이 잡아서 false 반환.
-local function SA_IsFreshLustAura(aura)
-    local ok, fresh = pcall(function()
-        return (aura.expirationTime or 0) - GetTime() >= 560
-    end)
-    return ok and fresh
-end
-
--- 기본 경로: 읽을 수 있다고 확인된 addedAuras만 순회한다.
-local function SA_ScanAddedAuras(added)
-    for _, aura in ipairs(added) do
-        local ok, isLust = pcall(SA_IsBloodlustAura, aura)
-        if ok and isLust then
-            if SA_IsFreshLustAura(aura) then
-                SA_TriggerBloodlust(not SA_nativeBloodlustSoundReady or SA_nativeBloodlustUsesFallback)
-            end
-            return
-        end
-    end
-end
-
--- 12.1+에서는 updateInfo 또는 그 안의 addedAuras가 secret table일 수 있다.
--- 필드 접근부터 순회까지 전부 이 함수와 호출부 pcall 안에 두어 어떤 형태의 secret
--- payload가 와도 Lua 에러를 밖으로 내보내지 않는다.
-local function SA_HandlePlayerAuraUpdate(updateInfo)
-    if type(updateInfo) ~= "table" then return end
-    if type(issecrettable) == "function" and issecrettable(updateInfo) then return end
-
-    local addedAuras = updateInfo.addedAuras
-    if type(issecretvalue) == "function" and issecretvalue(addedAuras) then return end
-    if type(issecrettable) == "function" and issecrettable(addedAuras) then return end
-    if type(addedAuras) ~= "table" then return end
-
-    SA_ScanAddedAuras(addedAuras)
-end
-
--- 12.1 제한 상태에서는 UNIT_AURA의 addedAuras가 통째로 secret이어도, NeverSecret으로
--- 분류된 정확한 주문 ID 조회는 허용될 수 있다. 알려진 블러드 후유증의 없음→있음 전이를
--- 별도로 추적해 파티원 시전 이벤트가 secret인 경우에도 지속바를 시작한다.
 local SA_bloodlustAuraWasPresent = false
 local SA_bloodlustAuraBaselineReady = false
 
@@ -4832,17 +4609,21 @@ local function SA_QueryPlayerAuraBySpellID(spellID)
     if not playerGetter and not unitGetter then return false, false end
 
     -- 오라 테이블을 밖으로 꺼내지 않고 pcall 안에서 공개 boolean으로만 바꾼다.
-    local ok, present = pcall(function()
+    local ok, present, fresh = pcall(function()
         local aura
         if playerGetter then
             aura = playerGetter(spellID)
         else
             aura = unitGetter("player", spellID)
         end
-        return aura ~= nil
+        if aura == nil then return false, false end
+        return true, (aura.expirationTime or 0) - GetTime() >= 560
     end)
-    if not ok or SA_IsSecret(present) or type(present) ~= "boolean" then return false, false end
-    return present, true
+    if not ok or SA_IsSecret(present) or SA_IsSecret(fresh)
+        or type(present) ~= "boolean" or type(fresh) ~= "boolean" then
+        return false, false, false
+    end
+    return present, true, fresh
 end
 
 local function SA_QueryBloodlustAuraPresence()
@@ -4851,18 +4632,18 @@ local function SA_QueryBloodlustAuraPresence()
     for i = 1, #BLOODLUST_DEBUFFS do
         local spellID = BLOODLUST_DEBUFFS[i]
         if SA_CanQueryBloodlustAura(spellID, restricted) then
-            local present, known = SA_QueryPlayerAuraBySpellID(spellID)
-            if known and present then return true, true end
+            local present, known, fresh = SA_QueryPlayerAuraBySpellID(spellID)
+            if known and present then return true, true, fresh end
             if not known then allKnown = false end
         else
             allKnown = false
         end
     end
-    return false, allKnown
+    return false, allKnown, false
 end
 
 local function SA_SyncBloodlustAuraPresence(suppressTrigger)
-    local present, known = SA_QueryBloodlustAuraPresence()
+    local present, known, fresh = SA_QueryBloodlustAuraPresence()
     if suppressTrigger then
         -- 초기 조회가 부분적으로 제한돼도 기준선 자체는 세워 둔다. 그렇지 않으면 다음 실제
         -- 없음→있음 전이가 '첫 조회'로 취급되어 알림 없이 소비될 수 있다.
@@ -4878,8 +4659,8 @@ local function SA_SyncBloodlustAuraPresence(suppressTrigger)
         return true
     end
 
-    if present and not SA_bloodlustAuraWasPresent then
-        SA_TriggerBloodlust(not SA_nativeBloodlustSoundReady or SA_nativeBloodlustUsesFallback)
+    if present and not SA_bloodlustAuraWasPresent and fresh then
+        SA_TriggerBloodlust()
     end
     SA_bloodlustAuraWasPresent = present
     return true
@@ -4889,12 +4670,12 @@ local SA_EventFrame = CreateFrame("Frame")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
 SA_EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")   -- 인스턴스 진입 시 전투부활 충전 기준값 동기화
+SA_EventFrame:RegisterEvent("LOADING_SCREEN_ENABLED")  -- 지역 이동 오라 재전송을 새 블러드로 오인하지 않도록 선차단
 SA_EventFrame:RegisterEvent("ENCOUNTER_START")         -- 전투부활 풀이 활성화된 뒤 지연 재조회
 SA_EventFrame:RegisterEvent("CHALLENGE_MODE_START")    -- 쐐기 시작 직후 전투부활 풀이 늦게 준비되는 경우 보완
 SA_EventFrame:RegisterEvent("UNIT_DIED")
 SA_EventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")     -- 전투부활 충전 변화 감지
 SA_EventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")     -- 전투 종료: 미뤄둔 마우스 모드 재적용
-SA_EventFrame:RegisterEvent("ADDON_RESTRICTION_STATE_CHANGED")  -- 제한 해제 시 후유증 기준선 재설정
 SA_EventFrame:RegisterEvent("LFG_LIST_APPLICANT_LIST_UPDATED")  -- 파티 신청 감지
 SA_EventFrame:RegisterEvent("LFG_LIST_APPLICANT_UPDATED")       -- 신청 멤버 상세가 늦게 도착하는 경우 재확인
 SA_EventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")              -- 5인 풀파티 감지
@@ -4902,8 +4683,8 @@ SA_EventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 
 SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
+        SA_SuppressBloodlustTriggers(3)
         SA_InitDB()
-        SA_RefreshBloodlustAuraSounds()
         SA_SyncBloodlustAuraPresence(true) -- 재접속 당시 남아 있던 후유증은 새 발동으로 보지 않음
         -- 전투 중 프레임 생성 차단(SetPropagateMouseClicks protected)을 피하기 위해
         -- 로그인 시점(비전투)에 미리 생성
@@ -4926,13 +4707,13 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         SA_StartLegacyWhisperCleanup()
         -- 풀파티 기준 인원 동기화 (로그인 시 이미 5인이면 안 울리게)
         SA_SyncGroupSize()
+    elseif event == "LOADING_SCREEN_ENABLED" then
+        SA_SuppressBloodlustTriggers(5)
     elseif event == "PLAYER_ENTERING_WORLD" then
+        SA_SuppressBloodlustTriggers(3)
         -- 인스턴스 진입/이동 시 충전 기준값 재동기화 (진입 직후 충전 변화 오발동 방지)
         SA_SyncBattleResCharges()
         SA_RefreshBattleResIconState()
-        -- 지역 이동 때도 native 등록을 다시 검증한다. 전투 중이면 pending으로 남아
-        -- 전투 종료 시 재시도된다.
-        SA_RefreshBloodlustAuraSounds()
         SA_SyncBloodlustAuraPresence(true) -- 로딩으로 재전송된 기존 후유증 오발동 방지
         -- 지역 진입 직후에는 전투부활 충전 풀이 아직 준비되지 않을 수 있다.
         -- 짧게 한 번 더 읽어 위치 잠금 토글 없이 첫 숫자를 채운다.
@@ -4956,27 +4737,12 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- 전투 종료: 전투 중 미뤄둔 아이콘 마우스 모드(클릭 통과/편집)를 지금 적용
         SA_RefreshBattleResIconState()
-        if SA_bloodlustAuraSoundPending then SA_RefreshBloodlustAuraSounds() end
-    elseif event == "ADDON_RESTRICTION_STATE_CHANGED" then
-        local _, restrictionState = ...
-        local inactive = Enum and Enum.AddOnRestrictionState
-            and Enum.AddOnRestrictionState.Inactive or 0
-        -- 이 이벤트 처리 중에는 보호된 등록 API를 호출하지 않는다. Inactive가 되면
-        -- 남아 있던 후유증만 기준선으로 저장하고, 등록 재시도는 안전한 다른 이벤트에 맡긴다.
-        if restrictionState == inactive then
-            SA_SyncBloodlustAuraPresence(true)
-        end
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
-        -- secret UNIT_AURA에서는 지속바를 직접 시작할 수 없으므로 시전 이벤트로 보완한다.
-        -- 사운드는 native aura 등록이 성공했으면 Blizzard가 재생하고, 아니면 기존 방식으로 재생한다.
         local spellIDIsSecret = issecretvalue and issecretvalue(spellID)
         local unitIsSecret = issecretvalue and issecretvalue(unit)
-        if not spellIDIsSecret and not unitIsSecret
-           and SA_IsBloodlustCasterToken(unit) and BLOODLUST_CAST_SPELLS[spellID] then
-            SA_TriggerBloodlust(not SA_nativeBloodlustSoundReady or SA_nativeBloodlustUsesFallback)
-        end
-        if unitIsSecret or unit ~= "player" then return end
+        -- 이 이벤트는 사용자 지정 주문 알림에만 사용한다. 블러드는 실제 후유증 적용으로 판단한다.
+        if unitIsSecret or spellIDIsSecret or unit ~= "player" then return end
         if not MimDiceDB or not MimDiceDB.soundAlerts then return end
 
         local _, playerClass = UnitClass("player")
@@ -4987,11 +4753,7 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
     elseif event == "UNIT_AURA" then
-        -- 공개 payload는 기존 fast path로 읽고, secret payload에서도 정확 주문 ID 전이 조회는 시도한다.
-        local unit, updateInfo = ...
-        local unitIsSecret = type(issecretvalue) == "function" and issecretvalue(unit)
-        if not unitIsSecret and unit ~= "player" then return end
-        if not unitIsSecret then pcall(SA_HandlePlayerAuraUpdate, updateInfo) end
+        -- RegisterUnitEvent로 player만 받는다. secret일 수 있는 payload는 읽지 않는다.
         pcall(SA_SyncBloodlustAuraPresence, false)
     elseif event == "UNIT_DIED" then
         -- 파티/공대원/본인 사망 감지
@@ -5511,7 +5273,6 @@ local function SA_CreateWindow()
     bloodCb:SetScript("OnClick", function(self)
         if MimDiceDB and MimDiceDB.buffTrack and MimDiceDB.buffTrack.BLOODLUST then
             MimDiceDB.buffTrack.BLOODLUST.enabled = self:GetChecked() and true or false
-            SA_RefreshBloodlustAuraSounds()
         end
     end)
     local bloodLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
