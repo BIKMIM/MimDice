@@ -649,11 +649,19 @@ local SA_nativeBloodlustSoundReady = false
 local SA_nativeBloodlustUsesFallback = false
 local SA_bloodlustAuraSoundPending = false
 
+local function SA_AuraEnvironmentRestricted()
+    if not (C_Secrets and C_Secrets.ShouldAurasBeSecret) then return false end
+    local ok, restricted = pcall(C_Secrets.ShouldAurasBeSecret)
+    if not ok then return true end
+    if type(issecretvalue) == "function" and issecretvalue(restricted) then return true end
+    return restricted == true
+end
+
 local function SA_CanChangeAuraSounds()
     if InCombatLockdown and InCombatLockdown() then return false end
-    -- AddAuraSound는 비밀 오라에서도 알림을 제공하기 위해 마련된 API다. 쐐기/인카운터라는
-    -- 이유만으로 등록을 막으면 그 안에서 /reload 또는 재접속한 뒤에는 해당 제한이 끝날 때까지
-    -- 영원히 등록되지 않는다. 실제 API 거부는 호출부 pcall/반환값으로 처리하고 전투 중만 미룬다.
+    if SA_AuraEnvironmentRestricted() then return false end
+    -- Blizzard는 제한 전에 등록된 오라 사운드는 재생할 수 있지만, 제한 중에
+    -- AddAuraSound로 다시 등록하면 보호 함수 차단이 발생한다.
     return true
 end
 
@@ -4806,9 +4814,7 @@ local SA_bloodlustAuraWasPresent = false
 local SA_bloodlustAuraBaselineReady = false
 
 local function SA_ShouldAurasBeSecret()
-    if not (C_Secrets and C_Secrets.ShouldAurasBeSecret) then return false end
-    local ok, restricted = pcall(C_Secrets.ShouldAurasBeSecret)
-    return ok and restricted == true
+    return SA_AuraEnvironmentRestricted()
 end
 
 local function SA_CanQueryBloodlustAura(spellID, restricted)
@@ -4888,7 +4894,7 @@ SA_EventFrame:RegisterEvent("CHALLENGE_MODE_START")    -- 쐐기 시작 직후 �
 SA_EventFrame:RegisterEvent("UNIT_DIED")
 SA_EventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")     -- 전투부활 충전 변화 감지
 SA_EventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")     -- 전투 종료: 미뤄둔 마우스 모드 재적용
-SA_EventFrame:RegisterEvent("ADDON_RESTRICTION_STATE_CHANGED")  -- secret 상태 전환 시 native/정확 조회 재평가
+SA_EventFrame:RegisterEvent("ADDON_RESTRICTION_STATE_CHANGED")  -- 제한 해제 시 후유증 기준선 재설정
 SA_EventFrame:RegisterEvent("LFG_LIST_APPLICANT_LIST_UPDATED")  -- 파티 신청 감지
 SA_EventFrame:RegisterEvent("LFG_LIST_APPLICANT_UPDATED")       -- 신청 멤버 상세가 늦게 도착하는 경우 재확인
 SA_EventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")              -- 5인 풀파티 감지
@@ -4952,9 +4958,14 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         SA_RefreshBattleResIconState()
         if SA_bloodlustAuraSoundPending then SA_RefreshBloodlustAuraSounds() end
     elseif event == "ADDON_RESTRICTION_STATE_CHANGED" then
-        -- 제한 상태가 바뀌면 실패했던 native 등록과 정확 주문 ID 조회 가능 여부를 다시 확인한다.
-        SA_RefreshBloodlustAuraSounds()
-        SA_SyncBloodlustAuraPresence(false)
+        local _, restrictionState = ...
+        local inactive = Enum and Enum.AddOnRestrictionState
+            and Enum.AddOnRestrictionState.Inactive or 0
+        -- 이 이벤트 처리 중에는 보호된 등록 API를 호출하지 않는다. Inactive가 되면
+        -- 남아 있던 후유증만 기준선으로 저장하고, 등록 재시도는 안전한 다른 이벤트에 맡긴다.
+        if restrictionState == inactive then
+            SA_SyncBloodlustAuraPresence(true)
+        end
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
         -- secret UNIT_AURA에서는 지속바를 직접 시작할 수 없으므로 시전 이벤트로 보완한다.
