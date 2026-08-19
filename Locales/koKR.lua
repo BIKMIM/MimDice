@@ -188,6 +188,8 @@ MimDice_RegisterLocale("koKR", "한국어", {
     ["Combat resurrection (sound + icon)"] = "전투부활 (사운드 + 아이콘)",
     ["Group application (sound + message)"] = "파티 신청 (사운드 + 메시지)",
     ["Spell Sound Alerts (saved per class)"] = "스킬 사운드 알림 (직업별 저장)",
+    ["Interrupt"] = "차단 성공",
+    ["Interrupt / Spell Alerts"] = "차단 / 스킬 알림",
     ["1. Enter exact spell name or ID"] = "1. 추가할 스킬의 이름 또는 ID 입력 (꼭 띄어쓰기 지켜야 함)",
     ["Add Spell"] = "스킬 추가",
     ["|cffff0000[MimDice] No spell was found with that name or ID.|r"] = "|cffff0000[MimDice] 해당 이름이나 ID의 스킬을 찾을 수 없습니다.|r",

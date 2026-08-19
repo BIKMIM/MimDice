@@ -149,7 +149,7 @@ local SA_EntryFrames = {}
 -- 시스템(기본) 엔트리 정의 - 표시 순서대로 (직업별 사운드 목록에 표시되는 항목)
 -- legacyDefaults: 이전 기본 파일명 목록 (이 값으로 저장돼 있으면 새 기본값으로 자동 갱신)
 -- defaultEnabled: 처음 생성 시 체크박스 기본값
--- ※ 블러드/마력주입/죽음추적은 직업별이 아니라 "계정 공용"이라 여기서 제외.
+-- ※ 차단 성공/블러드/죽음 추적은 직업별이 아니라 "계정 공용"이라 여기서 제외.
 --    - 죽음추적: MimDiceDB.deathTrack
 --    - 블러드/마력주입: MimDiceDB.buffTrack (사운드 + 지속시간 바)
 local SYSTEM_ENTRIES = {
@@ -165,7 +165,7 @@ local SYSTEM_ENTRIES = {
 local SYSTEM_ORDER = {}
 for i, def in ipairs(SYSTEM_ENTRIES) do SYSTEM_ORDER[def.spellID] = i end
 
--- 공용 버프(지속시간 바) 정의 - 블러드/마력주입
+-- 공용 버프(지속시간 바) 정의 - 블러드
 -- duration: 효과 지속시간(초). 블러드는 고정 40s.
 local BUFF_DEFS = {
     {
@@ -270,6 +270,23 @@ function SA_InitDB()
     end
 
     -- =================================================================
+    -- 차단 성공 알림: 계정 공용 (사운드만, 모든 클래스 지원)
+    -- =================================================================
+    if not MimDiceDB.interruptAlert then MimDiceDB.interruptAlert = {} end
+    local ia = MimDiceDB.interruptAlert
+    if ia.enabled == nil then ia.enabled = true end
+    if ia.soundType == nil then ia.soundType = "custom" end
+    if ia.soundFile == nil or ia.soundFile == "" then ia.soundFile = "철수.mp3" end
+    -- 기본 재생은 철수.mp3이지만, 사용자가 '내장'으로 바꿀 때 선택창에 정상 진입하도록 예비값을 두다.
+    if ia.soundKey == nil then
+        ia.soundKey = 567397
+        if ia.soundName == nil then ia.soundName = "공격대 경고" end
+    end
+    ia.spellID = "INTERRUPT_SUCCESS"
+    ia.spellName = L("차단 성공")
+    ia.isSystem = true
+
+    -- =================================================================
     -- 죽음 추적: 계정 공용 설정 (직업별 아님)
     -- =================================================================
     if not MimDiceDB.deathTrack then
@@ -323,7 +340,7 @@ function SA_InitDB()
     if dt.duration == nil then dt.duration = 3 end
 
     -- =================================================================
-    -- 블러드 / 마력주입: 계정 공용 (사운드 + 지속시간 바)
+    -- 블러드: 계정 공용 (사운드 + 지속시간 바)
     -- =================================================================
     if not MimDiceDB.buffTrack then MimDiceDB.buffTrack = {} end
     for _, d in ipairs(BUFF_DEFS) do
@@ -515,6 +532,7 @@ function SA_InitDB()
     end
     SA_FixSoundFields(MimDiceDB.battleRes)
     SA_FixSoundFields(MimDiceDB.deathTrack)
+    SA_FixSoundFields(MimDiceDB.interruptAlert)
     SA_FixSoundFields(MimDiceDB.partyAlert)
     SA_FixSoundFields(MimDiceDB.partyAlert.fullParty)
     if MimDiceDB.buffTrack then
@@ -584,9 +602,148 @@ end
 -- 죽음 추적 (UNIT_DIED 기반)
 -- =====================================================================
 
--- secret value 안전 체크 래퍼 (구버전 클라이언트엔 hasanysecretvalues 없을 수 있음)
+-- secret value 안전 체크 래퍼 (단일 값은 issecretvalue 우선, 복합 값은 hasanysecretvalues 보완)
 local function SA_IsSecret(v)
+    if type(issecretvalue) == "function" and issecretvalue(v) then return true end
     return type(hasanysecretvalues) == "function" and hasanysecretvalues(v)
+end
+
+-- =====================================================================
+-- 차단 성공 감지
+-- ActionSounds와 같이 '내 차단기 성공' 후 '적 시전 중단'을 짧은 창 안에서 묶는다.
+-- 0.25초는 재생 지연이 아니라 두 이벤트의 상관관계 유효 시간이다.
+-- 12.1에서 아래 이벤트 인자는 secret이 될 수 있으므로 항상 secret -> type -> 비교 순서를 지킨다.
+-- =====================================================================
+local SA_INTERRUPT_WINDOW = 0.25
+local SA_DIVINE_TOLL_WINDOW = 0.35
+local SA_DIVINE_TOLL_SPELL_ID = 375576
+local SA_PALADIN_PROTECTION_SPEC = 2
+
+local SA_INTERRUPT_SPELLS = {
+    [2139] = true,   -- Counterspell
+    [1766] = true,   -- Kick
+    [6552] = true,   -- Pummel
+    [15487] = true,  -- Silence
+    [47528] = true,  -- Mind Freeze
+    [96231] = true,  -- Rebuke
+    [106839] = true, -- Skull Bash
+    [116705] = true, -- Spear Hand Strike
+    [147362] = true, -- Counter Shot
+    [183752] = true, -- Disrupt
+    [187707] = true, -- Muzzle
+    [351338] = true, -- Quell
+    [31935] = true,  -- Avenger's Shield
+    [57994] = true,  -- Wind Shear
+    [78675] = true,  -- Solar Beam
+    [19647] = true,  -- Spell Lock
+    [132409] = true, -- Spell Lock (Grimoire)
+    [119914] = true, -- Axe Toss
+    [89766] = true,  -- Axe Toss (pet cast)
+}
+
+local SA_interruptSourceGUID
+local SA_interruptSourceUnit
+local SA_interruptExpiresAt = 0
+local SA_divineTollExpiresAt = 0
+
+local function SA_ClearInterruptAttempt()
+    SA_interruptSourceGUID = nil
+    SA_interruptSourceUnit = nil
+    SA_interruptExpiresAt = 0
+    SA_divineTollExpiresAt = 0
+end
+
+local function SA_PublicUnitGUID(unit)
+    local guid = UnitGUID(unit)
+    if SA_IsSecret(guid) then return nil end
+    if type(guid) ~= "string" then return nil end
+    if guid == "" then return nil end
+    return guid
+end
+
+local function SA_IsProtectionPaladin()
+    local _, classTag = UnitClass("player")
+    if SA_IsSecret(classTag) then return false end
+    if type(classTag) ~= "string" then return false end
+    if classTag ~= "PALADIN" then return false end
+
+    local spec = type(GetSpecialization) == "function" and GetSpecialization() or nil
+    if SA_IsSecret(spec) then return false end
+    if type(spec) ~= "number" then return false end
+    return spec == SA_PALADIN_PROTECTION_SPEC
+end
+
+local function SA_RecordInterruptAttempt(unit, spellID)
+    local alert = MimDiceDB and MimDiceDB.interruptAlert
+    if not alert or not alert.enabled then
+        SA_ClearInterruptAttempt()
+        return
+    end
+
+    if SA_IsSecret(unit) or SA_IsSecret(spellID) then return end
+    if type(unit) ~= "string" or type(spellID) ~= "number" then return end
+    if unit ~= "player" and unit ~= "pet" then return end
+
+    if SA_INTERRUPT_SPELLS[spellID] then
+        -- 검사한 unit 값을 API에 다시 넘기지 않고 안전한 리터럴로 GUID를 읽는다.
+        SA_interruptSourceUnit = unit == "player" and "player" or "pet"
+        SA_interruptSourceGUID = SA_PublicUnitGUID(SA_interruptSourceUnit)
+        SA_interruptExpiresAt = GetTime() + SA_INTERRUPT_WINDOW
+    elseif unit == "player" and spellID == SA_DIVINE_TOLL_SPELL_ID and SA_IsProtectionPaladin() then
+        -- 방어 성기사 신성한 종은 다중 투사체 시간을 고려한 ActionSounds의 0.35초 예외를 따른다.
+        SA_divineTollExpiresAt = GetTime() + SA_DIVINE_TOLL_WINDOW
+    end
+end
+
+local function SA_IsInterruptTargetUnit(unit)
+    -- 제한 중 unit이 secret이면 토큰을 비교하지 않고, 최근 내 차단기 사용만으로 판정을 이어간다.
+    if SA_IsSecret(unit) then return true end
+    if type(unit) ~= "string" then return false end
+    return unit == "target"
+        or unit == "mouseover"
+        or unit == "focus"
+        or unit:find("^nameplate") ~= nil
+        or unit:find("^boss") ~= nil
+        or unit:find("^arena") ~= nil
+end
+
+local function SA_HandleInterruptResult(unit, interruptedBy)
+    local alert = MimDiceDB and MimDiceDB.interruptAlert
+    if not alert or not alert.enabled then
+        SA_ClearInterruptAttempt()
+        return
+    end
+    if not SA_IsInterruptTargetUnit(unit) then return end
+
+    local now = GetTime()
+
+    -- ActionSounds의 방특 신성한 종 보완: 짧은 창 내 첫 중단 신호를 한 번만 사용한다.
+    if SA_divineTollExpiresAt > 0 and now <= SA_divineTollExpiresAt then
+        SA_ClearInterruptAttempt()
+        SA_PlaySound(alert)
+        return
+    end
+
+    if SA_interruptExpiresAt <= 0 or now > SA_interruptExpiresAt then
+        SA_interruptSourceGUID = nil
+        SA_interruptSourceUnit = nil
+        SA_interruptExpiresAt = 0
+        return
+    end
+
+    -- interruptedBy가 공개 값이면 내 캐릭터/소환수 GUID와 정확히 일치해야 한다.
+    -- secret인 제한 상황에서만 0.25초 시간 상관으로 대체한다.
+    if not SA_IsSecret(interruptedBy) then
+        if type(interruptedBy) ~= "string" then return end
+        local sourceGUID = SA_interruptSourceGUID
+        if not sourceGUID and SA_interruptSourceUnit then
+            sourceGUID = SA_PublicUnitGUID(SA_interruptSourceUnit)
+        end
+        if not sourceGUID or interruptedBy ~= sourceGUID then return end
+    end
+
+    SA_ClearInterruptAttempt()
+    SA_PlaySound(alert)
 end
 
 -- 죽은 유닛 GUID → 사용 가능한 unitID 로 변환
@@ -1350,6 +1507,7 @@ local SA_BuffBars = {}      -- 버프 바 프레임. 설정창 OnHide에서 참�
 local SA_BattleResIcon = nil
 local SA_BattleResIconConfig = nil
 local SA_brIconTicker = nil
+local SA_EventFrame = nil
 
 -- 죽음 미리보기를 현재 설정으로 그림 (토글 아님, 페이드 없이 계속 표시)
 local function SA_RenderDeathPreview()
@@ -2768,6 +2926,15 @@ local function SA_GetPublicNumber(value)
     return value
 end
 
+-- 전투부활은 장소와 무관하게 실제 파티/공격대에 속해 있을 때만 조회·갱신한다.
+-- 야외 파티에서도 전투부활이 필요하므로 인스턴스 종류는 제한하지 않는다.
+-- 12.1에서 API 반환값이 secret일 가능성을 고려해 secret -> type -> 비교 순서를 지킨다.
+local function SA_IsBattleResContext()
+    local inGroup = IsInGroup()
+    if SA_IsSecret(inGroup) or type(inGroup) ~= "boolean" then return false end
+    return inGroup
+end
+
 local function SA_GetBattleResChargeInfo()
     if type(C_Spell) ~= "table" or type(C_Spell.GetSpellCharges) ~= "function" then
         return nil
@@ -2800,13 +2967,21 @@ end
 
 -- 추적 기준값을 현재 충전으로 동기화 (로그인/인스턴스 진입 시 오발동 방지)
 local function SA_SyncBattleResCharges()
+    local br = MimDiceDB and MimDiceDB.battleRes
+    if not br or not br.enabled or not SA_IsBattleResContext() then
+        SA_brLastCharges = nil
+        return
+    end
     SA_brLastCharges = SA_GetBattleResCharges()
 end
 
 -- 충전 변화 확인 → 늘었으면 사운드 (SPELL_UPDATE_CHARGES에서 호출)
 local function SA_CheckBattleResCharge()
     local br = MimDiceDB and MimDiceDB.battleRes
-    if not br or not br.enabled then return end
+    if not br or not br.enabled or not SA_IsBattleResContext() then
+        SA_brLastCharges = nil
+        return
+    end
     local cur = SA_GetBattleResCharges()
     if cur == nil then return end
     if SA_brLastCharges ~= nil and cur > SA_brLastCharges then
@@ -2969,32 +3144,30 @@ end
 -- 표시 규칙:
 --   * 마스터(전투부활 br.enabled) 꺼짐 → 무조건 숨김 (전투부활 자체를 안 씀)
 --   * 편집(잠금해제) 또는 설정창 열림 → 그룹 무관 정적 표시 (위치잡기용, 별도 미리보기 불필요)
---   * 잠금 + 아이콘 ON → 항상 표시 (풀 읽히면 충전 수/스와이프 라이브, 아니면 아이콘만)
+--   * 잠금 + 아이콘 ON → 파티/공격대에 속해 있을 때 충전 수/스와이프 표시
 --   * 그 외 → 숨김
 function SA_RefreshBattleResIconState()
     local br = MimDiceDB and MimDiceDB.battleRes
     if not br then return end
-    -- 표시 옵션과 무관하게 레이아웃을 먼저 준비한다. 예전에는 마스터가 꺼져 있으면
-    -- 여기서 일찍 반환해 첫 ON 때까지 아이콘에 앵커가 없는 상태가 될 수 있었다.
-    local f = SA_EnsureBattleResIcon()
-    -- 실제 전투에서는 로그인/설정 변경 때 선적용한 앵커를 그대로 사용한다.
-    if not InCombatLockdown() then SA_ApplyBattleResIconLayout(f, br) end
-
-    -- 마스터(전투부활) 꺼져 있으면 아이콘 자체를 완전히 무시
-    if not br.enabled then
-        f.editGlow:Hide(); f:Hide()
-        return
-    end
 
     local editing = not br.iconLocked
     local cfgOpen = SA_BattleResIconConfig and SA_BattleResIconConfig:IsShown()
     -- 편집중(드래그)이거나, (설정창 열림 + 아이콘 ON)이면 위치 확인용 정적 표시 (그룹 무관)
     local showStatic = editing or (cfgOpen and br.iconEnabled)
 
-    if not (showStatic or br.iconEnabled) then
-        if f then f:Hide() end
+    -- 실제 동작은 파티/공격대 상태로 제한한다. 설정창의 위치 미리보기만 예외로 둔다.
+    if not br.enabled or (not SA_IsBattleResContext() and not showStatic)
+       or not (showStatic or br.iconEnabled) then
+        if SA_BattleResIcon then
+            SA_BattleResIcon.editGlow:Hide()
+            SA_BattleResIcon:Hide()
+        end
         return
     end
+
+    local f = SA_EnsureBattleResIcon()
+    -- 실제 전투에서는 로그인/설정 변경 때 선적용한 앵커를 그대로 사용한다.
+    if not InCombatLockdown() then SA_ApplyBattleResIconLayout(f, br) end
 
     -- 로그인 직후 아이콘이 미캐시였으면 지금 다시 시도
     if not f.iconSet then
@@ -3019,8 +3192,7 @@ function SA_RefreshBattleResIconState()
         return
     end
 
-    -- 잠금 + 아이콘 ON이면 항상 표시 (그룹/장소 무관)
-    --   충전 풀이 읽히면 충전 수/스와이프 라이브, 안 읽히면(야외 등) 숫자 없이 아이콘만
+    -- 잠금 + 아이콘 ON이면 파티/공격대 상태에서 충전 수/스와이프 표시
     if br.iconEnabled then
         local info = SA_GetBattleResChargeInfo()
         if info then
@@ -3034,7 +3206,7 @@ function SA_RefreshBattleResIconState()
                 f.cd:Clear()
             end
         else
-            -- 야외/그룹 밖 등 충전 정보 없음: 아이콘만 표시
+            -- API가 아직 준비되지 않은 경우: 숫자 없이 아이콘만 표시
             f.count:SetText("")
             f.icon:SetDesaturated(false)
             f.cd:Clear()
@@ -3046,9 +3218,59 @@ function SA_RefreshBattleResIconState()
     f:Hide()
 end
 
+local function SA_ShouldRunBattleResIconTicker()
+    local br = MimDiceDB and MimDiceDB.battleRes
+    return br and br.enabled and br.iconEnabled and SA_IsBattleResContext()
+end
+
+local function SA_StopBattleResIconTicker()
+    if not SA_brIconTicker then return end
+    local ticker = SA_brIconTicker
+    SA_brIconTicker = nil
+    ticker:Cancel()
+end
+
+local function SA_UpdateBattleResIconTicker()
+    if not SA_ShouldRunBattleResIconTicker() then
+        SA_StopBattleResIconTicker()
+        return
+    end
+    if SA_brIconTicker then return end
+
+    SA_brIconTicker = C_Timer.NewTicker(0.5, function()
+        -- 지역 이동/그룹 이탈 신호가 늦더라도 다음 틱에서 스스로 정지한다.
+        if not SA_ShouldRunBattleResIconTicker() then
+            SA_StopBattleResIconTicker()
+            SA_RefreshBattleResIconState()
+            return
+        end
+        SA_RefreshBattleResIconState()
+    end)
+end
+
+local function SA_UpdateBattleResRuntime()
+    -- 충전 변화/전투 시작 이벤트도 실제 사용 구간에만 구독한다.
+    -- 솔로·기능 OFF 상태에서는 이벤트 디스패치 비용 자체를 없앤다.
+    if SA_EventFrame then
+        local br = MimDiceDB and MimDiceDB.battleRes
+        local shouldTrack = br and br.enabled and SA_IsBattleResContext()
+        if shouldTrack then
+            SA_EventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")
+            SA_EventFrame:RegisterEvent("ENCOUNTER_START")
+            SA_EventFrame:RegisterEvent("CHALLENGE_MODE_START")
+        else
+            SA_EventFrame:UnregisterEvent("SPELL_UPDATE_CHARGES")
+            SA_EventFrame:UnregisterEvent("ENCOUNTER_START")
+            SA_EventFrame:UnregisterEvent("CHALLENGE_MODE_START")
+        end
+    end
+    SA_UpdateBattleResIconTicker()
+    SA_RefreshBattleResIconState()
+end
+
 -- 설정 변경 시 즉시 반영 (전역: 설정창에서 호출)
 function SA_UpdateBattleResIcon()
-    SA_RefreshBattleResIconState()
+    SA_UpdateBattleResRuntime()
 end
 
 -- ── 사운드 선택 팝업 (각 항목 옆 ▶ 미리듣기) ─────────────────────────
@@ -3215,7 +3437,7 @@ function SA_CreateBattleResIconConfig()
         if SA_SoundPicker then SA_SoundPicker:Hide() end
         local b = MimDiceDB and MimDiceDB.battleRes
         if b and not b.iconLocked then b.iconLocked = true end
-        SA_RefreshBattleResIconState()
+        SA_UpdateBattleResRuntime()
     end)
 
     local title = win:CreateFontString(nil, "OVERLAY")
@@ -3312,12 +3534,20 @@ function SA_CreateBattleResIconConfig()
     enCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -104)
     local enLabel = win:CreateFontString(nil, "OVERLAY")
     enLabel:SetPoint("LEFT", enCb, "RIGHT", 2, 0)
+    -- 번역문이 길어도 설정창 안에서 최대 2줄로 자연스럽게 줄바꿈되게 한다.
+    enLabel:SetPoint("RIGHT", win, "RIGHT", -15, 0)
+    enLabel:SetHeight(28)
+    enLabel:SetJustifyH("LEFT")
+    enLabel:SetJustifyV("MIDDLE")
+    enLabel:SetWordWrap(true)
+    if enLabel.SetNonSpaceWrap then enLabel:SetNonSpaceWrap(true) end
+    if enLabel.SetMaxLines then enLabel:SetMaxLines(2) end
     enLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     enLabel:SetText(L("전투부활 아이콘 표시 (다른 애드온 쓰면 끄기)"))
     enLabel:SetTextColor(0.9, 0.9, 0.9)
     enCb:SetScript("OnClick", function(self)
         MimDiceDB.battleRes.iconEnabled = self:GetChecked() and true or false
-        SA_RefreshBattleResIconState()
+        SA_UpdateBattleResRuntime()
     end)
     win.enCb = enCb
 
@@ -3362,7 +3592,7 @@ function SA_CreateBattleResIconConfig()
     lockBtn:SetScript("OnClick", function()
         local b = MimDiceDB.battleRes
         b.iconLocked = not b.iconLocked
-        SA_RefreshBattleResIconState()
+        SA_UpdateBattleResRuntime()
         win.RefreshLockBtn()
     end)
     win.lockBtn = lockBtn
@@ -3379,7 +3609,7 @@ function SA_CreateBattleResIconConfig()
     resetBtn:SetScript("OnClick", function()
         local b = MimDiceDB.battleRes
         b.iconSize, b.iconX, b.iconY, b.iconLocked = 40, 0, 0, true   -- 화면 정중앙
-        SA_RefreshBattleResIconState()
+        SA_UpdateBattleResRuntime()
         win.Refresh()
         DEFAULT_CHAT_FRAME:AddMessage(L("|cff00ff00[MimDice]|r 전투부활 아이콘 설정 초기화됨"))
     end)
@@ -3446,7 +3676,7 @@ function SA_ToggleBattleResIconConfig()
         win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
         win.Refresh()
         win:Show()
-        SA_RefreshBattleResIconState()   -- 창 열자마자 위치확인용 아이콘 즉시 표시 (티커 0.5초 대기 제거)
+        SA_UpdateBattleResRuntime()   -- 창 열자마자 위치확인용 아이콘 즉시 표시
     end
 end
 
@@ -4666,15 +4896,14 @@ local function SA_SyncBloodlustAuraPresence(suppressTrigger)
     return true
 end
 
-local SA_EventFrame = CreateFrame("Frame")
+SA_EventFrame = CreateFrame("Frame")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
+SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
+SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
 SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
 SA_EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")   -- 인스턴스 진입 시 전투부활 충전 기준값 동기화
 SA_EventFrame:RegisterEvent("LOADING_SCREEN_ENABLED")  -- 지역 이동 오라 재전송을 새 블러드로 오인하지 않도록 선차단
-SA_EventFrame:RegisterEvent("ENCOUNTER_START")         -- 전투부활 풀이 활성화된 뒤 지연 재조회
-SA_EventFrame:RegisterEvent("CHALLENGE_MODE_START")    -- 쐐기 시작 직후 전투부활 풀이 늦게 준비되는 경우 보완
 SA_EventFrame:RegisterEvent("UNIT_DIED")
-SA_EventFrame:RegisterEvent("SPELL_UPDATE_CHARGES")     -- 전투부활 충전 변화 감지
 SA_EventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")     -- 전투 종료: 미뤄둔 마우스 모드 재적용
 SA_EventFrame:RegisterEvent("LFG_LIST_APPLICANT_LIST_UPDATED")  -- 파티 신청 감지
 SA_EventFrame:RegisterEvent("LFG_LIST_APPLICANT_UPDATED")       -- 신청 멤버 상세가 늦게 도착하는 경우 재확인
@@ -4684,6 +4913,7 @@ SA_EventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
     if event == "PLAYER_LOGIN" then
         SA_SuppressBloodlustTriggers(3)
+        SA_ClearInterruptAttempt()
         SA_InitDB()
         SA_SyncBloodlustAuraPresence(true) -- 재접속 당시 남아 있던 후유증은 새 발동으로 보지 않음
         -- 전투 중 프레임 생성 차단(SetPropagateMouseClicks protected)을 피하기 위해
@@ -4697,52 +4927,57 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         -- 파티 알림 프레임도 미리 생성 (SetPropagateMouseClicks는 전투 중 보호 → 첫 알림이 전투 중이어도 안전)
         SA_EnsurePartyFrame()
         SA_SyncBattleResCharges()   -- 전투부활 충전 기준값 초기화 (오발동 방지)
-        -- 전투부활 아이콘 미리 생성 + 0.5초 주기 갱신 티커 시작
+        -- 전투부활 아이콘은 전투 중 첫 생성 위험을 피하려고 미리 만들되,
+        -- 갱신 티커는 파티/공격대에서 실제 표시할 때만 시작한다.
         SA_EnsureBattleResIcon()
-        SA_RefreshBattleResIconState()
-        if not SA_brIconTicker then
-            SA_brIconTicker = C_Timer.NewTicker(0.5, SA_RefreshBattleResIconState)
-        end
+        SA_UpdateBattleResRuntime()
         -- 구버전이 남긴 레벨 확인용 임시 친구가 있으면 한 번만 정리
         SA_StartLegacyWhisperCleanup()
         -- 풀파티 기준 인원 동기화 (로그인 시 이미 5인이면 안 울리게)
         SA_SyncGroupSize()
     elseif event == "LOADING_SCREEN_ENABLED" then
         SA_SuppressBloodlustTriggers(5)
+        SA_ClearInterruptAttempt()
     elseif event == "PLAYER_ENTERING_WORLD" then
         SA_SuppressBloodlustTriggers(3)
+        SA_ClearInterruptAttempt()
         -- 인스턴스 진입/이동 시 충전 기준값 재동기화 (진입 직후 충전 변화 오발동 방지)
         SA_SyncBattleResCharges()
-        SA_RefreshBattleResIconState()
+        SA_UpdateBattleResRuntime()
         SA_SyncBloodlustAuraPresence(true) -- 로딩으로 재전송된 기존 후유증 오발동 방지
         -- 지역 진입 직후에는 전투부활 충전 풀이 아직 준비되지 않을 수 있다.
         -- 짧게 한 번 더 읽어 위치 잠금 토글 없이 첫 숫자를 채운다.
         C_Timer.After(1, function()
             SA_SyncBattleResCharges()
-            SA_RefreshBattleResIconState()
+            SA_UpdateBattleResRuntime()
         end)
     elseif event == "ENCOUNTER_START" or event == "CHALLENGE_MODE_START" then
         -- Blizzard 충전 API가 전투/쐐기 상태보다 한 박자 늦게 활성화될 수 있다.
         C_Timer.After(1, function()
             SA_SyncBattleResCharges()
-            SA_RefreshBattleResIconState()
+            SA_UpdateBattleResRuntime()
         end)
     elseif event == "LFG_LIST_APPLICANT_LIST_UPDATED" or event == "LFG_LIST_APPLICANT_UPDATED" then
         SA_CheckPartyApplicants()
     elseif event == "GROUP_ROSTER_UPDATE" then
         SA_CheckFullParty()
+        SA_SyncBattleResCharges()
+        SA_UpdateBattleResRuntime()
     elseif event == "SPELL_UPDATE_CHARGES" then
         SA_CheckBattleResCharge()
-        SA_RefreshBattleResIconState()   -- 충전 변화 즉시 아이콘 반영
+        SA_UpdateBattleResRuntime()   -- 충전 변화 즉시 아이콘 반영
     elseif event == "PLAYER_REGEN_ENABLED" then
         -- 전투 종료: 전투 중 미뤄둔 아이콘 마우스 모드(클릭 통과/편집)를 지금 적용
-        SA_RefreshBattleResIconState()
+        SA_UpdateBattleResRuntime()
     elseif event == "UNIT_SPELLCAST_SUCCEEDED" then
         local unit, _, spellID = ...
-        local spellIDIsSecret = issecretvalue and issecretvalue(spellID)
-        local unitIsSecret = issecretvalue and issecretvalue(unit)
+        if SA_IsSecret(unit) or SA_IsSecret(spellID) then return end
+        if type(unit) ~= "string" or type(spellID) ~= "number" then return end
+
+        SA_RecordInterruptAttempt(unit, spellID)
+
         -- 이 이벤트는 사용자 지정 주문 알림에만 사용한다. 블러드는 실제 후유증 적용으로 판단한다.
-        if unitIsSecret or spellIDIsSecret or unit ~= "player" then return end
+        if unit ~= "player" then return end
         if not MimDiceDB or not MimDiceDB.soundAlerts then return end
 
         local _, playerClass = UnitClass("player")
@@ -4752,6 +4987,9 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
                 break
             end
         end
+    elseif event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
+        local unit, _, _, interruptedBy = ...
+        SA_HandleInterruptResult(unit, interruptedBy)
     elseif event == "UNIT_AURA" then
         -- RegisterUnitEvent로 player만 받는다. secret일 수 있는 payload는 읽지 않는다.
         pcall(SA_SyncBloodlustAuraPresence, false)
@@ -5296,7 +5534,8 @@ local function SA_CreateWindow()
     brCb:SetScript("OnClick", function(self)
         if MimDiceDB.battleRes then
             MimDiceDB.battleRes.enabled = self:GetChecked() and true or false
-            SA_RefreshBattleResIconState()   -- 마스터 끄면 아이콘도 즉시 숨김
+            SA_SyncBattleResCharges()
+            SA_UpdateBattleResRuntime()   -- 마스터 끄면 아이콘도 숨기고 티커 중지
         end
     end)
     local brLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
@@ -5350,7 +5589,7 @@ local function SA_CreateWindow()
     local skillSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     skillSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -274)
     skillSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
-    skillSectionLabel:SetText(L("스킬 사운드 알림 (직업별 저장)"))
+    skillSectionLabel:SetText(L("차단 / 스킬 알림"))
     skillSectionLabel:SetTextColor(1, 0.82, 0)
 
     local inputLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
@@ -5530,7 +5769,7 @@ function SA_RefreshList()
         row:Show()
 
         row.cb:SetChecked(entry.enabled)
-        row.cb:SetScript("OnClick", function(self) entry.enabled = self:GetChecked() end)
+        row.cb:SetScript("OnClick", function(self) entry.enabled = self:GetChecked() and true or false end)
         
         row.spellText:SetText(entry.spellName)
         if entry.isSystem then
@@ -5633,7 +5872,7 @@ function SA_RefreshList()
         yOffset = yOffset + 34
     end
 
-    -- 시스템 엔트리는 SYSTEM_ORDER에 따라 정렬해서 먼저 렌더링
+    -- 직업별 시스템 엔트리(점프 등)를 SYSTEM_ORDER에 따라 가장 먼저 표시한다.
     local sysList = {}
     for i, entry in ipairs(MimDiceDB.soundAlerts) do
         if entry.class == playerClass and entry.isSystem then
@@ -5644,6 +5883,9 @@ function SA_RefreshList()
     for _, item in ipairs(sysList) do
         RenderEntry(item.entry, item.idx)
     end
+
+    -- 계정 공용 차단 성공 알림은 점프 아래, 사용자 추가 스킬 위에 표시한다.
+    RenderEntry(MimDiceDB.interruptAlert)
 
     -- 사용자 추가 스킬은 그 아래에 저장 순서대로
     for i, entry in ipairs(MimDiceDB.soundAlerts) do
