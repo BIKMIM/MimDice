@@ -1,7 +1,7 @@
 -- Author         : BIK
 -- Create Date    : 2023-02-02 오후 05:37:12
--- Last Updated   : 2026-08-19
--- Version        : v1.15.12
+-- Last Updated   : 2026-10-03 오후 12:38:49
+-- Version        : v1.15.21
 
 ---@diagnostic disable: undefined-global, param-type-mismatch, undefined-field, cast-local-type -- 전역 함수 정의 에러, 매개변수 타입 불일치, 정의되지 않은 필드, 로컬 타입 캐스팅 무시
 
@@ -165,12 +165,69 @@ end
 -- ===== 채팅 전송 (12.x 호환) =====
 -- 구식 전역 SendChatMessage는 호환 래퍼(Blizzard_DeprecatedChatInfo)를 거치는데,
 -- 전투 중 등 일부 상황에서 ADDON_ACTION_BLOCKED로 차단될 수 있다 → 현대 API 우선 사용
-local function MimSendChat(msg, channel)
-    if C_ChatInfo and C_ChatInfo.SendChatMessage then
-        C_ChatInfo.SendChatMessage(msg, channel)
-    else
-        SendChatMessage(msg, channel)   -- 구버전 클라이언트 대비
+local MimRawSendChat = (C_ChatInfo and C_ChatInfo.SendChatMessage) or SendChatMessage
+
+-- 와우 서버 throttle: 한꺼번에 20줄 넘게 보내면 뒤쪽 줄이 오류 없이 버려진다 (실측).
+-- 한 줄씩 0.2초 간격으로 보낸다 (Details 리포트와 같은 간격, MimRaid/T-Raid에서도 긴 리포트로 검증).
+local CHAT_SEND_INTERVAL = 0.2
+local chatQueue = {}
+local chatDrainScheduled = false
+local chatLastSentAt = 0
+
+-- 지금 애드온 채팅이 잠겨 있는지 (잠금 중 전송 시 ADDON_ACTION_BLOCKED)
+local function MimChatLocked()
+    if C_ChatInfo and C_ChatInfo.InChatMessagingLockdown then
+        local ok, locked = pcall(C_ChatInfo.InChatMessagingLockdown)
+        if ok then return locked and true or false end
     end
+    return false
+end
+
+local function MimDrainChat()
+    chatDrainScheduled = false
+    if #chatQueue == 0 then return end
+
+    -- 채팅 잠금 중: 큐에 그대로 두었다가 풀리면 전송 (메시지 유실 방지)
+    if MimChatLocked() then
+        chatDrainScheduled = true
+        C_Timer.After(0.5, MimDrainChat)
+        return
+    end
+
+    -- 직전 줄을 보낸 지 0.2초가 안 됐으면 남은 시간만큼 기다린다
+    local now = GetTime()
+    local remaining = (chatLastSentAt + CHAT_SEND_INTERVAL) - now
+    if remaining > 0 then
+        chatDrainScheduled = true
+        C_Timer.After(remaining, MimDrainChat)
+        return
+    end
+
+    local item = table.remove(chatQueue, 1)
+    local ok, err = pcall(MimRawSendChat, item.msg, item.channel)
+    if not ok then
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffff0000[MimDice 채팅 전송 오류]|r ") .. tostring(err))
+    end
+    chatLastSentAt = now
+
+    if #chatQueue > 0 then
+        chatDrainScheduled = true
+        C_Timer.After(CHAT_SEND_INTERVAL, MimDrainChat)
+    end
+end
+
+local function MimSendChat(msg, channel)
+    if not msg or msg == "" then return end
+    table.insert(chatQueue, { msg = msg, channel = channel })
+    if not chatDrainScheduled then
+        chatDrainScheduled = true
+        C_Timer.After(0, MimDrainChat)
+    end
+end
+
+-- 보내지 못한 줄을 비운다 (보고를 다시 누르면 이전 보고와 섞이지 않게)
+local function MimClearChatQueue()
+    wipe(chatQueue)
 end
 -- ===== 채팅 전송 끝 =====
 
@@ -1219,6 +1276,7 @@ function MimDice_RollAnnounce()
             DEFAULT_CHAT_FRAME:AddMessage(L("|cff00ff00----------끝----------|r"))
             
         else
+            MimClearChatQueue()
             MimSendChat(L("-------주사위결과-------"), selectedChannel)
 
             table.sort(rollArray, Choice_Sort_Reverse)
@@ -1334,8 +1392,11 @@ end
 -- 채팅 채널 선택 함수
 function SelectChannel()
     local SendChatMessageChannel
-    
-    if IsInRaid() and UnitIsGroupLeader("player") then
+
+    -- 공찾/무작위 던전처럼 자동으로 짜인 그룹은 파티/공대 채팅이 아니라 인스턴스 채팅 (Details와 같은 방식)
+    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        SendChatMessageChannel = "INSTANCE_CHAT"
+    elseif IsInRaid() and UnitIsGroupLeader("player") then
         SendChatMessageChannel = "RAID_WARNING"
     elseif IsInRaid() then
         SendChatMessageChannel = "RAID"
@@ -1351,8 +1412,10 @@ end
 -- 더 안전한 버전
 function SelectChannelSafe()
     local SendChatMessageChannel
-    
-    if IsInRaid() and UnitIsGroupLeader("player") then
+
+    if IsInGroup(LE_PARTY_CATEGORY_INSTANCE) then
+        SendChatMessageChannel = "INSTANCE_CHAT"
+    elseif IsInRaid() and UnitIsGroupLeader("player") then
         SendChatMessageChannel = "RAID_WARNING"
     elseif IsInRaid() then
         SendChatMessageChannel = "RAID"

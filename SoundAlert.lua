@@ -77,6 +77,8 @@ end
 local CUSTOM_SOUND_FILES = {
     "jump.ogg",
     "철수.mp3",
+    "짤.mp3",
+    "어우 짤.mp3",
     "살아있는불꽃.ogg",
     "mysound.ogg"
 }
@@ -151,7 +153,8 @@ local SA_EntryFrames = {}
 -- defaultEnabled: 처음 생성 시 체크박스 기본값
 -- ※ 차단 성공/블러드/죽음 추적은 직업별이 아니라 "계정 공용"이라 여기서 제외.
 --    - 죽음추적: MimDiceDB.deathTrack
---    - 블러드/마력주입: MimDiceDB.buffTrack (사운드 + 지속시간 바)
+--    - 블러드: MimDiceDB.buffTrack.BLOODLUST (사운드 + 지속시간 바)
+--    - 마력 주입: MimDiceDB.buffTrack.POWERINFUSE (사운드 + 게임에 맡기는 지속바/문구)
 local SYSTEM_ENTRIES = {
     {
         spellID = "JUMP", spellName = "점프",
@@ -172,7 +175,7 @@ local BUFF_DEFS = {
         key = "BLOODLUST", name = "블러드",
         file = "블러드_ACallToArms.mp3",
         color = { 1.00, 0.20, 0.20 },
-        duration = 40, dy = 340,
+        duration = 40,
     },
 }
 local BUFF_DEF_BY_KEY = {}
@@ -246,7 +249,8 @@ function SA_InitDB()
                     if current == old then shouldMigrate = true; break end
                 end
             end
-            if shouldMigrate then
+            -- 내장음/직접 입력 ID는 파일명이 비어 있어도 사용자가 고른 설정을 유지한다.
+            if shouldMigrate and (existing.soundType == nil or existing.soundType == "custom") then
                 existing.soundType = "custom"
                 existing.soundFile = def.defaultFile
                 existing.soundKey  = def.defaultFile
@@ -276,8 +280,9 @@ function SA_InitDB()
     local ia = MimDiceDB.interruptAlert
     if ia.enabled == nil then ia.enabled = true end
     if ia.soundType == nil then ia.soundType = "custom" end
-    if ia.soundFile == nil or ia.soundFile == "" then ia.soundFile = "철수.mp3" end
-    -- 기본 재생은 철수.mp3이지만, 사용자가 '내장'으로 바꿀 때 선택창에 정상 진입하도록 예비값을 두다.
+    -- 파일 설정이 없는 경우에만 기본값을 채운다. 기존 파일명(이전 기본음 포함)은 유지한다.
+    if ia.soundFile == nil then ia.soundFile = "어우 짤.mp3" end
+    -- 기본 재생은 어우 짤.mp3이며, '내장'으로 바꿀 때 선택창에 정상 진입하도록 예비값을 둔다.
     if ia.soundKey == nil then
         ia.soundKey = 567397
         if ia.soundName == nil then ia.soundName = "공격대 경고" end
@@ -361,6 +366,7 @@ function SA_InitDB()
 
         local bt = MimDiceDB.buffTrack[d.key]
         if not bt then bt = {}; MimDiceDB.buffTrack[d.key] = bt end
+        local barDefaults = MimDiceBuffBarDefaults.Get(d.key)
 
         if migrated then
             if bt.soundType == nil then bt.soundType = migrated.soundType end
@@ -375,12 +381,13 @@ function SA_InitDB()
         if bt.soundFile == nil or bt.soundFile == "" then bt.soundFile = d.file end  -- 빈 값이면 기본 복원
         -- soundKey(내장 preset 전용) / soundName(내장 표시명)은 기본 nil → 내장 미선택 상태
         if bt.barEnabled == nil then bt.barEnabled = true end   -- 지속시간 바 표시 여부
+        if bt.message == nil then bt.message = L(d.name) end     -- 바 안쪽 사용자 문구
         if bt.color == nil then bt.color = { r = d.color[1], g = d.color[2], b = d.color[3] } end
-        if bt.x == nil then bt.x = 0 end
-        if bt.y == nil then bt.y = d.dy end
+        if bt.x == nil then bt.x = barDefaults.x end
+        if bt.y == nil then bt.y = barDefaults.y end
         bt.locked = true   -- 리로드/재접속 시 항상 잠금으로 시작 (편집 상태 유지 안 함)
-        if bt.width == nil then bt.width = 800 end               -- 크고 잘 보이는 기본 바
-        if bt.height == nil then bt.height = 50 end
+        if bt.width == nil then bt.width = barDefaults.width end
+        if bt.height == nil then bt.height = barDefaults.height end
         if bt.timeFontSize == nil then bt.timeFontSize = 40 end  -- 글씨 크기 (라벨+남은시간 공통)
         if bt.alphaPct == nil then bt.alphaPct = 50 end          -- 바 채움 투명도 (%)
     end
@@ -500,6 +507,8 @@ function SA_InitDB()
     if skn.font == nil then skn.font = "default" end                         -- 선택 폰트 (리로드 시 적용)
     if not skn.customFonts then skn.customFonts = {} end                      -- 내 폰트 파일명 목록
 
+    MimDicePowerInfusion.InitDB()
+
     -- ── ID 타입 1회 마이그레이션 ──
     -- 예전엔 ID 값을 soundKey 에 저장했는데 내장(preset)과 같은 칸이라 서로 덮어쓰는 문제가 있었다.
     -- ID 전용 칸 soundID 로 분리하고, 기존 id-type 항목의 soundKey 값을 soundID 로 옮긴다.
@@ -550,6 +559,7 @@ end
 local function SA_PlaySound(entry, channel)
     if not entry or not entry.enabled then return end
     channel = channel or "Dialog"
+    if channel == "Dialog" and not MimDiceSoundFiles.CheckDialogChannel() then return end
 
     if entry.soundType == "preset" and entry.soundKey then
         if type(entry.soundKey) == "number" and entry.soundKey > 500000 then
@@ -562,12 +572,10 @@ local function SA_PlaySound(entry, channel)
             DEFAULT_CHAT_FRAME:AddMessage(L("|cffffff00[MimDice] 커스텀 사운드 파일이 설정되지 않았습니다.|r"))
             return
         end
-        local path = "Interface\\AddOns\\MimDice\\sounds\\" .. entry.soundFile
-        local ok, handle = pcall(PlaySoundFile, path, channel)
-        if not ok or not handle then
+        if not MimDiceSoundFiles.Play(entry.soundFile, channel) then
             DEFAULT_CHAT_FRAME:AddMessage(
                 L("|cffff0000[MimDice] 사운드 파일을 재생할 수 없습니다: ") .. entry.soundFile .. "|r  "
-                .. L("|cffffff00(sounds\\ 폴더에 파일이 있는지 확인하세요)|r")
+                .. L("|cffffff00(_retail_\\sound\\, _retail_\\sounds\\ 또는 MimDice\\sounds\\의 파일과 소리 설정을 확인하세요. 새 파일은 게임 재시작이 필요할 수 있습니다.)|r")
             )
         end
     elseif entry.soundType == "id" and entry.soundID then
@@ -1687,6 +1695,16 @@ local function SA_MakeTypeSelector(parent, x, y, getType, onPick)
         b:GetFontString():SetFont(MimDiceFontPath(), 10, "")
         b.stype = d.t
         b:SetScript("OnClick", function() onPick(d.t) end)
+        if d.t == "custom" then
+            b:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine(L("커스텀: _retail_\\sound 또는 sounds의 파일명"), 1, 0.82, 0)
+                GameTooltip:AddLine(L("파일명은 대소문자와 확장자까지 그대로 입력하세요."), 0.7, 0.7, 0.7, true)
+                GameTooltip:AddLine(L("외부 폴더에 없으면 MimDice\\sounds에서 재생합니다. 새 파일을 넣은 뒤에는 게임을 재시작하세요."), 0.7, 0.7, 0.7, true)
+                GameTooltip:Show()
+            end)
+            b:SetScript("OnLeave", function() GameTooltip:Hide() end)
+        end
         btns[i] = b
     end
     local function refresh()
@@ -2090,7 +2108,7 @@ local function SA_CreateDeathConfig()
             soundSelectBtn:Hide(); soundBox:Show()
             SA_SetBoxValue(soundBox, dt.soundID, L("예: 567439"))
         else
-            soundLabel:SetText(L("커스텀: sounds폴더 파일명 그대로 입력 (대소문자·확장자 구분)"))
+            soundLabel:SetText(L("커스텀: _retail_\\sound 또는 sounds의 파일명"))
             soundSelectBtn:Hide(); soundBox:Show()
             SA_SetBoxValue(soundBox, dt.soundFile, L("예: MySound.mp3"))
         end
@@ -2319,12 +2337,57 @@ local function SA_AddBuffSlider(win, key, sliderName, y, labelText, minV, maxV, 
         function() SA_UpdateBuffBar(key) end)
 end
 
+-- 블러드와 마력 주입은 같은 배치값을 사용한다. 상태 안내는 공통 항목 아래에만 붙인다.
+local SA_BUFF_CONFIG_LAYOUT = {
+    width = 340, collapsedHeight = 246, expandedHeight = 500,
+    soundY = -56, barY = -86, messageLabelY = -112, messageY = -132,
+    advancedButtonY = -170, advancedY = -204,
+    colorY = 0, widthY = -36, heightY = -90, fontY = -144, positionY = -190,
+}
+
 local function SA_CreateBuffConfig(key)
     if SA_BuffConfigs[key] then return SA_BuffConfigs[key] end
+    if key == "BLOODLUST_READY" then
+        local win = MimDiceBloodlustReminder.CreateConfig(SA_OptionWindow, {
+            WireBundleDrag = SA_WireBundleDrag,
+            MakeTypeSelector = SA_MakeTypeSelector,
+            WirePlaceholder = SA_WirePlaceholder,
+            SetBoxValue = SA_SetBoxValue,
+            OpenSoundPicker = SA_OpenSoundPicker,
+            PresetSoundName = SA_PresetSoundName,
+            MakeColorRow = SA_MakeColorRow,
+            MakeNumberSlider = SA_MakeNumberSlider,
+            AddPosRow = SA_AddPosRow,
+            ChainTabEnter = SA_ChainTabEnter,
+            SkinRegisterWindow = SA_SkinRegisterWindow,
+        })
+        SA_BuffConfigs[key] = win
+        return win
+    end
+    if key == "POWERINFUSE" then
+        local win = MimDicePowerInfusion.CreateConfig(SA_OptionWindow, {
+            Layout = SA_BUFF_CONFIG_LAYOUT,
+            WireBundleDrag = SA_WireBundleDrag,
+            MakeTypeSelector = SA_MakeTypeSelector,
+            WirePlaceholder = SA_WirePlaceholder,
+            SetBoxValue = SA_SetBoxValue,
+            OpenSoundPicker = SA_OpenSoundPicker,
+            PresetSoundName = SA_PresetSoundName,
+            PlaySound = SA_PlaySound,
+            MakeColorRow = SA_MakeColorRow,
+            MakeNumberSlider = SA_MakeNumberSlider,
+            AddPosRow = SA_AddPosRow,
+            ChainTabEnter = SA_ChainTabEnter,
+            SkinRegisterWindow = SA_SkinRegisterWindow,
+        })
+        SA_BuffConfigs[key] = win
+        return win
+    end
     local def = BUFF_DEF_BY_KEY[key]
+    local layout = SA_BUFF_CONFIG_LAYOUT
 
     local win = CreateFrame("Frame", "MimDice_BuffConfig_" .. key, UIParent, "BackdropTemplate")
-    win:SetSize(340, 416)
+    win:SetSize(layout.width, layout.collapsedHeight)
     win:SetPoint("TOPLEFT", SA_OptionWindow, "TOPRIGHT", 6, 0)
     win:SetFrameStrata("DIALOG")
     win:SetBackdrop({
@@ -2366,11 +2429,13 @@ local function SA_CreateBuffConfig(key)
     local soundLabel = win:CreateFontString(nil, "OVERLAY")
     soundLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -36)
     soundLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    soundLabel:SetSize(310, 16)
+    soundLabel:SetWordWrap(false)
     soundLabel:SetText(L("재생 사운드 : 아래 3개 중 하나 선택"))
     soundLabel:SetTextColor(0.9, 0.9, 0.9)
 
     -- 3종 타입 선택 버튼 (내장 / 커스텀 / ID)
-    win.typeRefresh = SA_MakeTypeSelector(win, 15, -56,
+    win.typeRefresh = SA_MakeTypeSelector(win, 15, layout.soundY,
         function() return MimDiceDB.buffTrack[key].soundType end,
         function(t)
             MimDiceDB.buffTrack[key].soundType = t
@@ -2380,7 +2445,7 @@ local function SA_CreateBuffConfig(key)
     -- 커스텀/ID 입력칸 (직접 타이핑)
     local soundBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
     soundBox:SetSize(135, 22)
-    soundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
+    soundBox:SetPoint("TOPLEFT", win, "TOPLEFT", 157, layout.soundY)
     soundBox:SetAutoFocus(false)
     soundBox:SetFont(MimDiceFontPath(), 11, "")
     win.soundBox = soundBox
@@ -2389,7 +2454,7 @@ local function SA_CreateBuffConfig(key)
     -- 내장 선택 시: 사운드 선택 팝업 버튼 (soundBox 자리, 토글로 교체 표시)
     local soundSelectBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     soundSelectBtn:SetSize(135, 22)
-    soundSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -56)
+    soundSelectBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 157, layout.soundY)
     do
         local fs = soundSelectBtn:GetFontString()
         fs:SetFont(MimDiceFontPath(), 10, "")
@@ -2411,7 +2476,7 @@ local function SA_CreateBuffConfig(key)
 
     local soundTestBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     soundTestBtn:SetSize(24, 22)
-    soundTestBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -56)
+    soundTestBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, layout.soundY)
     soundTestBtn:SetText("▶")
     soundTestBtn:SetScript("OnClick", function()
         local bt = MimDiceDB.buffTrack[key]
@@ -2437,7 +2502,7 @@ local function SA_CreateBuffConfig(key)
             soundSelectBtn:Hide(); soundBox:Show()
             SA_SetBoxValue(soundBox, bt.soundID, L("예: 567439"))
         else
-            soundLabel:SetText(L("커스텀: sounds폴더 파일명 그대로 입력 (대소문자·확장자 구분)"))
+            soundLabel:SetText(L("커스텀: _retail_\\sound 또는 sounds의 파일명"))
             soundSelectBtn:Hide(); soundBox:Show()
             SA_SetBoxValue(soundBox, bt.soundFile, L("예: MySound.mp3"))
         end
@@ -2457,7 +2522,7 @@ local function SA_CreateBuffConfig(key)
     -- 바 표시 체크박스
     local barCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
     barCb:SetSize(22, 22)
-    barCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -86)
+    barCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, layout.barY)
     local barLabel = win:CreateFontString(nil, "OVERLAY")
     barLabel:SetPoint("LEFT", barCb, "RIGHT", 2, 0)
     barLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
@@ -2478,17 +2543,37 @@ local function SA_CreateBuffConfig(key)
     end)
     win.barCb = barCb
 
-    -- ── 상세 설정 접기/펼치기 (기본: 접힘 = 소리 + 바 표시 ON/OFF만 보임) ──
+    local messageLabel = win:CreateFontString(nil, "OVERLAY")
+    messageLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, layout.messageLabelY)
+    messageLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    messageLabel:SetText(L("바 안에 표시할 문구"))
+    messageLabel:SetTextColor(0.9, 0.9, 0.9)
+    local messageBox = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+    messageBox:SetSize(300, 22)
+    messageBox:SetPoint("TOPLEFT", win, "TOPLEFT", 20, layout.messageY)
+    messageBox:SetAutoFocus(false)
+    messageBox:SetFont(MimDiceFontPath(), 12, "")
+    messageBox:SetMaxLetters(120)
+    messageBox:SetScript("OnTextChanged", function(self, userInput)
+        if not userInput then return end
+        MimDiceDB.buffTrack[key].message = self:GetText()
+        SA_UpdateBuffBar(key)
+    end)
+    messageBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+    messageBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+    win.messageBox = messageBox
+
+    -- ── 상세 설정 접기/펼치기 (기본: 소리 + 바 표시 ON/OFF + 문구) ──
     local advBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     advBtn:SetSize(310, 22)
-    advBtn:SetPoint("TOP", win, "TOP", 0, -114)
+    advBtn:SetPoint("TOP", win, "TOP", 0, layout.advancedButtonY)
     advBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
     local adv = CreateFrame("Frame", nil, win)
-    adv:SetPoint("TOPLEFT", win, "TOPLEFT", 0, -28)
+    adv:SetPoint("TOPLEFT", win, "TOPLEFT", 0, layout.advancedY)
     adv:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", 0, 0)
 
     -- 바 색상 (색상환 풀 팔레트 + 코드 입력 + 기본색. 색상환의 투명도 슬라이더 = 바 투명도와 연동)
-    win.colorRefresh = SA_MakeColorRow(adv, -112, L("바 색상"),
+    win.colorRefresh = SA_MakeColorRow(adv, layout.colorY, L("바 색상"),
         function() return MimDiceDB.buffTrack[key].color end,
         function(r, g, b) MimDiceDB.buffTrack[key].color = { r = r, g = g, b = b } end,
         { def.color[1], def.color[2], def.color[3] },
@@ -2501,12 +2586,12 @@ local function SA_CreateBuffConfig(key)
         })
 
     -- 크기/투명도 슬라이더 (가로/세로/글씨/투명도)
-    win.wSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffW_" .. key, -148, L("바 가로 크기"), 100, 1900, "width")
-    win.hSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffH_" .. key, -202, L("바 세로 크기"), 16, 300, "height")
-    win.tfSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffTF_" .. key, -256, L("글씨 크기 (라벨+남은시간)"), 8, 120, "timeFontSize")
+    win.wSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffW_" .. key, layout.widthY, L("바 가로 크기"), 100, 1900, "width")
+    win.hSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffH_" .. key, layout.heightY, L("바 세로 크기"), 16, 300, "height")
+    win.tfSlider = SA_AddBuffSlider(adv, key, "MimDice_BuffTF_" .. key, layout.fontY, L("글씨 크기 (라벨+남은시간)"), 8, 120, "timeFontSize")
 
     -- 위치 X/Y 직접 입력
-    local posRefresh, posX, posY = SA_AddPosRow(adv, -302,
+    local posRefresh, posX, posY = SA_AddPosRow(adv, layout.positionY,
         function() return MimDiceDB.buffTrack[key].x end,
         function(v) MimDiceDB.buffTrack[key].x = v end,
         function() return MimDiceDB.buffTrack[key].y end,
@@ -2542,9 +2627,11 @@ local function SA_CreateBuffConfig(key)
     resetBtn:SetScript("OnClick", function()
         local d = BUFF_DEF_BY_KEY[key]
         local bt = MimDiceDB.buffTrack[key]
-        bt.width, bt.height, bt.timeFontSize, bt.alphaPct = 800, 50, 40, 50
-        bt.x, bt.y = 0, d.dy
+        local barDefaults = MimDiceBuffBarDefaults.Get(key)
+        bt.width, bt.height, bt.timeFontSize, bt.alphaPct = barDefaults.width, barDefaults.height, 40, 50
+        bt.x, bt.y = barDefaults.x, barDefaults.y
         bt.color = { r = d.color[1], g = d.color[2], b = d.color[3] }
+        bt.message = L(d.name)
         bt.barEnabled, bt.locked = true, true
         SA_UpdateBuffBar(key)
         win.Refresh()
@@ -2564,6 +2651,7 @@ local function SA_CreateBuffConfig(key)
         local bt = MimDiceDB.buffTrack[key]
         win.RefreshSoundRow()
         barCb:SetChecked(bt.barEnabled)
+        messageBox:SetText(bt.message or L(def.name))
         win.RefreshLockBtn()
         win.wSlider.SyncValue()
         win.hSlider.SyncValue()
@@ -2576,7 +2664,7 @@ local function SA_CreateBuffConfig(key)
     local function ApplyAdv()
         local open = MimDiceDB.buffTrack[key].advOpen and true or false
         adv:SetShown(open)
-        win:SetHeight(open and 444 or 190)
+        win:SetHeight(open and layout.expandedHeight or layout.collapsedHeight)
         advBtn:SetText(open and L("상세 설정 접기") or L("상세 설정 열기 : 색/크기/위치"))
     end
     win.ApplyAdv = ApplyAdv
@@ -2691,12 +2779,13 @@ local function SA_EnsureBuffBar(key)
     if SA_BuffBars[key] then return SA_BuffBars[key] end
     local def = BUFF_DEF_BY_KEY[key]
     local bt = MimDiceDB.buffTrack[key]
+    local barDefaults = MimDiceBuffBarDefaults.Get(key)
 
     local f = CreateFrame("Frame", "MimDice_BuffBar_" .. key, UIParent, "BackdropTemplate")
-    f:SetSize(bt.width or 220, bt.height or 24)
+    f:SetSize(bt.width or barDefaults.width, bt.height or barDefaults.height)
     -- 첫 발동은 전투 중일 수 있으므로 생성 시점(로그인)에 저장 위치를 먼저 고정한다.
     -- 이후 전투 중에는 보호될 수 있는 레이아웃 변경 없이 Show만 해도 바로 보인다.
-    f:SetPoint("CENTER", UIParent, "CENTER", bt.x or 0, bt.y or -150)
+    f:SetPoint("CENTER", UIParent, "CENTER", bt.x or barDefaults.x, bt.y or barDefaults.y)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     f:SetFrameStrata("MEDIUM")
@@ -2728,8 +2817,10 @@ local function SA_EnsureBuffBar(key)
 
     local lbl = sb:CreateFontString(nil, "OVERLAY")
     lbl:SetPoint("LEFT", sb, "LEFT", 6, 0)
+    lbl:SetWordWrap(false)
+    lbl:SetJustifyH("LEFT")
     lbl:SetFont(MimDiceFontPath(), 12, "OUTLINE")
-    lbl:SetText(L(def.name))
+    lbl:SetText(bt.message or L(def.name))
     lbl:SetShadowColor(0, 0, 0, 1); lbl:SetShadowOffset(1, -1)
     f.lbl = lbl
 
@@ -2745,6 +2836,7 @@ local function SA_EnsureBuffBar(key)
     local initialFontSize = bt.timeFontSize or 14
     timeTxt:SetFont(MimDiceFontPath(), initialFontSize, "OUTLINE")
     lbl:SetFont(MimDiceFontPath(), initialFontSize, "OUTLINE")
+    lbl:SetPoint("RIGHT", sb, "RIGHT", -(initialFontSize * 3 + 20), 0)
 
     -- 현재 위치를 DB에 저장하고, 설정창이 열려있으면 X/Y 입력칸도 실시간 갱신
     local function savePos(self)
@@ -2796,15 +2888,18 @@ function SA_UpdateBuffBar(key)
     local bt = MimDiceDB and MimDiceDB.buffTrack and MimDiceDB.buffTrack[key]
     if not bt then return end
     local def = BUFF_DEF_BY_KEY[key]
+    local barDefaults = MimDiceBuffBarDefaults.Get(key)
     local f = SA_EnsureBuffBar(key)
-    f:SetSize(bt.width or 220, bt.height or 24)
+    f:SetSize(bt.width or barDefaults.width, bt.height or barDefaults.height)
     f:ClearAllPoints()
-    f:SetPoint("CENTER", UIParent, "CENTER", bt.x or 0, bt.y or -150)
+    f:SetPoint("CENTER", UIParent, "CENTER", bt.x or barDefaults.x, bt.y or barDefaults.y)
     local c = bt.color or { r = 1, g = 0.2, b = 0.2 }
     f.sb:SetStatusBarColor(c.r, c.g, c.b, (bt.alphaPct or 70) / 100)   -- 사용자 투명도
     local fs = bt.timeFontSize or 14
     f.timeTxt:SetFont(MimDiceFontPath(), fs, "OUTLINE")
     f.lbl:SetFont(MimDiceFontPath(), fs, "OUTLINE")   -- 라벨(블러드 등)도 같이 스케일
+    f.lbl:SetText(bt.message or L(def.name))
+    f.lbl:SetPoint("RIGHT", f.sb, "RIGHT", -(fs * 3 + 20), 0)
 
     if not bt.locked then
         -- 잠금 해제(위치 잡기): 강조 테두리 + 정적 풀 바 + 드래그 가능
@@ -2959,6 +3054,23 @@ local function SA_GetBattleResChargeInfo()
     }
 end
 
+-- 레이드 보스 공용 전투부활 풀은 교전이 시작될 때 1개로 생성되므로,
+-- 전투 전에는 GetSpellCharges가 nil이어도 다음 교전의 시작 충전 수를 표시할 수 있다.
+-- 실제 교전 중에는 공개 API 값만 사용하고, 조회 실패를 예상값으로 덮지 않는다.
+local function SA_GetBattleResDisplayInfo()
+    local info = SA_GetBattleResChargeInfo()
+    if info then return info end
+    if type(IsInRaid) ~= "function" or type(IsEncounterInProgress) ~= "function" then return nil end
+
+    local inRaid = IsInRaid()
+    if SA_IsSecret(inRaid) or type(inRaid) ~= "boolean" or not inRaid then return nil end
+
+    local inEncounter = IsEncounterInProgress()
+    if SA_IsSecret(inEncounter) or type(inEncounter) ~= "boolean" or inEncounter then return nil end
+
+    return { currentCharges = 1, maxCharges = 1, isPrepull = true }
+end
+
 -- 현재 충전 수 조회 (없으면 nil) — 직업 무관하게 레이드 공용 풀 조회
 local function SA_GetBattleResCharges()
     local info = SA_GetBattleResChargeInfo()
@@ -3080,11 +3192,15 @@ local function SA_EnsureBattleResIcon()
         pcall(function()
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:AddLine(L("전투부활"), 1, 0.82, 0)
-            local info = SA_GetBattleResChargeInfo()
+            local info = SA_GetBattleResDisplayInfo()
             if info then
-                local mx = info.maxCharges and ("/" .. info.maxCharges) or ""
-                GameTooltip:AddLine(L("남은 충전: ") .. info.currentCharges .. mx, 1, 1, 1)
-                if info.maxCharges and info.currentCharges < info.maxCharges
+                if info.isPrepull then
+                    GameTooltip:AddLine(L("전투 시작 시 충전: ") .. info.currentCharges, 1, 1, 1)
+                else
+                    local mx = info.maxCharges and ("/" .. info.maxCharges) or ""
+                    GameTooltip:AddLine(L("남은 충전: ") .. info.currentCharges .. mx, 1, 1, 1)
+                end
+                if not info.isPrepull and info.maxCharges and info.currentCharges < info.maxCharges
                    and info.cooldownStartTime and info.cooldownDuration and info.cooldownDuration > 0 then
                     local remain = info.cooldownStartTime + info.cooldownDuration - GetTime()
                     if remain > 0 then
@@ -3194,7 +3310,7 @@ function SA_RefreshBattleResIconState()
 
     -- 잠금 + 아이콘 ON이면 파티/공격대 상태에서 충전 수/스와이프 표시
     if br.iconEnabled then
-        local info = SA_GetBattleResChargeInfo()
+        local info = SA_GetBattleResDisplayInfo()
         if info then
             local cur = info.currentCharges
             f.count:SetText(tostring(cur))
@@ -3514,7 +3630,7 @@ function SA_CreateBattleResIconConfig()
             soundSelectBtn:Hide(); soundBox:Show()
             SA_SetBoxValue(soundBox, b.soundID, L("예: 567439"))
         else
-            soundLabel:SetText(L("커스텀: sounds폴더 파일명 그대로 입력 (대소문자·확장자 구분)"))
+            soundLabel:SetText(L("커스텀: _retail_\\sound 또는 sounds의 파일명"))
             soundSelectBtn:Hide(); soundBox:Show()
             SA_SetBoxValue(soundBox, b.soundFile, L("예: MySound.mp3"))
         end
@@ -3754,6 +3870,15 @@ local SA_partyRepeatInterval = nil  -- 현재 티커 간격(초) — 설정 변�
 local SA_paSeen = {}         -- 이미 알림한 applicantID 집합 (목록 순서를 안 믿고 새 신청자를 ID로 식별)
 local SA_paLastShownID = nil -- 마지막으로 표시한 신청자 ID (반복 알림 재표시용)
 local SA_paTestUntil = 0     -- 테스트 중복 방지: 이 시각(GetTime)까지 테스트 재실행 억제
+local SA_PartyCanReceiveAlerts = nil -- 실제 알림 직전에도 역할 설정을 재확인하기 위한 전방 선언
+
+-- 모집 종료 뒤 잠시 남은 신청자 데이터로 소리가 다시 나지 않게 실제 모집 여부도 확인한다.
+local function SA_PartyHasActiveEntry()
+    local getter = C_LFGList and C_LFGList.HasActiveEntryInfo
+    if type(getter) ~= "function" then return false end
+    local ok, active = pcall(getter)
+    return ok and not SA_IsSecret(active) and type(active) == "boolean" and active
+end
 
 -- applicantID 하나는 개인뿐 아니라 묶음 신청 전체를 뜻할 수 있다. 구조체/구형 다중 반환을
 -- 모두 지원해 실제 멤버 수를 얻고, 데이터가 아직 도착하지 않은 신청은 다음 이벤트에서 재확인한다.
@@ -3764,16 +3889,39 @@ local function SA_PartyApplicantMemberCount(appID)
 
     local count
     local data = r[2]
-    if type(data) == "table"
-       and not (type(issecretvalue) == "function" and issecretvalue(data))
-       and not (type(issecrettable) == "function" and issecrettable(data)) then
+    if SA_IsSecret(data) then return 1, false end
+    if type(data) == "table" then
+        if type(issecrettable) == "function" and issecrettable(data) then return 1, false end
         local ok, n = pcall(function() return data.numMembers end)
         if ok then count = n end
     else
         count = r[5] -- 구형 반환 4번 numMembers (r[1]은 pcall 성공 여부)
     end
-    if type(count) ~= "number" or SA_IsSecret(count) or count < 1 then return 1, false end
+    if SA_IsSecret(count) or type(count) ~= "number" or count < 1 then return 1, false end
     return math.max(1, math.floor(count)), true
+end
+
+-- GetApplicants에는 초대/거절/취소된 신청도 남는다. 처리 중인 신청까지 제외하고
+-- 실제 대기(applied) 중인 신청만 새 알림과 반복 알림의 대상으로 삼는다.
+local function SA_PartyApplicantIsWaiting(appID)
+    if not (C_LFGList and C_LFGList.GetApplicantInfo) then return false end
+    local r = { pcall(C_LFGList.GetApplicantInfo, appID) }
+    if not r[1] then return false end
+    local data = r[2]
+    if SA_IsSecret(data) then return false end
+    local status, pending
+    if type(data) == "table" then
+        if type(issecrettable) == "function" and issecrettable(data) then return false end
+        local ok
+        ok, status, pending = pcall(function() return data.applicationStatus, data.pendingApplicationStatus end)
+        if not ok then return false end
+    else
+        -- 구형 반환: applicantID, applicationStatus, pendingApplicationStatus, numMembers, ...
+        status, pending = r[3], r[4]
+    end
+    if SA_IsSecret(status) or SA_IsSecret(pending) then return false end
+    if type(status) ~= "string" or type(pending) ~= "nil" then return false end
+    return status == "applied"
 end
 
 -- 신청 이벤트가 멤버 상세보다 먼저 올 수 있다. 이름이 준비되기 전에 seen 처리하면
@@ -3787,6 +3935,24 @@ local function SA_PartyApplicantDataReady(appID)
         if not ok or SA_IsSecret(name) or type(name) ~= "string" or name == "" then return false end
     end
     return true
+end
+
+-- 감지, 반복 여부, 반복 문구가 모두 같은 목록을 사용한다. 아직 상태/이름이 도착하지
+-- 않은 신청은 seen 처리하지 않으므로 다음 APPLICANT_UPDATED에서 다시 확인할 수 있다.
+local function SA_GetPendingPartyApplicants()
+    local getter = C_LFGList and C_LFGList.GetApplicants
+    if type(getter) ~= "function" then return nil end
+    local ok, apps = pcall(getter)
+    if not ok or SA_IsSecret(apps) or type(apps) ~= "table" then return nil end
+    if type(issecrettable) == "function" and issecrettable(apps) then return nil end
+    local pending = {}
+    for _, id in ipairs(apps) do
+        if not SA_IsSecret(id) and type(id) == "number"
+           and SA_PartyApplicantIsWaiting(id) and SA_PartyApplicantDataReady(id) then
+            pending[#pending + 1] = id
+        end
+    end
+    return pending
 end
 
 -- 신청 멤버 한 명의 정보 문자열 ([특성아이콘 특성명] 직업색이름  아이템렙  쐐기점수).
@@ -3860,16 +4026,18 @@ end
 -- 최근 신청 정보. 묶음 신청이면 첫 번째 멤버만 반복하지 않고 전원을 줄별로 표시한다.
 local function SA_PartyApplicantText(appID)
     local pa = MimDiceDB and MimDiceDB.partyAlert
-    if not pa or not C_LFGList then return "" end
-    local ok, apps = pcall(C_LFGList.GetApplicants)
-    if not ok or type(apps) ~= "table" or #apps == 0 then return "" end
+    if not pa then return "", false end
+    local apps = SA_GetPendingPartyApplicants()
+    if not apps or #apps == 0 then return "", false end
     -- 표시 대상: 지정 신청 → 마지막 표시 신청이 아직 대기 중이면 그 신청 → 목록 마지막.
-    local target = appID
-    if not target and SA_paLastShownID then
+    local target
+    local preferred = appID or SA_paLastShownID
+    if preferred then
         for _, id in ipairs(apps) do
-            if id == SA_paLastShownID then target = id; break end
+            if id == preferred then target = id; break end
         end
     end
+    if appID and not target then return "", false end
     target = target or apps[#apps]
 
     local members = {}
@@ -3878,7 +4046,7 @@ local function SA_PartyApplicantText(appID)
         local text = SA_PartyApplicantMemberText(target, memberIndex, pa)
         if text ~= "" then members[#members + 1] = text end
     end
-    return table.concat(members, "\n")
+    return table.concat(members, "\n"), true
 end
 
 -- 미리보기용: 본인 정보 + 현재 표시항목 설정 반영 (실제와 동일한 형식)
@@ -3955,7 +4123,11 @@ local function SA_EnsurePartyFrame()
     if SA_PartyFrame then return SA_PartyFrame end
     local f = CreateFrame("Frame", "MimDice_PartyAlertFrame", UIParent)
     f:SetSize(600, 60)
-    f:SetFrameStrata("HIGH")
+    -- 일부 애드온 창은 FULLSCREEN_DIALOG보다 높은 TOOLTIP 계층을 사용한다.
+    -- 문구와 배경을 함께 올리고 같은 계층의 일반 창보다 높은 레벨에 둔다.
+    -- 실제 알림·테스트·위치 편집의 Show 경로에서도 Raise로 앞으로 올린다.
+    f:SetFrameStrata("TOOLTIP")
+    f:SetFrameLevel(10000)
     f:SetMovable(true)
     f:SetClampedToScreen(true)
     if f.SetPropagateMouseClicks then f:SetPropagateMouseClicks(true) end
@@ -4044,6 +4216,17 @@ local function SA_ShowPartyAlert(preview, appID)
     local pa = MimDiceDB and MimDiceDB.partyAlert
     if not pa then return end
     if not preview and not pa.enabled then return end
+    -- 이벤트/티커 쪽 필터를 통과했더라도 실제 소리 직전에 다시 막는다.
+    -- 설정창의 [테스트]는 역할과 무관하게 동작해야 하므로 preview만 예외다.
+    if not preview and (type(SA_PartyCanReceiveAlerts) ~= "function"
+       or not SA_PartyCanReceiveAlerts() or not SA_PartyHasActiveEntry()) then return end
+    local info, hasApplicant
+    if preview then
+        info = SA_PartyPreviewText()
+    else
+        info, hasApplicant = SA_PartyApplicantText(appID)
+        if not hasApplicant then return end
+    end
     -- 테스트 중복 방지: 표시 유지시간 동안 재클릭 무시 (소리 겹침 방지. 실제 알림은 항상 통과)
     if preview then
         local now = GetTime()
@@ -4067,13 +4250,12 @@ local function SA_ShowPartyAlert(preview, appID)
     local col = pa.color or { r = 0.3, g = 1, b = 0.3 }
     local hex = string.format("%02x%02x%02x", (col.r or 0.3)*255, (col.g or 1)*255, (col.b or 0.3)*255)
     local msg = "|cff" .. hex .. (pa.prefix or L("새 파티 신청!")) .. "|r"
-    local info = preview and SA_PartyPreviewText() or SA_PartyApplicantText(appID)
     if info and info ~= "" then msg = msg .. "  " .. info end
     f.text:SetText(msg)
     f.text:SetAlpha(pa.colorA or 1)
     f.FitToText()
 
-    f.fadeAnim:Stop(); f:SetAlpha(1); f:Show()
+    f.fadeAnim:Stop(); f:SetAlpha(1); f:Show(); f:Raise()
     -- 표시 지속: "stay"(실제 알림) 이면 페이드 없이 계속 표시 (대기 신청자 0되면 SA_CheckPartyApplicants가 숨김)
     -- preview(테스트)는 화면에 남지 않도록 항상 페이드
     if preview or pa.displayMode ~= "stay" then
@@ -4108,7 +4290,7 @@ local function SA_RenderPartyPreview()
     f.text:SetText(msg)
     f.text:SetAlpha(pa.colorA or 1)
     f.FitToText()
-    f.fadeAnim:Stop(); f:SetAlpha(1); f:Show()
+    f.fadeAnim:Stop(); f:SetAlpha(1); f:Show(); f:Raise()
 end
 
 -- 위치 잠금 상태 반영 (잠금해제=편집 정적표시+드래그, 잠금=숨김)
@@ -4144,33 +4326,85 @@ local function SA_StopPartyRepeat()
     SA_partyRepeatInterval = nil
 end
 
--- 초대 권한 확인: 솔로(내가 모집 등록자) / 파티장·공대장 / 공대부관만 신청자를 처리할 수 있음
--- 일반 파티원·공대원에게도 LFG_LIST_APPLICANT_LIST_UPDATED 이벤트가 오므로 여기서 걸러야 함
-local function SA_PartyCanInvite()
-    if not IsInGroup() then return true end   -- 그룹 밖 = 모집 글 주인 본인
-    return UnitIsGroupLeader("player") or UnitIsGroupAssistant("player")
+-- OFF, 권한 상실, 모집 종료 시 반복과 실제 알림을 함께 정리한다. 위치 편집은 유지한다.
+local function SA_ClearPartyAlertState()
+    SA_StopPartyRepeat()
+    wipe(SA_paSeen)
+    SA_paLastCount = 0
+    SA_paLastShownID = nil
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa or pa.locked ~= false then SA_HidePartyFrame() end
+end
+
+-- 알림 대상 확인. 기본값은 모집 권한자만, 선택한 경우 HOME 일반 멤버도 허용한다.
+-- 파티 찾기 모집은 HOME 그룹 소속이므로 그룹 종류를 생략하면
+-- 인스턴스 그룹의 역할을 읽어 일반 공대원을 권한자로 오인할 수 있다.
+-- 가능하면 블리자드 신청자 창이 실제로 쓰는 판정을 그대로 사용한다.
+SA_PartyCanReceiveAlerts = function()
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa or not pa.enabled then return false end
+    if pa.alertAnyRole == true then
+        if type(LE_PARTY_CATEGORY_HOME) ~= "number" then return false end
+        local inHomeGroup = IsInGroup(LE_PARTY_CATEGORY_HOME)
+        if SA_IsSecret(inHomeGroup) or type(inHomeGroup) ~= "boolean" then return false end
+        if inHomeGroup then return true end
+    end
+
+    if type(LFGListUtil_IsEntryEmpowered) == "function" then
+        local ok, empowered = pcall(LFGListUtil_IsEntryEmpowered)
+        if not ok or SA_IsSecret(empowered) or type(empowered) ~= "boolean" then return false end
+        return empowered
+    end
+
+    -- 파티 찾기 UI가 아직 로드되지 않은 경우에도 같은 HOME 그룹 기준으로 폴백한다.
+    if type(LE_PARTY_CATEGORY_HOME) ~= "number" or type(LE_PARTY_CATEGORY_INSTANCE) ~= "number" then return false end
+    local homeCategory = LE_PARTY_CATEGORY_HOME
+    local inHomeGroup = IsInGroup(homeCategory)
+    if SA_IsSecret(inHomeGroup) or type(inHomeGroup) ~= "boolean" then return false end
+    if not inHomeGroup then
+        -- 솔로 모집자는 허용하되, 인스턴스 그룹만 소속된 상태를 솔로로 오인하지 않는다.
+        local inInstanceGroup = IsInGroup(LE_PARTY_CATEGORY_INSTANCE)
+        if SA_IsSecret(inInstanceGroup) or type(inInstanceGroup) ~= "boolean" then return false end
+        return not inInstanceGroup
+    end
+
+    local isLeader = UnitIsGroupLeader("player", homeCategory)
+    if SA_IsSecret(isLeader) or type(isLeader) ~= "boolean" then return false end
+    if isLeader then return true end
+
+    local isAssistant = UnitIsGroupAssistant("player", homeCategory)
+    if SA_IsSecret(isAssistant) or type(isAssistant) ~= "boolean" then return false end
+    return isAssistant
 end
 
 -- 반복 알림 티커 상태 재평가 (신청자 변화·설정 변경 시 호출)
 -- repeat 모드 + 대기 신청자 있음 → repeatInterval초마다 재알림. 아니면 중지.
 local function SA_UpdatePartyRepeat()
     local pa = MimDiceDB and MimDiceDB.partyAlert
-    if not pa or not pa.enabled or pa.repeatMode ~= "repeat" or not C_LFGList
-       or (not pa.alertAnyRole and not SA_PartyCanInvite()) then
+    if not pa or not pa.enabled or not SA_PartyCanReceiveAlerts() or not SA_PartyHasActiveEntry() then
+        SA_ClearPartyAlertState(); return
+    end
+    if pa.repeatMode ~= "repeat" then
         SA_StopPartyRepeat(); return
     end
-    local ok, count = pcall(C_LFGList.GetNumApplicants)
-    if not ok or type(count) ~= "number" or count <= 0 then SA_StopPartyRepeat(); return end
+    local apps = SA_GetPendingPartyApplicants()
+    if not apps or #apps == 0 then
+        SA_StopPartyRepeat()
+        if pa.locked ~= false then SA_HidePartyFrame() end
+        return
+    end
     local interval = math.max(1, pa.repeatInterval or 5)
     if SA_partyRepeatTicker and SA_partyRepeatInterval == interval then return end  -- 이미 동일 간격 동작 중
     SA_StopPartyRepeat()
     SA_partyRepeatInterval = interval
     SA_partyRepeatTicker = C_Timer.NewTicker(interval, function()
         local p = MimDiceDB and MimDiceDB.partyAlert
-        if not p or not p.enabled or p.repeatMode ~= "repeat" or not C_LFGList
-           or (not p.alertAnyRole and not SA_PartyCanInvite()) then SA_StopPartyRepeat(); return end
-        local ok2, c2 = pcall(C_LFGList.GetNumApplicants)
-        if not ok2 or type(c2) ~= "number" or c2 <= 0 then
+        if not p or not p.enabled or not SA_PartyCanReceiveAlerts() or not SA_PartyHasActiveEntry() then
+            SA_ClearPartyAlertState(); return
+        end
+        if p.repeatMode ~= "repeat" then SA_StopPartyRepeat(); return end
+        local waiting = SA_GetPendingPartyApplicants()
+        if not waiting or #waiting == 0 then
             SA_StopPartyRepeat()
             if p.locked ~= false then SA_HidePartyFrame() end   -- 대기 신청자 없어짐 → 잔상 제거
             return
@@ -4179,23 +4413,22 @@ local function SA_UpdatePartyRepeat()
     end)
 end
 
--- LFG 새 신청자 감지 (초대 권한자만: 솔로 모집자/파티장/공대장/부관)
+-- LFG 새 신청자 감지 (역할 설정과 전체 ON/OFF를 함께 적용)
 -- 신청자 수 증가가 아니라 "처음 보는 applicantID"로 판정 → 목록 순서/동시 신청/교체에도 정확
 local function SA_CheckPartyApplicants()
     local pa = MimDiceDB and MimDiceDB.partyAlert
-    if not pa or not pa.enabled then SA_StopPartyRepeat(); return end
-    -- 초대 권한자만 알림 (옵션: 일반 파티원/공대원도 받기)
-    if not pa.alertAnyRole and not SA_PartyCanInvite() then SA_StopPartyRepeat(); return end
-    if not C_LFGList then return end
-    local ok, apps = pcall(C_LFGList.GetApplicants)
-    if not ok or type(apps) ~= "table" then return end
+    if not pa or not pa.enabled or not SA_PartyCanReceiveAlerts() or not SA_PartyHasActiveEntry() then
+        SA_ClearPartyAlertState(); return
+    end
+    local apps = SA_GetPendingPartyApplicants()
+    if not apps then return end
     local count = #apps
 
     -- 새 신청자 = SA_paSeen에 없고 멤버 상세가 준비된 ID (여러 명 동시면 마지막 새 ID로 표시)
     local present, newID = {}, nil
     for _, id in ipairs(apps) do
         present[id] = true
-        if not SA_paSeen[id] and SA_PartyApplicantDataReady(id) then
+        if not SA_paSeen[id] then
             SA_paSeen[id] = true
             newID = id
         end
@@ -4220,17 +4453,43 @@ local function SA_CheckPartyApplicants()
     end
 end
 
+-- 체크박스와 슬래시 명령이 동일하게 OFF 정리 / ON 시 현재 신청 재확인을 수행한다.
+local function SA_SetPartyAlertEnabled(enabled)
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa then return end
+    pa.enabled = enabled and true or false
+    SA_ClearPartyAlertState()
+    if SA_OptionWindow and SA_OptionWindow.partyAlertCb then
+        SA_OptionWindow.partyAlertCb:SetChecked(pa.enabled)
+    end
+    if pa.enabled then SA_CheckPartyApplicants() end
+end
+
+-- 역할 선택을 바꾸면 이전 반복/표시를 정리하고 현재 신청을 새 조건으로 확인한다.
+local function SA_SetPartyAlertAnyRole(enabled)
+    local pa = MimDiceDB and MimDiceDB.partyAlert
+    if not pa then return end
+    pa.alertAnyRole = enabled and true or false
+    SA_ClearPartyAlertState()
+    SA_CheckPartyApplicants()
+end
+
 -- 5인 풀파티 감지: 파티 인원이 5명이 되는 순간 소리 + 와우 작업표시줄 아이콘 반짝임
 -- (공격대는 제외. 로그인 시 이미 5인이면 울리지 않도록 기준 인원을 로그인 때 동기화)
 local SA_paLastGroupSize = 0
 local function SA_SyncGroupSize()
-    SA_paLastGroupSize = GetNumGroupMembers() or 0
+    local n = GetNumGroupMembers(LE_PARTY_CATEGORY_HOME)
+    SA_paLastGroupSize = not SA_IsSecret(n) and type(n) == "number" and n or 0
 end
 local function SA_CheckFullParty()
-    local n = GetNumGroupMembers() or 0
+    local n = GetNumGroupMembers(LE_PARTY_CATEGORY_HOME)
+    if SA_IsSecret(n) or type(n) ~= "number" then return end
     local pa = MimDiceDB and MimDiceDB.partyAlert
     local fp = pa and pa.fullParty
-    if fp and fp.enabled and n == 5 and SA_paLastGroupSize < 5 and not IsInRaid() then
+    local inRaid = IsInRaid(LE_PARTY_CATEGORY_HOME)
+    if pa and pa.enabled and fp and fp.enabled and SA_PartyCanReceiveAlerts()
+       and n == 5 and SA_paLastGroupSize < 5 and not SA_IsSecret(inRaid)
+       and type(inRaid) == "boolean" and not inRaid then
         SA_PlaySound(fp, "Dialog")
         if FlashClientIcon then FlashClientIcon() end   -- 백그라운드면 작업표시줄 와우 아이콘 반짝
     end
@@ -4270,12 +4529,7 @@ SlashCmdList["MIMPARTY"] = function(msg)
         if okA and aid then DEFAULT_CHAT_FRAME:AddMessage(L("[MimDice] 내 모집 activityID: ") .. tostring(aid)) end
         return
     end
-    pa.enabled = not pa.enabled
-    if not pa.enabled then
-        -- 끌 때 정리: 반복 티커 중지 + (편집중 아니면) 계속표시(stay) 잔상 제거
-        SA_StopPartyRepeat()
-        if pa.locked ~= false then SA_HidePartyFrame() end
-    end
+    SA_SetPartyAlertEnabled(not pa.enabled)
     DEFAULT_CHAT_FRAME:AddMessage(L("|cff00ff00[MimDice]|r 파티 신청 알림: ") .. (pa.enabled and L("켜짐") or L("꺼짐")))
 end
 
@@ -4382,7 +4636,7 @@ local function SA_CreatePartyConfig()
             soundSelectBtn:Hide(); soundBox:Show()
             SA_SetBoxValue(soundBox, pa.soundID, L("예: 567458"))
         else
-            soundLabel:SetText(L("커스텀: sounds폴더 파일명 그대로 입력"))
+            soundLabel:SetText(L("커스텀: _retail_\\sound 또는 sounds의 파일명"))
             soundSelectBtn:Hide(); soundBox:Show()
             SA_SetBoxValue(soundBox, pa.soundFile, L("예: MySound.mp3"))
         end
@@ -4556,7 +4810,7 @@ local function SA_CreatePartyConfig()
     durationBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
     win.displayCb = displayCb; win.durationBox = durationBox
 
-    -- ── 파티장이 아니어도 알림 받기 ──
+    -- 기본값은 모집 권한자만 알림. 체크하면 일반 HOME 파티/공대원도 받는다.
     local anyRoleCb = CreateFrame("CheckButton", nil, adv, "UICheckButtonTemplate")
     anyRoleCb:SetSize(22, 22)
     anyRoleCb:SetPoint("TOPLEFT", adv, "TOPLEFT", 15, -408)
@@ -4566,7 +4820,7 @@ local function SA_CreatePartyConfig()
     anyRoleLb:SetText(L("파티장/공대장/부공대장이 아닐 때도 알림 받기"))
     anyRoleLb:SetTextColor(0.9, 0.9, 0.9)
     anyRoleCb:SetScript("OnClick", function(self)
-        MimDiceDB.partyAlert.alertAnyRole = self:GetChecked() and true or false
+        SA_SetPartyAlertAnyRole(self:GetChecked())
     end)
     win.anyRoleCb = anyRoleCb
 
@@ -4695,7 +4949,7 @@ local function SA_CreatePartyConfig()
         pa.alertAnyRole = false
         if pa.fullParty then pa.fullParty.enabled = true end
         pa.locked = true
-        SA_StopPartyRepeat()
+        SA_ClearPartyAlertState()
         SA_UpdatePartyFrame()
         SA_RefreshPartyConfig()
         DEFAULT_CHAT_FRAME:AddMessage(L("|cff00ff00[MimDice]|r 파티 신청 알림 설정 초기화됨"))
@@ -4744,7 +4998,7 @@ function SA_RefreshPartyConfig()
     win.repeatBox:SetText(tostring(pa.repeatInterval or 5))
     win.displayCb:SetChecked(pa.displayMode ~= "stay")   -- 자동숨김(fade)=체크, 계속표시(stay)=해제
     win.durationBox:SetText(tostring(pa.duration or 4))
-    win.anyRoleCb:SetChecked(pa.alertAnyRole)
+    win.anyRoleCb:SetChecked(pa.alertAnyRole == true)
     win.fpCb:SetChecked(pa.fullParty and pa.fullParty.enabled)
     win.RefreshFpSoundRow()
     win.sizeSlider.SyncValue()
@@ -4874,6 +5128,7 @@ end
 
 local function SA_SyncBloodlustAuraPresence(suppressTrigger)
     local present, known, fresh = SA_QueryBloodlustAuraPresence()
+    if not suppressTrigger then MimDiceBloodlustReminder.Refresh(present, known) end
     if suppressTrigger then
         -- 초기 조회가 부분적으로 제한돼도 기준선 자체는 세워 둔다. 그렇지 않으면 다음 실제
         -- 없음→있음 전이가 '첫 조회'로 취급되어 알림 없이 소비될 수 있다.
@@ -4897,6 +5152,7 @@ local function SA_SyncBloodlustAuraPresence(suppressTrigger)
 end
 
 SA_EventFrame = CreateFrame("Frame")
+SA_EventFrame:RegisterEvent("ADDON_LOADED")              -- 제한이 시작되기 전 마력 주입 등록 기회 확보
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
@@ -4908,10 +5164,18 @@ SA_EventFrame:RegisterEvent("PLAYER_REGEN_ENABLED")     -- 전투 종료: 미뤄
 SA_EventFrame:RegisterEvent("LFG_LIST_APPLICANT_LIST_UPDATED")  -- 파티 신청 감지
 SA_EventFrame:RegisterEvent("LFG_LIST_APPLICANT_UPDATED")       -- 신청 멤버 상세가 늦게 도착하는 경우 재확인
 SA_EventFrame:RegisterEvent("GROUP_ROSTER_UPDATE")              -- 5인 풀파티 감지
+SA_EventFrame:RegisterEvent("PARTY_LEADER_CHANGED")             -- 모집 권한 변경 즉시 반영
+SA_EventFrame:RegisterEvent("LFG_LIST_ACTIVE_ENTRY_UPDATE")      -- 모집 종료 시 반복/잔상 정리
 SA_EventFrame:RegisterUnitEvent("UNIT_AURA", "player")
 
 SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
-    if event == "PLAYER_LOGIN" then
+    if event == "ADDON_LOADED" then
+        local addon = ...
+        if SA_IsSecret(addon) or type(addon) ~= "string" or addon ~= "MimDice" then return end
+        SA_InitDB()
+        MimDicePowerInfusion.Init(SA_PlaySound)
+        MimDiceBloodlustReminder.Init(SA_QueryBloodlustAuraPresence, SA_PlaySound)
+    elseif event == "PLAYER_LOGIN" then
         SA_SuppressBloodlustTriggers(3)
         SA_ClearInterruptAttempt()
         SA_InitDB()
@@ -4935,6 +5199,8 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         SA_StartLegacyWhisperCleanup()
         -- 풀파티 기준 인원 동기화 (로그인 시 이미 5인이면 안 울리게)
         SA_SyncGroupSize()
+        -- 새 마력 주입 모듈에 문제가 생겨도 기존 알림의 로그인 초기화는 마친다.
+        MimDicePowerInfusion.Init(SA_PlaySound)
     elseif event == "LOADING_SCREEN_ENABLED" then
         SA_SuppressBloodlustTriggers(5)
         SA_ClearInterruptAttempt()
@@ -4959,7 +5225,10 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         end)
     elseif event == "LFG_LIST_APPLICANT_LIST_UPDATED" or event == "LFG_LIST_APPLICANT_UPDATED" then
         SA_CheckPartyApplicants()
+    elseif event == "PARTY_LEADER_CHANGED" or event == "LFG_LIST_ACTIVE_ENTRY_UPDATE" then
+        SA_CheckPartyApplicants()
     elseif event == "GROUP_ROSTER_UPDATE" then
+        SA_CheckPartyApplicants()
         SA_CheckFullParty()
         SA_SyncBattleResCharges()
         SA_UpdateBattleResRuntime()
@@ -5237,6 +5506,11 @@ local function SA_CreateWindow()
     SA_OptionWindow:EnableMouse(true)
     SA_OptionWindow:Hide()
 
+    -- Reopening options lets the user enable Dialog after choosing "Later".
+    SA_OptionWindow:HookScript("OnShow", function()
+        MimDiceSoundFiles.CheckDialogChannel(true)
+    end)
+
     -- 옵션창이 닫히면 죽음/버프/전투부활 설정창 + 사운드 선택 팝업도 함께 닫기
     SA_OptionWindow:HookScript("OnHide", function()
         if SA_DeathConfig and SA_DeathConfig:IsShown() then SA_DeathConfig:Hide() end
@@ -5501,7 +5775,7 @@ local function SA_CreateWindow()
     local buffSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     buffSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -166)
     buffSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
-    buffSectionLabel:SetText(L("블러드 / 전투부활"))
+    buffSectionLabel:SetText(L("버프 / 파티 알림"))
     buffSectionLabel:SetTextColor(1, 0.82, 0)
 
     local bloodCb = CreateFrame("CheckButton", "SA_BloodCheck", SA_OptionWindow, "UICheckButtonTemplate")
@@ -5526,10 +5800,54 @@ local function SA_CreateWindow()
     bloodCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     bloodCfgBtn:SetScript("OnClick", function() SA_ToggleBuffConfig("BLOODLUST") end)
 
+    local readyCb = CreateFrame("CheckButton", "SA_BloodlustReadyCheck", SA_OptionWindow, "UICheckButtonTemplate")
+    readyCb:SetSize(22, 22)
+    readyCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -206)
+    readyCb:SetChecked(MimDiceBloodlustReminder.GetSettings().enabled)
+    readyCb:SetScript("OnClick", function(self)
+        MimDiceBloodlustReminder.GetSettings().enabled = self:GetChecked() and true or false
+        MimDiceBloodlustReminder.ApplySettings()
+    end)
+    local readyCfgBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    readyCfgBtn:SetSize(50, 22)
+    readyCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -206)
+    readyCfgBtn:SetText(L("설정"))
+    readyCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
+    readyCfgBtn:SetScript("OnClick", function() SA_ToggleBuffConfig("BLOODLUST_READY") end)
+    local readyLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    readyLabel:SetPoint("LEFT", readyCb, "RIGHT", 2, 0)
+    readyLabel:SetPoint("RIGHT", readyCfgBtn, "LEFT", -4, 0)
+    readyLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    readyLabel:SetJustifyH("LEFT")
+    readyLabel:SetWordWrap(false)
+    readyLabel:SetText(L("Bloodlust ready alert (sound + message)"))
+    readyLabel:SetTextColor(0.9, 0.9, 0.9)
+
+    -- 마력 주입은 소리와 사용자 문구, 게임에 맡기는 지속시간 바를 설정한다.
+    local piCb = CreateFrame("CheckButton", "SA_PowerInfusionCheck", SA_OptionWindow, "UICheckButtonTemplate")
+    piCb:SetSize(22, 22)
+    piCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -228)
+    piCb:SetChecked(MimDicePowerInfusion.GetSettings().enabled)
+    piCb:SetScript("OnClick", function(self)
+        MimDicePowerInfusion.GetSettings().enabled = self:GetChecked() and true or false
+        MimDicePowerInfusion.ApplySettings()
+    end)
+    local piLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    piLabel:SetPoint("LEFT", piCb, "RIGHT", 2, 0)
+    piLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    piLabel:SetText(L("마력 주입 (사운드 + 지속시간 바)"))
+    piLabel:SetTextColor(0.9, 0.9, 0.9)
+    local piCfgBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    piCfgBtn:SetSize(50, 22)
+    piCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -228)
+    piCfgBtn:SetText(L("설정"))
+    piCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
+    piCfgBtn:SetScript("OnClick", function() SA_ToggleBuffConfig("POWERINFUSE") end)
+
     -- 전투부활 줄: [✓] 전투부활 ............ [설정]  (사운드/아이콘 세부는 전부 "설정" 안으로 이동)
     local brCb = CreateFrame("CheckButton", nil, SA_OptionWindow, "UICheckButtonTemplate")
     brCb:SetSize(22, 22)
-    brCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -206)
+    brCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -252)
     brCb:SetChecked(MimDiceDB and MimDiceDB.battleRes and MimDiceDB.battleRes.enabled)
     brCb:SetScript("OnClick", function(self)
         if MimDiceDB.battleRes then
@@ -5546,7 +5864,7 @@ local function SA_CreateWindow()
 
     local brCfgBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
     brCfgBtn:SetSize(50, 22)
-    brCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -206)
+    brCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -252)
     brCfgBtn:SetText(L("설정"))
     brCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     brCfgBtn:SetScript("OnClick", function() SA_ToggleBattleResIconConfig() end)
@@ -5554,18 +5872,12 @@ local function SA_CreateWindow()
     -- 파티 신청 줄: [✓] 파티 신청 (사운드+메시지) ..... [설정]
     local paCb = CreateFrame("CheckButton", nil, SA_OptionWindow, "UICheckButtonTemplate")
     paCb:SetSize(22, 22)
-    paCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -230)
+    paCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -276)
     paCb:SetChecked(MimDiceDB and MimDiceDB.partyAlert and MimDiceDB.partyAlert.enabled)
     paCb:SetScript("OnClick", function(self)
-        if MimDiceDB.partyAlert then
-            MimDiceDB.partyAlert.enabled = self:GetChecked() and true or false
-            if not MimDiceDB.partyAlert.enabled then
-                -- 끌 때 정리: 반복 티커 중지 + (편집중 아니면) 계속표시(stay) 잔상 제거
-                SA_StopPartyRepeat()
-                if MimDiceDB.partyAlert.locked ~= false then SA_HidePartyFrame() end
-            end
-        end
+        SA_SetPartyAlertEnabled(self:GetChecked())
     end)
+    SA_OptionWindow.partyAlertCb = paCb
     local paLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
     paLabel:SetPoint("LEFT", paCb, "RIGHT", 2, 0)
     paLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
@@ -5574,7 +5886,7 @@ local function SA_CreateWindow()
 
     local paCfgBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
     paCfgBtn:SetSize(50, 22)
-    paCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -230)
+    paCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -276)
     paCfgBtn:SetText(L("설정"))
     paCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     paCfgBtn:SetScript("OnClick", function() SA_TogglePartyConfig() end)
@@ -5582,25 +5894,25 @@ local function SA_CreateWindow()
     -- 구분선
     local divider = SA_OptionWindow:CreateTexture(nil, "ARTWORK")
     divider:SetSize(350, 1)
-    divider:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -262)
+    divider:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -308)
     divider:SetColorTexture(0.5, 0.5, 0.5, 0.6)
 
     -- ── << 스킬 사운드 알림 >> 섹션 ─────────────────
     local skillSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    skillSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -274)
+    skillSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -320)
     skillSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     skillSectionLabel:SetText(L("차단 / 스킬 알림"))
     skillSectionLabel:SetTextColor(1, 0.82, 0)
 
     local inputLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    inputLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -300)
+    inputLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -346)
     inputLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     inputLabel:SetText(L("1. 추가할 스킬의 이름 또는 ID 입력 (꼭 띄어쓰기 지켜야 함)"))
     inputLabel:SetTextColor(0.9, 0.9, 0.9)
 
     local inputBox = CreateFrame("EditBox", "SA_SpellInput", SA_OptionWindow, "InputBoxTemplate")
     inputBox:SetSize(200, 22)
-    inputBox:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 20, -320)
+    inputBox:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 20, -366)
     inputBox:SetAutoFocus(false)
     inputBox:SetFont(MimDiceFontPath(), 12, "")
 
@@ -5664,13 +5976,13 @@ local function SA_CreateWindow()
 
     -- ── 2. 목록 스크롤 프레임 ──────────────────────────────────────────
     local listTitle = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    listTitle:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -360)
+    listTitle:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -406)
     listTitle:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     listTitle:SetText(L("2. 사운드 개별 설정"))
     listTitle:SetTextColor(0.8, 0.8, 0.8)
 
     local scrollFrame = CreateFrame("ScrollFrame", "SA_ListScrollFrame", SA_OptionWindow, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 10, -380)
+    scrollFrame:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 10, -426)
     scrollFrame:SetPoint("BOTTOMRIGHT", SA_OptionWindow, "BOTTOMRIGHT", -30, 10)
 
     local scrollChild = CreateFrame("Frame", "SA_ListScrollChild", scrollFrame)
@@ -5724,7 +6036,9 @@ function SA_RefreshList()
                 GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
                 GameTooltip:AddLine(L("클릭: 사운드 타입 전환"), 1, 0.82, 0)
                 GameTooltip:AddLine(L("내장 → 커스텀 → ID 순환"), 0.9, 0.9, 0.9)
-                GameTooltip:AddLine(L("커스텀: sounds폴더 파일명 그대로(대소문자·확장자)"), 0.7, 0.7, 0.7)
+                GameTooltip:AddLine(L("커스텀: _retail_\\sound 또는 sounds의 파일명"), 0.7, 0.7, 0.7)
+                GameTooltip:AddLine(L("파일명은 대소문자와 확장자까지 그대로 입력하세요."), 0.7, 0.7, 0.7, true)
+                GameTooltip:AddLine(L("외부 폴더에 없으면 MimDice\\sounds에서 재생합니다. 새 파일을 넣은 뒤에는 게임을 재시작하세요."), 0.7, 0.7, 0.7, true)
                 GameTooltip:AddLine(L("ID: 사운드 숫자 ID 입력"), 0.7, 0.7, 0.7)
                 GameTooltip:Show()
             end)
