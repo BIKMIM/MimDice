@@ -2,6 +2,7 @@
 -- 블러드와 별개다. 소리 등록은 ActionSounds와 같은 기준을 따른다.
 -- 전투 중만 아니면 등록하고, 로딩 화면(PLAYER_ENTERING_WORLD)마다 새로 등록한다.
 -- 레이드 안에서 리로드해도 Map/Chat 제한과 무관하게 바로 다시 등록된다.
+-- 새 등록이 성공한 뒤에만 이전 등록을 지운다. 새 등록이 막혀도 기존 소리는 계속 난다.
 -- 문구는 지속시간 바 안에 표시한다. 실제 바의 표시와 시간 갱신은
 -- Blizzard에 맡기며 소리 재생으로 타이머를 시작하지 않는다.
 -- API: Blizzard_APIDocumentationGenerated/UnitAuraDocumentation.lua,
@@ -137,7 +138,8 @@ local function RemoveSound()
     return true
 end
 
--- forceRefresh: 같은 소리가 등록돼 있어도 지우고 새로 등록한다(로딩 화면마다).
+-- forceRefresh: 같은 소리가 등록돼 있어도 새로 등록한다(로딩 화면마다).
+-- 기존 등록은 새 등록이 성공한 뒤에만 지운다. 등록이 막히면 기존 소리가 그대로 남는다.
 local function SyncSound(forceRefresh)
     local settings = PI.GetSettings()
     if not settings then return end
@@ -149,33 +151,41 @@ local function SyncSound(forceRefresh)
         nativeStatus = "ready"
         return
     end
-    -- 전투 중에는 등록할 수 없다. 같은 소리의 기존 등록은 지우지 않고
-    -- 전투가 끝난 뒤 다음 동기화에서 새로 등록한다.
-    if info and not CanAddSound() then
-        refreshPending = true
-        if current then nativeStatus = "ready"; return end
+    if not info then
+        -- 꺼졌거나 재생할 소리가 없다. 기존 등록만 지운다. (RemoveAuraSound는 제한이 없다)
+        refreshPending = false
         if not RemoveSound() then nativeStatus = "unavailable"; return end
-        nativeStatus = "deferred"
+        nativeStatus = settings.enabled and issue or "off"
         return
     end
-    refreshPending = false
-    if not RemoveSound() then nativeStatus = "unavailable"; return end
-    if not settings.enabled then nativeStatus = "off"; return end
-    if not info then nativeStatus = issue; return end
+    -- 전투 중에는 등록할 수 없다. 기존 등록은 그대로 두고 전투가 끝난 뒤 다시 시도한다.
+    if not CanAddSound() then
+        refreshPending = true
+        nativeStatus = nativeID and "ready" or "deferred"
+        return
+    end
 
     local adder = C_UnitAuras and C_UnitAuras.AddAuraSound
     local remover = C_UnitAuras and C_UnitAuras.RemoveAuraSound
     local trigger = Enum and Enum.UnitAuraSoundTrigger and Enum.UnitAuraSoundTrigger.Added
     if type(adder) ~= "function" or type(remover) ~= "function" or trigger == nil then
+        -- API 자체가 없는 클라이언트다. 다시 시도해도 달라지지 않는다.
+        refreshPending = false
         nativeStatus = "unavailable"
         return
     end
     info.unitToken, info.spellID, info.outputChannel = "player", SPELL_ID, "Dialog"
     local ok, id = pcall(adder, trigger, info)
     if not ok or IsSecret(id) or type(id) ~= "number" then
-        nativeStatus = "unavailable"
+        -- 새 등록 실패. 기존 등록이 있으면 그 소리가 계속 난다.
+        -- 재시도 표시는 켜 둔 채로 두어 다음 동기화(전투 종료, 제한 변경, 지역 이동)에서 다시 시도한다.
+        refreshPending = true
+        nativeStatus = current and "ready" or "unavailable"
         return
     end
+    -- 새 등록이 성공한 뒤에만 이전 등록을 지우고 재시도 표시를 끈다.
+    refreshPending = false
+    if nativeID and nativeID ~= id then pcall(remover, nativeID) end
     nativeID, nativeSignature, nativeStatus = id, signature, "ready"
 end
 

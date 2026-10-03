@@ -559,7 +559,7 @@ end
 local function SA_PlaySound(entry, channel)
     if not entry or not entry.enabled then return end
     channel = channel or "Dialog"
-    if channel == "Dialog" and not MimDiceSoundFiles.CheckDialogChannel() then return end
+    -- 기존처럼 재생 API에 맡긴다. 대화 소리 설정만 보고 모든 알림을 미리 차단하지 않는다.
 
     if entry.soundType == "preset" and entry.soundKey then
         if type(entry.soundKey) == "number" and entry.soundKey > 500000 then
@@ -4336,13 +4336,25 @@ local function SA_ClearPartyAlertState()
     if not pa or pa.locked ~= false then SA_HidePartyFrame() end
 end
 
--- 알림 대상 확인. 기본값은 모집 권한자만, 선택한 경우 HOME 일반 멤버도 허용한다.
+-- 일반 파티는 기존 역할 판정을 유지하고, 공격대에서만 HOME 모집 권한을 확인한다.
 -- 파티 찾기 모집은 HOME 그룹 소속이므로 그룹 종류를 생략하면
 -- 인스턴스 그룹의 역할을 읽어 일반 공대원을 권한자로 오인할 수 있다.
 -- 가능하면 블리자드 신청자 창이 실제로 쓰는 판정을 그대로 사용한다.
 SA_PartyCanReceiveAlerts = function()
     local pa = MimDiceDB and MimDiceDB.partyAlert
     if not pa or not pa.enabled then return false end
+    local inRaid = IsInRaid()
+    if SA_IsSecret(inRaid) then return false end
+    if not inRaid then
+        if pa.alertAnyRole then return true end
+        local inGroup = IsInGroup()
+        if SA_IsSecret(inGroup) then return false end
+        if not inGroup then return true end
+        local isLeader = UnitIsGroupLeader("player")
+        local isAssistant = UnitIsGroupAssistant("player")
+        if SA_IsSecret(isLeader) or SA_IsSecret(isAssistant) then return false end
+        return isLeader or isAssistant
+    end
     if pa.alertAnyRole == true then
         if type(LE_PARTY_CATEGORY_HOME) ~= "number" then return false end
         local inHomeGroup = IsInGroup(LE_PARTY_CATEGORY_HOME)
@@ -4478,16 +4490,17 @@ end
 -- (공격대는 제외. 로그인 시 이미 5인이면 울리지 않도록 기준 인원을 로그인 때 동기화)
 local SA_paLastGroupSize = 0
 local function SA_SyncGroupSize()
-    local n = GetNumGroupMembers(LE_PARTY_CATEGORY_HOME)
+    local n = GetNumGroupMembers()
     SA_paLastGroupSize = not SA_IsSecret(n) and type(n) == "number" and n or 0
 end
 local function SA_CheckFullParty()
-    local n = GetNumGroupMembers(LE_PARTY_CATEGORY_HOME)
+    local n = GetNumGroupMembers()
     if SA_IsSecret(n) or type(n) ~= "number" then return end
     local pa = MimDiceDB and MimDiceDB.partyAlert
     local fp = pa and pa.fullParty
-    local inRaid = IsInRaid(LE_PARTY_CATEGORY_HOME)
-    if pa and pa.enabled and fp and fp.enabled and SA_PartyCanReceiveAlerts()
+    local inRaid = IsInRaid()
+    -- 풀파티 알림은 신청 알림의 ON/OFF와 모집 권한에 관계없이 기존 설정만 따른다.
+    if fp and fp.enabled
        and n == 5 and SA_paLastGroupSize < 5 and not SA_IsSecret(inRaid)
        and type(inRaid) == "boolean" and not inRaid then
         SA_PlaySound(fp, "Dialog")
@@ -5128,7 +5141,10 @@ end
 
 local function SA_SyncBloodlustAuraPresence(suppressTrigger)
     local present, known, fresh = SA_QueryBloodlustAuraPresence()
-    if not suppressTrigger then MimDiceBloodlustReminder.Refresh(present, known) end
+    -- 새 사용 가능 알림의 오류가 기존 블러드 적용 알림까지 중단시키지 않도록 분리한다.
+    if not suppressTrigger and MimDiceBloodlustReminder then
+        pcall(MimDiceBloodlustReminder.Refresh, present, known)
+    end
     if suppressTrigger then
         -- 초기 조회가 부분적으로 제한돼도 기준선 자체는 세워 둔다. 그렇지 않으면 다음 실제
         -- 없음→있음 전이가 '첫 조회'로 취급되어 알림 없이 소비될 수 있다.
@@ -5228,8 +5244,8 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PARTY_LEADER_CHANGED" or event == "LFG_LIST_ACTIVE_ENTRY_UPDATE" then
         SA_CheckPartyApplicants()
     elseif event == "GROUP_ROSTER_UPDATE" then
-        SA_CheckPartyApplicants()
         SA_CheckFullParty()
+        SA_CheckPartyApplicants()
         SA_SyncBattleResCharges()
         SA_UpdateBattleResRuntime()
     elseif event == "SPELL_UPDATE_CHARGES" then
