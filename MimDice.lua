@@ -1,7 +1,7 @@
 -- Author         : BIK
 -- Create Date    : 2023-02-02 오후 05:37:12
--- Last Updated   : 2026-10-03 오후 14:48:49
--- Version        : v1.15.22
+-- Last Updated   : 2026-10-03 오후 16:00:27
+-- Version        : v1.15.23
 
 ---@diagnostic disable: undefined-global, param-type-mismatch, undefined-field, cast-local-type -- 전역 함수 정의 에러, 매개변수 타입 불일치, 정의되지 않은 필드, 로컬 타입 캐스팅 무시
 
@@ -168,11 +168,39 @@ end
 local MimRawSendChat = (C_ChatInfo and C_ChatInfo.SendChatMessage) or SendChatMessage
 
 -- 와우 서버 throttle: 한꺼번에 20줄 넘게 보내면 뒤쪽 줄이 오류 없이 버려진다 (실측).
+-- 15줄까지는 누른 즉시 한꺼번에 보낸다 (v1.15.12까지의 동작). 그보다 긴 보고만
 -- 한 줄씩 0.2초 간격으로 보낸다 (Details 리포트와 같은 간격, MimRaid/T-Raid에서도 긴 리포트로 검증).
+-- 즉시 보내야 하는 이유:
+--   1) 야외의 일반 대화(SAY)는 버튼을 누른 그 순간에만 보낼 수 있다. 타이머로 미루면
+--      ADDON_ACTION_BLOCKED가 나고, 이것은 pcall로 막을 수 없다.
+--   2) 공격대 경보는 줄마다 경보음이 난다. 같은 순간에 보내야 한 번으로 들린다.
 local CHAT_SEND_INTERVAL = 0.2
+local CHAT_BURST = 15
 local chatQueue = {}
 local chatDrainScheduled = false
-local chatLastSentAt = 0
+local chatTokens, chatTokensAt = CHAT_BURST, 0
+
+-- 바로 보낼 수 있는 여유. 0.2초에 한 줄씩, 최대 15줄까지 다시 찬다.
+local function MimRefillChatTokens()
+    local now = GetTime()
+    chatTokens = math.min(CHAT_BURST, chatTokens + (now - chatTokensAt) / CHAT_SEND_INTERVAL)
+    chatTokensAt = now
+end
+
+-- 지금 바로 보낼 여유가 있으면 한 줄 몫을 쓴다.
+local function MimTakeChatToken()
+    MimRefillChatTokens()
+    if chatTokens < 1 then return false end
+    chatTokens = chatTokens - 1
+    return true
+end
+
+local function MimSendChatNow(msg, channel)
+    local ok, err = pcall(MimRawSendChat, msg, channel)
+    if not ok then
+        DEFAULT_CHAT_FRAME:AddMessage(L("|cffff0000[MimDice 채팅 전송 오류]|r ") .. tostring(err))
+    end
+end
 
 -- 지금 애드온 채팅이 잠겨 있는지 (잠금 중 전송 시 ADDON_ACTION_BLOCKED)
 local function MimChatLocked()
@@ -194,21 +222,11 @@ local function MimDrainChat()
         return
     end
 
-    -- 직전 줄을 보낸 지 0.2초가 안 됐으면 남은 시간만큼 기다린다
-    local now = GetTime()
-    local remaining = (chatLastSentAt + CHAT_SEND_INTERVAL) - now
-    if remaining > 0 then
-        chatDrainScheduled = true
-        C_Timer.After(remaining, MimDrainChat)
-        return
+    -- 밀린 줄은 0.2초에 한 줄씩 보낸다
+    if MimTakeChatToken() then
+        local item = table.remove(chatQueue, 1)
+        MimSendChatNow(item.msg, item.channel)
     end
-
-    local item = table.remove(chatQueue, 1)
-    local ok, err = pcall(MimRawSendChat, item.msg, item.channel)
-    if not ok then
-        DEFAULT_CHAT_FRAME:AddMessage(L("|cffff0000[MimDice 채팅 전송 오류]|r ") .. tostring(err))
-    end
-    chatLastSentAt = now
 
     if #chatQueue > 0 then
         chatDrainScheduled = true
@@ -218,16 +236,39 @@ end
 
 local function MimSendChat(msg, channel)
     if not msg or msg == "" then return end
+    if not MimChatLocked() then
+        -- 일반 대화/외침은 버튼을 누른 그 순간에만 보낼 수 있다. 미루지 않는다.
+        if channel == "SAY" or channel == "YELL" then
+            MimSendChatNow(msg, channel)
+            return
+        end
+        -- 밀린 줄이 없고 여유가 있으면 지금 바로 보낸다 (여러 줄이 같은 순간에 나간다).
+        if #chatQueue == 0 and MimTakeChatToken() then
+            MimSendChatNow(msg, channel)
+            return
+        end
+    end
     table.insert(chatQueue, { msg = msg, channel = channel })
     if not chatDrainScheduled then
         chatDrainScheduled = true
-        C_Timer.After(0, MimDrainChat)
+        C_Timer.After(CHAT_SEND_INTERVAL, MimDrainChat)
     end
 end
 
 -- 보내지 못한 줄을 비운다 (보고를 다시 누르면 이전 보고와 섞이지 않게)
 local function MimClearChatQueue()
     wipe(chatQueue)
+end
+
+-- 지금 한꺼번에 보낼 수 없는 보고라면 0.2초 간격 전송으로 바꾸고 true를 돌려준다.
+-- 첫 줄 하나만 바로 나가고 나머지는 간격을 두고 나간다.
+-- (앞부분만 한꺼번에 보내고 이어서 간격 전송을 섞는 방식은 검증하지 않았다)
+local function MimPaceChatIfLong(lineCount)
+    if MimChatLocked() then return true end   -- 잠금이 풀린 뒤 한 줄씩 나간다
+    MimRefillChatTokens()
+    if lineCount <= chatTokens then return false end
+    chatTokens = math.min(chatTokens, 1)
+    return true
 end
 -- ===== 채팅 전송 끝 =====
 
@@ -1277,6 +1318,13 @@ function MimDice_RollAnnounce()
             
         else
             MimClearChatQueue()
+            -- 줄 수: 머리줄 + 굴린 사람 수 + 끝줄.
+            -- 간격을 두고 나가는 보고를 공격대 경보로 보내면 줄마다 경보음이 울린다.
+            -- 첫 줄만 경보로 보내고(경보음 한 번), 나머지는 일반 공격대 채팅으로 보낸다.
+            local bodyChannel = selectedChannel
+            if MimPaceChatIfLong(#rollArray + 2) and selectedChannel == "RAID_WARNING" then
+                bodyChannel = "RAID"
+            end
             MimSendChat(L("-------주사위결과-------"), selectedChannel)
 
             table.sort(rollArray, Choice_Sort_Reverse)
@@ -1337,9 +1385,9 @@ function MimDice_RollAnnounce()
                                    rangeText .. countText
 
                 table.insert(RankList, finalMessage)
-                MimSendChat(finalMessage, selectedChannel)
+                MimSendChat(finalMessage, bodyChannel)
             end
-            MimSendChat(L("----------끝----------"), selectedChannel)
+            MimSendChat(L("----------끝----------"), bodyChannel)
         end
     end)
 
