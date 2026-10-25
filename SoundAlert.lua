@@ -148,6 +148,29 @@ local SA_TabSkin = nil         -- 스킨 탭
 local SA_SkinWindow = nil      -- 스킨 옵션창
 local SA_EntryFrames = {}
 
+-- 대화 소리 설정 (Lua 5.1 메인 청크 200 local 제한을 피하기 위해 SA 테이블에 보관)
+SA.TabChat = nil
+SA.ChatWindow = nil
+SA.ChatEntryFrames = {}
+SA.CHAT_SYSTEM_ENTRIES = {
+    { key = "WHISPER",      name = "귓속말",        events = { "CHAT_MSG_WHISPER" } },
+    { key = "BN_WHISPER",   name = "배틀넷 귓속말", events = { "CHAT_MSG_BN_WHISPER" } },
+    { key = "GUILD",        name = "길드 대화",     events = { "CHAT_MSG_GUILD" } },
+    { key = "OFFICER",      name = "길드 관리자",   events = { "CHAT_MSG_OFFICER" } },
+    { key = "PARTY",        name = "파티 대화",     events = { "CHAT_MSG_PARTY", "CHAT_MSG_PARTY_LEADER" } },
+    { key = "INSTANCE",     name = "인스턴스 대화", events = { "CHAT_MSG_INSTANCE_CHAT", "CHAT_MSG_INSTANCE_CHAT_LEADER" } },
+    { key = "RAID",         name = "공격대 대화",   events = { "CHAT_MSG_RAID", "CHAT_MSG_RAID_LEADER" } },
+    { key = "RAID_WARNING", name = "공격대 경보",   events = { "CHAT_MSG_RAID_WARNING" } },
+    { key = "SAY",          name = "일반 대화",     events = { "CHAT_MSG_SAY" } },
+    { key = "YELL",         name = "외침",          events = { "CHAT_MSG_YELL" } },
+}
+SA.CHAT_EVENT_TO_KEY = {}
+for _, def in ipairs(SA.CHAT_SYSTEM_ENTRIES) do
+    for _, ev in ipairs(def.events) do
+        SA.CHAT_EVENT_TO_KEY[ev] = def.key
+    end
+end
+
 -- 시스템(기본) 엔트리 정의 - 표시 순서대로 (직업별 사운드 목록에 표시되는 항목)
 -- legacyDefaults: 이전 기본 파일명 목록 (이 값으로 저장돼 있으면 새 기본값으로 자동 갱신)
 -- defaultEnabled: 처음 생성 시 체크박스 기본값
@@ -509,6 +532,38 @@ function SA_InitDB()
 
     MimDicePowerInfusion.InitDB()
 
+    -- =================================================================
+    -- 대화 소리 설정: 계정 공용 (모든 채널 기본값은 꺼짐 & 사운드 비워짐)
+    -- =================================================================
+    if not MimDiceDB.chatSound then MimDiceDB.chatSound = {} end
+    local cs = MimDiceDB.chatSound
+    if cs.muteDefaultWhisper == nil then cs.muteDefaultWhisper = true end
+    if cs.ignoreSelf == nil then cs.ignoreSelf = true end
+    if not cs.channels then cs.channels = {} end
+    if not cs.customChannels then cs.customChannels = {} end
+
+    for _, def in ipairs(SA.CHAT_SYSTEM_ENTRIES) do
+        local ch = cs.channels[def.key]
+        if not ch then
+            ch = {}
+            cs.channels[def.key] = ch
+        end
+        if ch.enabled == nil then ch.enabled = false end
+        if ch.soundType == nil then ch.soundType = "preset" end
+        if ch.soundFile == nil then ch.soundFile = "" end
+        ch.chatKey = def.key
+        ch.spellName = L(def.name)
+        ch.isSystem = true
+    end
+
+    for _, cch in ipairs(cs.customChannels) do
+        if cch.enabled == nil then cch.enabled = true end
+        if cch.soundType == nil then cch.soundType = "preset" end
+        if cch.soundFile == nil then cch.soundFile = "" end
+        if cch.channelTarget == nil then cch.channelTarget = "" end
+        cch.isSystem = false
+    end
+
     -- ── ID 타입 1회 마이그레이션 ──
     -- 예전엔 ID 값을 soundKey 에 저장했는데 내장(preset)과 같은 칸이라 서로 덮어쓰는 문제가 있었다.
     -- ID 전용 칸 soundID 로 분리하고, 기존 id-type 항목의 soundKey 값을 soundID 로 옮긴다.
@@ -549,6 +604,27 @@ function SA_InitDB()
     end
     if MimDiceDB.soundAlerts then
         for _, e in ipairs(MimDiceDB.soundAlerts) do SA_FixSoundFields(e) end
+    end
+    if MimDiceDB.chatSound then
+        if MimDiceDB.chatSound.channels then
+            for _, ch in pairs(MimDiceDB.chatSound.channels) do SA_FixSoundFields(ch) end
+        end
+        if MimDiceDB.chatSound.customChannels then
+            for _, cch in ipairs(MimDiceDB.chatSound.customChannels) do SA_FixSoundFields(cch) end
+        end
+        -- 이미 소리를 입력해 둔 채널이 체크 해제 상태로 남아 있으면 1회 자동 활성화
+        if not MimDiceDB.chatSound.autoEnableConfiguredV1 then
+            if MimDiceDB.chatSound.channels then
+                for _, ch in pairs(MimDiceDB.chatSound.channels) do
+                    if (ch.soundType == "preset" and type(ch.soundKey) == "number")
+                       or (ch.soundType == "custom" and type(ch.soundFile) == "string" and ch.soundFile ~= "")
+                       or (ch.soundType == "id" and tonumber(ch.soundID) ~= nil) then
+                        ch.enabled = true
+                    end
+                end
+            end
+            MimDiceDB.chatSound.autoEnableConfiguredV1 = true
+        end
     end
 
 end
@@ -5167,6 +5243,266 @@ local function SA_SyncBloodlustAuraPresence(suppressTrigger)
     return true
 end
 
+-- =====================================================================
+-- 대화 소리 알림 감지 (12.1 비밀 값 방어: SA_IsSecret → type → 비교 순서 준수)
+-- =====================================================================
+do
+    local SA_DEFAULT_WHISPER_FILE_ID = 567421
+    local SA_whisperSoundMuted = false
+    local SA_CHAT_SOUND_COOLDOWN = 0.3
+    local SA_chatLastPlayedAt = {}
+
+    local function SA_HasConfiguredSound(entry)
+        if not entry then return false end
+        if entry.soundType == "preset" then
+            return type(entry.soundKey) == "number"
+        elseif entry.soundType == "custom" then
+            return type(entry.soundFile) == "string" and entry.soundFile ~= ""
+        elseif entry.soundType == "id" then
+            return tonumber(entry.soundID) ~= nil
+        end
+        return false
+    end
+    SA.HasConfiguredSound = SA_HasConfiguredSound
+
+    local function SA_ShouldMuteDefaultWhisper()
+        local cs = MimDiceDB and MimDiceDB.chatSound
+        if not cs or not cs.muteDefaultWhisper then return false end
+        local wh = cs.channels and cs.channels.WHISPER
+        if not wh or not wh.enabled or not SA_HasConfiguredSound(wh) then return false end
+        if wh.soundType == "preset" and wh.soundKey == SA_DEFAULT_WHISPER_FILE_ID then return false end
+        if wh.soundType == "id" and tonumber(wh.soundID) == SA_DEFAULT_WHISPER_FILE_ID then return false end
+        return true
+    end
+
+    local function SA_UpdateWhisperMute()
+        local shouldMute = SA_ShouldMuteDefaultWhisper()
+        if shouldMute and not SA_whisperSoundMuted then
+            if type(MuteSoundFile) == "function" then
+                pcall(MuteSoundFile, SA_DEFAULT_WHISPER_FILE_ID)
+                SA_whisperSoundMuted = true
+            end
+        elseif not shouldMute and SA_whisperSoundMuted then
+            if type(UnmuteSoundFile) == "function" then
+                pcall(UnmuteSoundFile, SA_DEFAULT_WHISPER_FILE_ID)
+            end
+            SA_whisperSoundMuted = false
+        end
+    end
+
+    local function SA_IsSelfChatMessage(event, playerName, guid)
+        -- 받은 귓속말 이벤트는 항상 타인이 보낸 메시지임 (보낸 귓속말은 _INFORM 별도 이벤트)
+        if event == "CHAT_MSG_WHISPER" or event == "CHAT_MSG_BN_WHISPER" then
+            return false
+        end
+        local cs = MimDiceDB and MimDiceDB.chatSound
+        if not cs or not cs.ignoreSelf then return false end
+
+        local myGUID = SA_PublicUnitGUID("player")
+        if myGUID and not SA_IsSecret(guid) and type(guid) == "string" and guid ~= "" then
+            return guid == myGUID
+        end
+
+        if not SA_IsSecret(playerName) and type(playerName) == "string" and playerName ~= "" then
+            local myName = type(UnitName) == "function" and UnitName("player") or nil
+            if not SA_IsSecret(myName) and type(myName) == "string" and myName ~= "" then
+                local shortSender, senderRealm = playerName, nil
+                local dash = playerName:find("%-")
+                if dash then
+                    shortSender = playerName:sub(1, dash - 1)
+                    senderRealm = playerName:sub(dash + 1)
+                end
+                if shortSender == myName then
+                    local myRealm = type(GetRealmName) == "function" and GetRealmName() or nil
+                    if not senderRealm or senderRealm == "" or SA_IsSecret(myRealm)
+                       or type(myRealm) ~= "string" or myRealm == "" or senderRealm == myRealm then
+                        return true
+                    end
+                end
+            end
+        end
+        return false
+    end
+
+    local function SA_MatchChannelNameString(raw, targetLower, targetClean)
+        if SA_IsSecret(raw) or type(raw) ~= "string" or raw == "" then return false end
+        local fullLower = raw:match("^%s*(.-)%s*$"):lower()
+        if fullLower == targetLower or fullLower == targetClean then return true end
+        local stripped = fullLower:gsub("^%d+%.%s*", "")
+        if stripped == targetLower or stripped == targetClean then return true end
+        local beforeDash, afterDash = stripped:match("^(.-)%s*%-%s*(.+)$")
+        if beforeDash and (beforeDash == targetLower or beforeDash == targetClean) then return true end
+        if afterDash and (afterDash == targetLower or afterDash == targetClean) then return true end
+        if targetClean ~= "" and stripped:find(targetClean, 1, true) ~= nil then return true end
+        return false
+    end
+
+    local function SA_IsJoinedCustomChannel(numTarget, targetLower, targetClean)
+        if type(GetChannelList) ~= "function" then return true end
+        local ok, list = pcall(function() return { GetChannelList() } end)
+        if not ok or type(list) ~= "table" or #list == 0 then return true end
+        for i = 1, #list, 3 do
+            local cid, cname, disabled = list[i], list[i + 1], list[i + 2]
+            local isDis = (not SA_IsSecret(disabled) and type(disabled) == "boolean" and disabled)
+            if not isDis then
+                if numTarget then
+                    if not SA_IsSecret(cid) and tonumber(cid) == numTarget then
+                        return true
+                    end
+                else
+                    if SA_MatchChannelNameString(cname, targetLower, targetClean) then
+                        return true
+                    end
+                end
+            end
+        end
+        return false
+    end
+
+    local function SA_MatchesCustomChannel(target, channelName, channelIndex, channelBaseName)
+        if SA_IsSecret(target) or type(target) ~= "string" then return false end
+        local trimmed = target:match("^%s*(.-)%s*$")
+        if trimmed == "" then return false end
+
+        local numTarget = tonumber(trimmed) or tonumber(trimmed:match("^/(%d+)$")) or tonumber(trimmed:match("^(%d+)%s*번"))
+        local targetClean = trimmed:gsub("^%d+%.%s*", ""):lower()
+        local targetLower = trimmed:lower()
+
+        local idxVal = (not SA_IsSecret(channelIndex)) and tonumber(channelIndex) or nil
+        local idxKnown = idxVal ~= nil and idxVal > 0
+        local nameKnown = (not SA_IsSecret(channelName)) and type(channelName) == "string" and channelName ~= ""
+        local baseKnown = (not SA_IsSecret(channelBaseName)) and type(channelBaseName) == "string" and channelBaseName ~= ""
+
+        -- 구렁/인스턴스 던전 등에서 12.1 비밀 값 제한으로 이벤트의 채널 인자가 모두 가려진 경우:
+        -- 현재 참여 중인 채널(GetChannelList)에 해당 채널 번호/이름이 있으면 매칭으로 인정한다.
+        if not idxKnown and not nameKnown and not baseKnown then
+            return SA_IsJoinedCustomChannel(numTarget, targetLower, targetClean)
+        end
+
+        if numTarget then
+            if idxKnown and idxVal == numTarget then
+                return true
+            end
+            if nameKnown then
+                local prefixNum = tonumber(channelName:match("^%s*(%d+)%.")) or tonumber(channelName:match("^%s*(%d+)%s"))
+                if prefixNum and prefixNum == numTarget then return true end
+                if type(GetChannelName) == "function" then
+                    local ok, localID = pcall(GetChannelName, channelName)
+                    if ok and not SA_IsSecret(localID) and tonumber(localID) == numTarget then
+                        return true
+                    end
+                end
+            end
+            -- 채널 번호는 비밀이고 채널 이름만 공개된 경우 GetChannelName(numTarget)으로 대조
+            if not idxKnown and (nameKnown or baseKnown) and type(GetChannelName) == "function" then
+                local ok, _, cname = pcall(GetChannelName, numTarget)
+                if ok and not SA_IsSecret(cname) and type(cname) == "string" and cname ~= "" then
+                    local cLower = cname:lower()
+                    if SA_MatchChannelNameString(channelBaseName, cLower, cLower)
+                       or SA_MatchChannelNameString(channelName, cLower, cLower) then
+                        return true
+                    end
+                end
+            end
+            return false
+        end
+
+        if baseKnown and SA_MatchChannelNameString(channelBaseName, targetLower, targetClean) then
+            return true
+        end
+        if nameKnown and SA_MatchChannelNameString(channelName, targetLower, targetClean) then
+            return true
+        end
+
+        return false
+    end
+
+    local function SA_PlayChatEntryWithCooldown(entry, throttleKey)
+        if not entry or not entry.enabled or not SA_HasConfiguredSound(entry) then return end
+        local now = GetTime()
+        local last = SA_chatLastPlayedAt[throttleKey] or 0
+        if now - last < SA_CHAT_SOUND_COOLDOWN then return end
+        SA_chatLastPlayedAt[throttleKey] = now
+        SA_PlaySound(entry)
+    end
+
+    function SA.HandleChatSoundEvent(event, ...)
+        if SA_IsSecret(event) or type(event) ~= "string" then return end
+        local cs = MimDiceDB and MimDiceDB.chatSound
+        if not cs then return end
+
+        local _, playerName, _, channelName, _, _, _, channelIndex, channelBaseName, _, _, guid = ...
+        if SA_IsSelfChatMessage(event, playerName, guid) then return end
+
+        if event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_COMMUNITIES_CHANNEL" then
+            if not cs.customChannels then return end
+            local allSecret = SA_IsSecret(channelIndex) and SA_IsSecret(channelName) and SA_IsSecret(channelBaseName)
+            for i, cch in ipairs(cs.customChannels) do
+                if cch.enabled and SA_HasConfiguredSound(cch)
+                   and SA_MatchesCustomChannel(cch.channelTarget, channelName, channelIndex, channelBaseName) then
+                    SA_PlayChatEntryWithCooldown(cch, "CUSTOM:" .. i .. ":" .. (cch.channelTarget or ""))
+                    if allSecret then break end
+                end
+            end
+            return
+        end
+
+        local key = SA.CHAT_EVENT_TO_KEY[event]
+        if not key or not cs.channels then return end
+        local entry = cs.channels[key]
+        -- 배틀넷 귓속말을 따로 켜 두지 않았다면 일반 '귓속말' 설정으로 함께 재생
+        if key == "BN_WHISPER" and (not entry or not entry.enabled or not SA_HasConfiguredSound(entry)) then
+            local wh = cs.channels.WHISPER
+            if wh and wh.enabled and SA_HasConfiguredSound(wh) then
+                SA_PlayChatEntryWithCooldown(wh, "SYS:WHISPER")
+            end
+            return
+        end
+        if entry and entry.enabled and SA_HasConfiguredSound(entry) then
+            SA_PlayChatEntryWithCooldown(entry, "SYS:" .. key)
+        end
+    end
+
+    function SA.UpdateChatSoundRuntime()
+        SA_UpdateWhisperMute()
+        if not SA_EventFrame then return end
+        local cs = MimDiceDB and MimDiceDB.chatSound
+        local whEntry = cs and cs.channels and cs.channels.WHISPER
+        local whActive = whEntry and whEntry.enabled and SA_HasConfiguredSound(whEntry)
+        for _, def in ipairs(SA.CHAT_SYSTEM_ENTRIES) do
+            local entry = cs and cs.channels and cs.channels[def.key]
+            local active = entry and entry.enabled and SA_HasConfiguredSound(entry)
+            if def.key == "BN_WHISPER" and not active and whActive then
+                active = true
+            end
+            for _, ev in ipairs(def.events) do
+                if active then
+                    SA_EventFrame:RegisterEvent(ev)
+                else
+                    SA_EventFrame:UnregisterEvent(ev)
+                end
+            end
+        end
+        local anyCustom = false
+        if cs and cs.customChannels then
+            for _, cch in ipairs(cs.customChannels) do
+                if cch.enabled and SA_HasConfiguredSound(cch)
+                   and type(cch.channelTarget) == "string" and cch.channelTarget:match("%S") ~= nil then
+                    anyCustom = true
+                    break
+                end
+            end
+        end
+        if anyCustom then
+            SA_EventFrame:RegisterEvent("CHAT_MSG_CHANNEL")
+            SA_EventFrame:RegisterEvent("CHAT_MSG_COMMUNITIES_CHANNEL")
+        else
+            SA_EventFrame:UnregisterEvent("CHAT_MSG_CHANNEL")
+            SA_EventFrame:UnregisterEvent("CHAT_MSG_COMMUNITIES_CHANNEL")
+        end
+    end
+end
+
 SA_EventFrame = CreateFrame("Frame")
 SA_EventFrame:RegisterEvent("ADDON_LOADED")              -- 제한이 시작되기 전 마력 주입 등록 기회 확보
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
@@ -5215,6 +5551,8 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         SA_StartLegacyWhisperCleanup()
         -- 풀파티 기준 인원 동기화 (로그인 시 이미 5인이면 안 울리게)
         SA_SyncGroupSize()
+        -- 대화 소리 설정 이벤트 구독 및 기본 귓속말 음소거 동기화
+        SA.UpdateChatSoundRuntime()
         -- 새 마력 주입 모듈에 문제가 생겨도 기존 알림의 로그인 초기화는 마친다.
         MimDicePowerInfusion.Init(SA_PlaySound)
     elseif event == "LOADING_SCREEN_ENABLED" then
@@ -5282,6 +5620,8 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         -- 파티/공대원/본인 사망 감지
         local deadGUID = ...
         SA_HandleUnitDied(deadGUID)
+    elseif SA.CHAT_EVENT_TO_KEY[event] or event == "CHAT_MSG_CHANNEL" or event == "CHAT_MSG_COMMUNITIES_CHANNEL" then
+        SA.HandleChatSoundEvent(event, ...)
     end
 end)
 
@@ -5340,11 +5680,16 @@ function SA_SkinRefreshTabs()
         local tx = SA_SkinOn() and 0 or -4
         SA_TabOption:ClearAllPoints()
         SA_TabOption:SetPoint("TOPLEFT", _G.MainWindow, "TOPRIGHT", tx, -30)
-        local wx = tx + 34 + (SA_SkinOn() and 14 or 8)   -- 탭 폭 34 + 우측 창까지 간격 (스킨 켬 14 / 끔 8)
+        local wx = tx + 34 + (SA_SkinOn() and 16 or 14)  -- 탭 폭 34 + 우측 창까지 여유 간격
         if SA_OptionWindow then
             SA_OptionWindow:ClearAllPoints()
             SA_OptionWindow:SetPoint("TOPLEFT", _G.MainWindow, "TOPRIGHT", wx, 0)
             SA_OptionWindow:SetPoint("BOTTOMLEFT", _G.MainWindow, "BOTTOMRIGHT", wx, 0)
+        end
+        if SA.ChatWindow then
+            SA.ChatWindow:ClearAllPoints()
+            SA.ChatWindow:SetPoint("TOPLEFT", _G.MainWindow, "TOPRIGHT", wx, 0)
+            SA.ChatWindow:SetPoint("BOTTOMLEFT", _G.MainWindow, "BOTTOMRIGHT", wx, 0)
         end
         if SA_SkinWindow then   -- 스킨 창은 내용이 많아 고정 높이 (위쪽만 맞춤)
             SA_SkinWindow:ClearAllPoints()
@@ -5352,7 +5697,7 @@ function SA_SkinRefreshTabs()
         end
     end
     -- 1) 테두리 모양 전환 (스킨 켬 = 각진 1px / 끔 = 원래 테두리)
-    for _, t in ipairs({ SA_TabOption, SA_TabSkin }) do
+    for _, t in ipairs({ SA_TabOption, SA.TabChat, SA_TabSkin }) do
         if t and t.SetBackdrop then
             if SA_SkinOn() and not t.MimDiceSkinFlat then
                 if not t.MimDiceSkinOrig then
@@ -5370,9 +5715,10 @@ function SA_SkinRefreshTabs()
     end
     -- 2) 색 칠하기 (SetBackdrop이 색을 초기화하므로 반드시 그 뒤에)
     SA_SetTabActive(SA_TabOption, SA_OptionWindow and SA_OptionWindow:IsShown())
+    SA_SetTabActive(SA.TabChat, SA.ChatWindow and SA.ChatWindow:IsShown())
     SA_SetTabActive(SA_TabSkin, SA_SkinWindow and SA_SkinWindow:IsShown())
     -- 3) 호버색
-    for _, t in ipairs({ SA_TabOption, SA_TabSkin }) do
+    for _, t in ipairs({ SA_TabOption, SA.TabChat, SA_TabSkin }) do
         if t then
             if SA_SkinOn() then
                 if not t.MimHover then
@@ -5396,6 +5742,10 @@ local function SA_ToggleWindow()
         SA_SetTabActive(SA_TabOption, false)
     else
         -- 옵션창들은 같은 자리를 쓰므로 하나만 표시
+        if SA.ChatWindow and SA.ChatWindow:IsShown() then
+            SA.ChatWindow:Hide()
+            SA_SetTabActive(SA.TabChat, false)
+        end
         if SA_SkinWindow and SA_SkinWindow:IsShown() then
             SA_SkinWindow:Hide()
             SA_SetTabActive(SA_TabSkin, false)
@@ -5403,6 +5753,26 @@ local function SA_ToggleWindow()
         SA_OptionWindow:Show()
         SA_RefreshList()
         SA_SetTabActive(SA_TabOption, true)
+    end
+end
+
+function SA.ToggleChatWindow()
+    if not SA.ChatWindow then return end
+    if SA.ChatWindow:IsShown() then
+        SA.ChatWindow:Hide()
+        SA_SetTabActive(SA.TabChat, false)
+    else
+        if SA_OptionWindow and SA_OptionWindow:IsShown() then
+            SA_OptionWindow:Hide()
+            SA_SetTabActive(SA_TabOption, false)
+        end
+        if SA_SkinWindow and SA_SkinWindow:IsShown() then
+            SA_SkinWindow:Hide()
+            SA_SetTabActive(SA_TabSkin, false)
+        end
+        SA.ChatWindow:Show()
+        if SA_RefreshChatList then SA_RefreshChatList() end
+        SA_SetTabActive(SA.TabChat, true)
     end
 end
 
@@ -5416,6 +5786,10 @@ local function SA_ToggleSkinWindow()
             SA_OptionWindow:Hide()
             SA_SetTabActive(SA_TabOption, false)
         end
+        if SA.ChatWindow and SA.ChatWindow:IsShown() then
+            SA.ChatWindow:Hide()
+            SA_SetTabActive(SA.TabChat, false)
+        end
         SA_SkinWindow:Show()
         if SA_RefreshSkinWindow then SA_RefreshSkinWindow() end
         SA_SetTabActive(SA_TabSkin, true)
@@ -5426,9 +5800,51 @@ local function SA_CreateTab()
     local mainWin = _G["MainWindow"]
     if not mainWin then return end
 
+    local LINE_STEP = 15
+    local OPTICAL_X = {
+        ["대"] = 0.5,
+        ["화"] = -0.5,
+    }
+
+    local function SplitTabLines(label)
+        local lines = {}
+        for part in tostring(label or ""):gmatch("[^\n]+") do
+            lines[#lines + 1] = part
+        end
+        return lines
+    end
+
     local function VerticalTabHeight(label)
-        local _, lineBreaks = label:gsub("\n", "")
-        return math.max(60, 18 + (lineBreaks + 1) * 12)
+        local lines = SplitTabLines(label)
+        return math.max(60, 30 + #lines * LINE_STEP)
+    end
+
+    local function BuildVerticalTabText(tab, label)
+        local lines = SplitTabLines(label)
+        local n = #lines
+        local fsList = {}
+        local mid = (n + 1) * 0.5
+        for i, ch in ipairs(lines) do
+            local fs = tab:CreateFontString(nil, "OVERLAY")
+            local xOff = OPTICAL_X[ch] or 0
+            local yOff = (mid - i) * LINE_STEP - 0.5
+            fs:SetPoint("CENTER", tab, "CENTER", xOff, yOff)
+            fs:SetFont(MimDiceFontPath(), 12, "OUTLINE")
+            fs:SetJustifyH("CENTER")
+            fs:SetJustifyV("MIDDLE")
+            fs:SetText(ch)
+            fs:SetTextColor(0.6, 0.6, 0.6)
+            fsList[#fsList + 1] = fs
+        end
+        tab.text = {
+            SetTextColor = function(_, r, g, b, a)
+                local fontPath = MimDiceFontPath()
+                for _, fs in ipairs(fsList) do
+                    fs:SetFont(fontPath, 12, "OUTLINE")
+                    fs:SetTextColor(r, g, b, a)
+                end
+            end,
+        }
     end
 
     local tabBackdrop = {
@@ -5446,31 +5862,31 @@ local function SA_CreateTab()
     SA_TabOption:SetBackdrop(tabBackdrop)
     SA_TabOption:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
     SA_TabOption:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
-
-    local optText = SA_TabOption:CreateFontString(nil, "OVERLAY")
-    optText:SetPoint("CENTER")
-    optText:SetFont(MimDiceFontPath(), 12, "OUTLINE")
-    optText:SetText(optionTabLabel)
-    optText:SetTextColor(0.6, 0.6, 0.6)
-    SA_TabOption.text = optText
+    BuildVerticalTabText(SA_TabOption, optionTabLabel)
 
     SA_TabOption:SetScript("OnClick", SA_ToggleWindow)
+
+    -- 대화소리 탭 (채널별 대화 소리 설정)
+    local chatTabLabel = L("대\n화\n소\n리")
+    SA.TabChat = CreateFrame("Button", "SA_TabChat", mainWin, "BackdropTemplate")
+    SA.TabChat:SetSize(34, VerticalTabHeight(chatTabLabel))
+    SA.TabChat:SetPoint("TOPLEFT", SA_TabOption, "BOTTOMLEFT", 0, -6)
+    SA.TabChat:SetBackdrop(tabBackdrop)
+    SA.TabChat:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
+    SA_TabChat:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
+    BuildVerticalTabText(SA.TabChat, chatTabLabel)
+
+    SA.TabChat:SetScript("OnClick", SA.ToggleChatWindow)
 
     -- 스킨 탭 (플랫 다크 테마 프리셋 + 색 커스텀)
     local skinTabLabel = L("스\n킨")
     SA_TabSkin = CreateFrame("Button", "SA_TabSkin", mainWin, "BackdropTemplate")
     SA_TabSkin:SetSize(34, VerticalTabHeight(skinTabLabel))
-    SA_TabSkin:SetPoint("TOPLEFT", SA_TabOption, "BOTTOMLEFT", 0, -6)
+    SA_TabSkin:SetPoint("TOPLEFT", SA.TabChat, "BOTTOMLEFT", 0, -6)
     SA_TabSkin:SetBackdrop(tabBackdrop)
     SA_TabSkin:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
     SA_TabSkin:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
-
-    local skText = SA_TabSkin:CreateFontString(nil, "OVERLAY")
-    skText:SetPoint("CENTER")
-    skText:SetFont(MimDiceFontPath(), 12, "OUTLINE")
-    skText:SetText(skinTabLabel)
-    skText:SetTextColor(0.6, 0.6, 0.6)
-    SA_TabSkin.text = skText
+    BuildVerticalTabText(SA_TabSkin, skinTabLabel)
 
     SA_TabSkin:SetScript("OnClick", SA_ToggleSkinWindow)
 
@@ -5492,18 +5908,22 @@ local function SA_CreateWindow()
     -- 너비만 고정하고, 위/아래를 메인창에 앵커 → 옵션창 높이가 메인창 높이를 항상 따라감
     -- (기본값이든 사용자가 리사이즈하든 좌우 창의 위/아래 끝이 항상 맞음)
     SA_OptionWindow:SetWidth(380)
-    SA_OptionWindow:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", 38, 0)
-    SA_OptionWindow:SetPoint("BOTTOMLEFT", mainWin, "BOTTOMRIGHT", 38, 0)
+    SA_OptionWindow:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", 44, 0)
+    SA_OptionWindow:SetPoint("BOTTOMLEFT", mainWin, "BOTTOMRIGHT", 44, 0)
     SA_OptionWindow:SetFrameStrata("HIGH")   -- 메인창과 동일 레이어 → 자원/재사용바에 안 가리게
 
     -- 옵션창 드래그하면 메인창도 이동
     SA_WireBundleDrag(SA_OptionWindow)   -- 점프 없는 번들 드래그
     
-    -- ★ 메인 창이 닫힐 때 옵션 창(옵션/스킨)도 함께 닫히도록 연동 ★
+    -- ★ 메인 창이 닫힐 때 옵션 창(옵션/대화/스킨)도 함께 닫히도록 연동 ★
     mainWin:HookScript("OnHide", function()
         if SA_OptionWindow and SA_OptionWindow:IsShown() then
             SA_OptionWindow:Hide()
             SA_SetTabActive(SA_TabOption, false)
+        end
+        if SA.ChatWindow and SA.ChatWindow:IsShown() then
+            SA.ChatWindow:Hide()
+            SA_SetTabActive(SA.TabChat, false)
         end
         if SA_SkinWindow and SA_SkinWindow:IsShown() then
             SA_SkinWindow:Hide()
@@ -6228,6 +6648,451 @@ function SA_RefreshList()
 end
 
 -- =====================================================================
+-- 대화 소리 설정창 (채널별 내장/커스텀/ID 사운드 설정, 기본값 비워짐)
+-- =====================================================================
+function SA.CreateChatWindow()
+    local mainWin = _G["MainWindow"]
+    if not mainWin then return end
+
+    local win = CreateFrame("Frame", "SA_ChatWindow", UIParent, "BackdropTemplate")
+    win:SetWidth(380)
+    win:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", 44, 0)
+    win:SetPoint("BOTTOMLEFT", mainWin, "BOTTOMRIGHT", 44, 0)
+    win:SetFrameStrata("HIGH")
+    win:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 }
+    })
+    win:SetBackdropColor(0, 0, 0, 0.5)
+    win:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+    win:EnableMouse(true)
+    SA_WireBundleDrag(win)
+    win:Hide()
+
+    win:HookScript("OnShow", function()
+        MimDiceSoundFiles.CheckDialogChannel(true)
+    end)
+    win:HookScript("OnHide", function()
+        if SA_SoundPicker and SA_SoundPicker:IsShown() then SA_SoundPicker:Hide() end
+    end)
+
+    local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
+    closeBtn.MimDiceIsClose = true
+    closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
+    closeBtn:SetScript("OnClick", function() SA.ToggleChatWindow() end)
+
+    local title = win:CreateFontString(nil, "OVERLAY")
+    title:SetPoint("TOP", win, "TOP", 0, -12)
+    title:SetFont(MimDiceFontPath(), 14, "OUTLINE")
+    title:SetText(L("대화 소리 설정"))
+    title:SetTextColor(1, 0.82, 0)
+
+    -- 귓속말 알림 사용 시 와우 기본 귓속말 소리 끄기
+    local muteWhisperCb = CreateFrame("CheckButton", "SA_ChatMuteWhisperCheck", win, "UICheckButtonTemplate")
+    muteWhisperCb:SetSize(22, 22)
+    muteWhisperCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -36)
+    muteWhisperCb:SetChecked(MimDiceDB and MimDiceDB.chatSound and MimDiceDB.chatSound.muteDefaultWhisper ~= false)
+    muteWhisperCb:SetScript("OnClick", function(self)
+        if MimDiceDB and MimDiceDB.chatSound then
+            MimDiceDB.chatSound.muteDefaultWhisper = self:GetChecked() and true or false
+            SA.UpdateChatSoundRuntime()
+        end
+    end)
+    win.muteWhisperCb = muteWhisperCb
+
+    local muteWhisperLabel = win:CreateFontString(nil, "OVERLAY")
+    muteWhisperLabel:SetPoint("LEFT", muteWhisperCb, "RIGHT", 2, 0)
+    muteWhisperLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    muteWhisperLabel:SetText(L("귓속말 알림 사용 시 와우 기본 귓속말 소리 끄기"))
+    muteWhisperLabel:SetTextColor(0.9, 0.9, 0.9)
+
+    -- 내가 보낸 대화는 소리 울리지 않기
+    local ignoreSelfCb = CreateFrame("CheckButton", "SA_ChatIgnoreSelfCheck", win, "UICheckButtonTemplate")
+    ignoreSelfCb:SetSize(22, 22)
+    ignoreSelfCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -60)
+    ignoreSelfCb:SetChecked(MimDiceDB and MimDiceDB.chatSound and MimDiceDB.chatSound.ignoreSelf ~= false)
+    ignoreSelfCb:SetScript("OnClick", function(self)
+        if MimDiceDB and MimDiceDB.chatSound then
+            MimDiceDB.chatSound.ignoreSelf = self:GetChecked() and true or false
+        end
+    end)
+    win.ignoreSelfCb = ignoreSelfCb
+
+    local ignoreSelfLabel = win:CreateFontString(nil, "OVERLAY")
+    ignoreSelfLabel:SetPoint("LEFT", ignoreSelfCb, "RIGHT", 2, 0)
+    ignoreSelfLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    ignoreSelfLabel:SetText(L("내가 보낸 대화는 소리 울리지 않기"))
+    ignoreSelfLabel:SetTextColor(0.9, 0.9, 0.9)
+
+    local divider = win:CreateTexture(nil, "ARTWORK")
+    divider:SetSize(350, 1)
+    divider:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -88)
+    divider:SetColorTexture(0.5, 0.5, 0.5, 0.6)
+
+    -- 1. 사설/커스텀 채널 추가
+    local inputLabel = win:CreateFontString(nil, "OVERLAY")
+    inputLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -98)
+    inputLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    inputLabel:SetText(L("1. 사설/커스텀 채널 추가 (채널 번호 또는 이름)"))
+    inputLabel:SetTextColor(0.9, 0.9, 0.9)
+
+    local inputBox = CreateFrame("EditBox", "SA_ChatChannelInput", win, "InputBoxTemplate")
+    inputBox:SetSize(200, 22)
+    inputBox:SetPoint("TOPLEFT", win, "TOPLEFT", 20, -118)
+    inputBox:SetAutoFocus(false)
+    inputBox:SetFont(MimDiceFontPath(), 11, "")
+    SA_WirePlaceholder(inputBox)
+    SA_SetBoxValue(inputBox, "", L("예: 4 또는 파티찾기"))
+    win.inputBox = inputBox
+
+    local addBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    addBtn:SetSize(80, 24)
+    addBtn:SetPoint("LEFT", inputBox, "RIGHT", 10, 0)
+    addBtn:SetText(L("채널 추가"))
+    addBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
+
+    local scrollFrame = CreateFrame("ScrollFrame", "SA_ChatListScrollFrame", win, "UIPanelScrollFrameTemplate")
+    scrollFrame:SetPoint("TOPLEFT", win, "TOPLEFT", 10, -172)
+    scrollFrame:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -30, 10)
+    win.scrollFrame = scrollFrame
+
+    local scrollChild = CreateFrame("Frame", "SA_ChatListScrollChild", scrollFrame)
+    scrollChild:SetSize(330, 100)
+    scrollFrame:SetScrollChild(scrollChild)
+    win.scrollChild = scrollChild
+
+    local function ExecuteAddChannel()
+        local raw = inputBox:GetText() or ""
+        local text = raw:match("^%s*(.-)%s*$")
+        if text == "" or text == (inputBox.placeholder or "") then return end
+
+        SA_InitDB()
+        local customList = MimDiceDB.chatSound.customChannels
+        local lower = text:lower()
+        for _, entry in ipairs(customList) do
+            if type(entry.channelTarget) == "string" and entry.channelTarget:lower() == lower then
+                DEFAULT_CHAT_FRAME:AddMessage(L("|cffffff00[MimDice] 이미 등록된 채널입니다.|r"))
+                SA_SetBoxValue(inputBox, "", L("예: 4 또는 파티찾기"))
+                return
+            end
+        end
+
+        table.insert(customList, {
+            channelTarget = text,
+            soundType = "preset",
+            soundKey = nil,
+            soundFile = "",
+            soundID = nil,
+            soundName = "사운드 선택...",
+            enabled = true,
+            isSystem = false,
+        })
+        SA_SetBoxValue(inputBox, "", L("예: 4 또는 파티찾기"))
+        SA_RefreshChatList()
+        SA.UpdateChatSoundRuntime()
+        if C_Timer and C_Timer.After then
+            C_Timer.After(0, function()
+                if scrollFrame.GetVerticalScrollRange and scrollFrame.SetVerticalScroll then
+                    scrollFrame:SetVerticalScroll(scrollFrame:GetVerticalScrollRange() or 0)
+                end
+            end)
+        end
+    end
+
+    addBtn:SetScript("OnClick", function()
+        ExecuteAddChannel()
+        inputBox:ClearFocus()
+    end)
+    inputBox:SetScript("OnEnterPressed", function(self)
+        ExecuteAddChannel()
+        self:ClearFocus()
+    end)
+    inputBox:SetScript("OnEscapePressed", function(self)
+        self:ClearFocus()
+    end)
+
+    -- 2. 채널별 사운드 개별 설정
+    local listTitle = win:CreateFontString(nil, "OVERLAY")
+    listTitle:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -152)
+    listTitle:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    listTitle:SetText(L("2. 채널별 사운드 개별 설정"))
+    listTitle:SetTextColor(0.8, 0.8, 0.8)
+
+    SA_SkinRegisterWindow(win)
+    SA.ChatWindow = win
+end
+
+function SA_RefreshChatList()
+    if not SA.ChatWindow or not SA.ChatWindow.scrollChild then return end
+    SA_InitDB()
+
+    local cs = MimDiceDB.chatSound
+    if SA.ChatWindow.muteWhisperCb then
+        SA.ChatWindow.muteWhisperCb:SetChecked(cs.muteDefaultWhisper ~= false)
+    end
+    if SA.ChatWindow.ignoreSelfCb then
+        SA.ChatWindow.ignoreSelfCb:SetChecked(cs.ignoreSelf ~= false)
+    end
+
+    local scrollChild = SA.ChatWindow.scrollChild
+    for _, f in ipairs(SA.ChatEntryFrames) do f:Hide() end
+
+    local yOffset = 0
+    local rowIndex = 1
+
+    local function RenderChatEntry(entry, customIdx)
+        if not SA.ChatEntryFrames[rowIndex] then
+            local row = CreateFrame("Frame", "SA_ChatRow_" .. rowIndex, scrollChild)
+            row:SetSize(330, 32)
+
+            local bg = row:CreateTexture(nil, "BACKGROUND")
+            bg:SetAllPoints()
+            bg:SetColorTexture(0.15, 0.15, 0.15, 0.5)
+
+            local cb = CreateFrame("CheckButton", nil, row, "UICheckButtonTemplate")
+            cb:SetSize(22, 22)
+            cb:SetPoint("LEFT", row, "LEFT", 2, 0)
+            row.cb = cb
+
+            local spellText = row:CreateFontString(nil, "OVERLAY")
+            spellText:SetPoint("LEFT", cb, "RIGHT", 2, 0)
+            spellText:SetSize(85, 14)
+            spellText:SetFont(MimDiceFontPath(), 11)
+            spellText:SetJustifyH("LEFT")
+            spellText:SetWordWrap(false)
+            row.spellText = spellText
+
+            local typeBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            typeBtn:SetSize(42, 22)
+            typeBtn:SetPoint("LEFT", spellText, "RIGHT", 5, 0)
+            typeBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
+            row.typeBtn = typeBtn
+            typeBtn:SetScript("OnEnter", function(self)
+                GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+                GameTooltip:AddLine(L("클릭: 사운드 타입 전환"), 1, 0.82, 0)
+                GameTooltip:AddLine(L("내장 → 커스텀 → ID 순환"), 0.9, 0.9, 0.9)
+                GameTooltip:AddLine(L("커스텀: _retail_\\sound 또는 sounds의 파일명"), 0.7, 0.7, 0.7)
+                GameTooltip:AddLine(L("파일명은 대소문자와 확장자까지 그대로 입력하세요."), 0.7, 0.7, 0.7, true)
+                GameTooltip:AddLine(L("외부 폴더에 없으면 MimDice\\sounds에서 재생합니다. 새 파일을 넣은 뒤에는 게임을 재시작하세요."), 0.7, 0.7, 0.7, true)
+                GameTooltip:AddLine(L("ID: 사운드 숫자 ID 입력"), 0.7, 0.7, 0.7)
+                GameTooltip:Show()
+            end)
+            typeBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
+            local soundSelectBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            soundSelectBtn:SetSize(100, 20)
+            soundSelectBtn:SetPoint("LEFT", typeBtn, "RIGHT", 5, 0)
+            do
+                local fs = soundSelectBtn:GetFontString()
+                fs:SetFont(MimDiceFontPath(), 9, "")
+                fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
+                fs:ClearAllPoints(); fs:SetPoint("LEFT", 5, 0); fs:SetPoint("RIGHT", -5, 0)
+            end
+            row.soundSelectBtn = soundSelectBtn
+
+            local customEdit = CreateFrame("EditBox", nil, row, "InputBoxTemplate")
+            customEdit:SetSize(100, 20)
+            customEdit:SetPoint("LEFT", typeBtn, "RIGHT", 15, 0)
+            customEdit:SetAutoFocus(false)
+            customEdit:SetFont(MimDiceFontPath(), 10, "")
+            row.customEdit = customEdit
+
+            local delBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            delBtn:SetSize(22, 20)
+            delBtn:SetPoint("RIGHT", row, "RIGHT", -5, 0)
+            delBtn:SetText("X")
+            delBtn:GetFontString():SetTextColor(1, 0.2, 0.2)
+            row.delBtn = delBtn
+
+            local testBtn = CreateFrame("Button", nil, row, "UIPanelButtonTemplate")
+            testBtn:SetSize(22, 20)
+            testBtn:SetPoint("RIGHT", delBtn, "LEFT", -2, 0)
+            testBtn:SetText("▶")
+            row.testBtn = testBtn
+
+            if SA_SkinOn() then
+                SA_SkinWalk(row, SA_SkinPal(), 0)
+            end
+            SA.ChatEntryFrames[rowIndex] = row
+        end
+
+        local row = SA.ChatEntryFrames[rowIndex]
+        row:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 0, -yOffset)
+        row:Show()
+
+        row.cb:SetChecked(entry.enabled)
+        row.cb:SetScript("OnClick", function(self)
+            entry.enabled = self:GetChecked() and true or false
+            SA.UpdateChatSoundRuntime()
+        end)
+
+        if entry.isSystem then
+            row.spellText:SetText(entry.spellName)
+            row.spellText:SetFont(MimDiceFontPath(), 12, "OUTLINE")
+            row.spellText:SetTextColor(0.5, 1, 0.5)
+            row.delBtn:Hide()
+        else
+            row.spellText:SetText(L("[채널] ") .. (entry.channelTarget or ""))
+            row.spellText:SetFont(MimDiceFontPath(), 11)
+            row.spellText:SetTextColor(1, 0.82, 0)
+            row.delBtn:Show()
+            row.delBtn:SetScript("OnClick", function()
+                table.remove(MimDiceDB.chatSound.customChannels, customIdx)
+                SA_RefreshChatList()
+                SA.UpdateChatSoundRuntime()
+            end)
+        end
+
+        local typeLabel = L("내장")
+        if entry.soundType == "custom" then typeLabel = L("커스텀") end
+        if entry.soundType == "id" then typeLabel = "ID" end
+        row.typeBtn:SetText(typeLabel)
+
+        row.typeBtn:SetScript("OnClick", function()
+            if entry.soundType == "preset" then
+                entry.soundType = "custom"
+            elseif entry.soundType == "custom" then
+                entry.soundType = "id"
+            else
+                entry.soundType = "preset"
+            end
+            SA_RefreshChatList()
+            SA.UpdateChatSoundRuntime()
+        end)
+
+        local function PreviewChatEntry()
+            if not SA.HasConfiguredSound(entry) and entry.soundType ~= "custom" then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffff00[MimDice] " .. L("재생할 소리를 골라 주세요.") .. "|r")
+                return
+            end
+            local was = entry.enabled
+            entry.enabled = true
+            SA_PlaySound(entry)
+            entry.enabled = was
+        end
+
+        if entry.soundType == "preset" then
+            row.soundSelectBtn:Show()
+            row.customEdit:Hide()
+            row.soundSelectBtn:SetText(SA_PresetSoundName(entry))
+            row.soundSelectBtn:SetScript("OnClick", function()
+                SA_OpenSoundPicker(row.soundSelectBtn,
+                    function() return entry.soundKey end,
+                    function(snd)
+                        entry.soundKey = snd.id
+                        entry.soundName = snd.name
+                        entry.enabled = true
+                        row.cb:SetChecked(true)
+                        row.soundSelectBtn:SetText(L(snd.name))
+                        SA.UpdateChatSoundRuntime()
+                        PreviewChatEntry()
+                    end)
+            end)
+        elseif entry.soundType == "custom" then
+            row.soundSelectBtn:Hide()
+            row.customEdit:Show()
+            if not entry.soundFile or entry.soundFile == "" then
+                row.customEdit:SetText(L("예: MySound.mp3"))
+                row.customEdit:SetTextColor(0.5, 0.5, 0.5)
+            else
+                row.customEdit:SetText(entry.soundFile)
+                row.customEdit:SetTextColor(1, 1, 1)
+            end
+
+            row.customEdit:SetScript("OnEditFocusGained", function(self)
+                if self:GetText() == L("예: MySound.mp3") then self:SetText(""); self:SetTextColor(1, 1, 1) end
+            end)
+            row.customEdit:SetScript("OnEditFocusLost", function(self)
+                if self:GetText() == "" then
+                    self:SetText(L("예: MySound.mp3")); self:SetTextColor(0.5, 0.5, 0.5)
+                end
+                SA.UpdateChatSoundRuntime()
+            end)
+            row.customEdit:SetScript("OnTextChanged", function(self, userInput)
+                if userInput then
+                    local raw = self:GetText()
+                    entry.soundFile = raw
+                    if raw ~= "" and raw ~= L("예: MySound.mp3") then
+                        entry.enabled = true
+                        row.cb:SetChecked(true)
+                    end
+                    SA.UpdateChatSoundRuntime()
+                end
+            end)
+            row.customEdit:SetScript("OnEnterPressed", function(self)
+                self:ClearFocus()
+                if entry.soundFile and entry.soundFile ~= "" then
+                    entry.enabled = true
+                    row.cb:SetChecked(true)
+                end
+                SA.UpdateChatSoundRuntime()
+                PreviewChatEntry()
+            end)
+        elseif entry.soundType == "id" then
+            row.soundSelectBtn:Hide()
+            row.customEdit:Show()
+            if not entry.soundID or entry.soundID == "" then
+                row.customEdit:SetText(L("예: 567439"))
+                row.customEdit:SetTextColor(0.5, 0.5, 0.5)
+            else
+                row.customEdit:SetText(tostring(entry.soundID))
+                row.customEdit:SetTextColor(1, 1, 1)
+            end
+
+            row.customEdit:SetScript("OnEditFocusGained", function(self)
+                if self:GetText() == L("예: 567439") then self:SetText(""); self:SetTextColor(1, 1, 1) end
+            end)
+            row.customEdit:SetScript("OnEditFocusLost", function(self)
+                if self:GetText() == "" then
+                    self:SetText(L("예: 567439")); self:SetTextColor(0.5, 0.5, 0.5)
+                end
+                SA.UpdateChatSoundRuntime()
+            end)
+            row.customEdit:SetScript("OnTextChanged", function(self, userInput)
+                if userInput then
+                    local raw = self:GetText()
+                    entry.soundID = tonumber(raw) or (raw ~= "" and raw or nil)
+                    if tonumber(raw) ~= nil then
+                        entry.enabled = true
+                        row.cb:SetChecked(true)
+                    end
+                    SA.UpdateChatSoundRuntime()
+                end
+            end)
+            row.customEdit:SetScript("OnEnterPressed", function(self)
+                self:ClearFocus()
+                if tonumber(entry.soundID) ~= nil then
+                    entry.enabled = true
+                    row.cb:SetChecked(true)
+                end
+                SA.UpdateChatSoundRuntime()
+                PreviewChatEntry()
+            end)
+        end
+
+        row.testBtn:SetScript("OnClick", PreviewChatEntry)
+
+        rowIndex = rowIndex + 1
+        yOffset = yOffset + 34
+    end
+
+    for _, def in ipairs(SA.CHAT_SYSTEM_ENTRIES) do
+        local entry = cs.channels[def.key]
+        if entry then
+            RenderChatEntry(entry, nil)
+        end
+    end
+
+    for idx, cch in ipairs(cs.customChannels) do
+        RenderChatEntry(cch, idx)
+    end
+
+    scrollChild:SetHeight(math.max(yOffset, 10))
+end
+
+-- =====================================================================
 -- 스킨 옵션창 (프리셋 + 색 커스텀, 바꾸는 즉시 반영)
 -- =====================================================================
 -- 기준색(진한 배경)용 어두운 색 10종 - 기본 색상판은 밝은 색 위주라 진한 배경용을 한 줄 추가
@@ -6508,7 +7373,7 @@ local function SA_CreateSkinWindow()
     local win = CreateFrame("Frame", "SA_SkinWindow", UIParent, "BackdropTemplate")
     win:SetWidth(380)
     win:SetHeight(505)   -- 내용에 맞춘 고정 높이 (메인창 높이와 무관)
-    win:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", 38, 0)
+    win:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", 44, 0)
     win:SetFrameStrata("HIGH")
     win:SetBackdrop({
         bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
@@ -6875,6 +7740,7 @@ function SoundAlert_OnLoad()
             SA_InitDB()
             SA_CreateTab()
             SA_CreateWindow()
+            SA.CreateChatWindow()
             SA_CreateSkinWindow()
             -- 사운드 옵션창 + 메인창에 스킨 적용 (켜져 있을 때만)
             SA_SkinRegisterWindow(SA_OptionWindow)

@@ -69,8 +69,9 @@ function PI.InitDB()
 
     local barDefaults = GetBarDefaults()
     local defaults = {
-        enabled = true, soundType = "preset", soundKey = 567397,
-        soundName = "공격대 경고", soundFile = "", showMessage = true,
+        -- 12.1.5부터 AddAuraSound 재생은 5초에서 끊긴다. 기본 소리는 5초 이내 파일로 둔다.
+        enabled = true, soundType = "custom", soundKey = 567397,
+        soundName = "공격대 경고", soundFile = "밀하우스_5초편집.mp3", showMessage = true,
         message = L("마력 주입!"), fontSize = 50, colorA = 1,
         x = 0, y = 240, locked = true, displayDuration = 3,
         barEnabled = true, width = barDefaults.width, height = barDefaults.height, timeFontSize = 40, alphaPct = 50,
