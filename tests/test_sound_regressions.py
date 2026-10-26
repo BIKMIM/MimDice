@@ -323,20 +323,6 @@ for path in lua_files:
     compile_source(path.read_text(encoding="utf-8-sig"), str(path))
 print(f"Lua 5.1 syntax: {len(lua_files)} files passed")
 
-baseline = subprocess.check_output(
-    ["git", "show", "HEAD:SoundAlert.lua"], cwd=ROOT
-).decode("utf-8-sig")
-baseline_failures = []
-for name, code in cases:
-    vm = make_vm(baseline)
-    try:
-        vm.execute(code)
-    except Exception:
-        baseline_failures.append(name)
-print(f"Before fix: {len(baseline_failures)} / {len(cases)} scenarios failed")
-for name in baseline_failures:
-    print(f"  {name}")
-
 for name, code in cases:
     vm = make_vm(current)
     try:

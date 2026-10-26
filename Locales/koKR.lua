@@ -302,4 +302,9 @@ MimDice_RegisterLocale("koKR", "한국어", {
     ["Say"] = "일반 대화",
     ["Yell"] = "외침",
     ["[Ch] "] = "[채널] ",
+    ["Settings"] = "설정",
+    ["CUSTOM_SOUND_FOLDER_HELP"] = "World of Warcraft\\_retail_\\sound 폴더에 개인적인 소리파일을 보관하시면 애드온업데이트해도 소리가 보관됩니다.\nsound 폴더가 없으시면 만드셔서 넣으셔도 됩니다.\nMP3(.mp3), OGG(.ogg) 형식을 사용해 주세요.\n파일 추가 후에는 게임을 재시작해야 적용됩니다.",
+    ["Alert Settings"] = "알림 설정",
+    ["Chat Sounds"] = "대화 소리",
+    ["Appearance"] = "꾸미기",
 })
