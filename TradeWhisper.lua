@@ -5,7 +5,20 @@ local frame = CreateFrame("Frame")
 local session
 local generation = 0
 local outbox, sending = {}, false
+local trace = {}
 local function L(key) return MimDice_L(key) end
+
+local function Trace(reason)
+    local snap = session and session.snapshot
+    trace[#trace + 1] = string.format("%.2f %s [give=%d get=%d accepted=%s]", GetTime(), reason,
+        snap and #snap.gave or 0, snap and #snap.got or 0,
+        session and session.bothAccepted and "both" or "no")
+    if #trace > 32 then table.remove(trace, 1) end
+end
+
+function TW.PrintDebug()
+    for _, line in ipairs(trace) do DEFAULT_CHAT_FRAME:AddMessage("[MimDice Trade] " .. line) end
+end
 
 local function Public(value, kind)
     if type(issecretvalue) == "function" and issecretvalue(value) then return nil end
@@ -53,12 +66,22 @@ local function Capture()
     return nextSnap
 end
 
-local function RefreshSnapshot()
+local function CanReadTrade()
+    if TradeFrame and not TradeFrame:IsShown() then return false end
+    if UnitExists and Public(UnitExists("NPC"), "boolean") == false then return false end
+    return true
+end
+
+local function RefreshSnapshot(force)
     if not session or session.closedAt then return end
     -- 완료 직전 UI가 먼저 닫히면 API는 빈 슬롯을 반환할 수 있다.
-    if TradeFrame and not TradeFrame:IsShown() then return end
+    if not CanReadTrade() then Trace("snapshot: trade unavailable"); return end
+    -- 양쪽 수락 뒤 발생하는 슬롯 정리는 최종 내역에 덮어쓰지 않는다.
+    -- 실제 품목 변경은 수락 해제/재수락 이벤트에서 다시 읽는다.
+    if session.bothAccepted and session.snapshot and not force then Trace("snapshot: accepted offer kept"); return end
     local ok, snap = pcall(Capture)
     session.snapshot = ok and snap or nil
+    Trace(session.snapshot and "snapshot: captured" or "snapshot: unreadable")
 end
 
 local function Money(copper)
@@ -115,7 +138,7 @@ local function Pump()
     if not locked then
         local item = table.remove(outbox, 1)
         local send = C_ChatInfo and C_ChatInfo.SendChatMessage or SendChatMessage
-        if send then send(item.message, "WHISPER", nil, item.target) end
+        if send then send(item.message, "WHISPER", nil, item.target); Trace("whisper: send called") end
     end
     -- 긴 내역은 1초 간격으로 전송한다. 제한 중인 내역은 최대 2분 대기한다.
     if #outbox > 0 then
@@ -127,12 +150,14 @@ end
 
 local function Complete()
     local completed = session
+    Trace("server: complete")
     session = nil -- 중복 완료 신호가 와도 다시 보내지 않는다.
     if not completed or not completed.snapshot then return end
     if completed.closedAt and GetTime() - completed.closedAt > 5 then return end
     local snap = completed.snapshot
     if not snap.target then return end
     local messages = BuildMessages(snap)
+    Trace("receipt chunks: " .. #messages)
     for _, message in ipairs(messages) do
         outbox[#outbox + 1] = { message = message, target = snap.target, expires = GetTime() + 120 }
     end
@@ -160,17 +185,23 @@ frame:SetScript("OnEvent", function(_, event, first, second)
         frame:UnregisterEvent("ADDON_LOADED")
         TW.ApplySettings()
     elseif event == "TRADE_SHOW" then
+        trace = {}
         session = { target = TargetName() }
+        Trace(event)
         RefreshSnapshot()
     elseif event == "TRADE_REQUEST_CANCEL" then
+        Trace(event)
         session = nil
     elseif event == "TRADE_CLOSED" then
+        Trace(event)
         if session and not session.closedAt then session.closedAt = GetTime() end
     elseif event == "TRADE_ACCEPT_UPDATE" then
         if not session or session.closedAt then return end
-        if TradeFrame and not TradeFrame:IsShown() then return end
+        if not CanReadTrade() then Trace(event .. ": trade unavailable"); return end
+        session.bothAccepted = Number(first) == 1 and Number(second) == 1
+        Trace(event)
         -- 수락 상태 값/거래 방향과 무관하게 내역을 보존한다. 성공은 서버 신호로만 확정한다.
-        RefreshSnapshot()
+        RefreshSnapshot(true)
     elseif event == "UI_INFO_MESSAGE" or event == "UI_ERROR_MESSAGE" then
         local name
         first = Number(first)
@@ -179,10 +210,12 @@ frame:SetScript("OnEvent", function(_, event, first, second)
             if ok then name = Public(value, "string") end
         end
         second = Public(second, "string")
+        if name then Trace(event .. ": " .. name) end
         if name == "ERR_TRADE_CANCELLED" or (second and second == ERR_TRADE_CANCELLED) then session = nil
         elseif event == "UI_INFO_MESSAGE" and (name == "ERR_TRADE_COMPLETE" or (second and second == ERR_TRADE_COMPLETE)) then Complete() end
         -- 거래 중 아이템을 올리지 못한 오류 등은 취소가 아니다. 수정 뒤 같은 거래가 완료될 수 있다.
     elseif session and not session.closedAt then
+        Trace(event)
         RefreshSnapshot()
     end
 end)

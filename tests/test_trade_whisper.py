@@ -255,6 +255,60 @@ targetItems={}; fire('TRADE_TARGET_ITEM_CHANGED',1); fire('TRADE_ACCEPT_UPDATE',
 fire('TRADE_CLOSED'); complete(); assert(#sent==1)
 assert(sent[1].message:find('Received: ReceivedGift',1,true))
 ''')
+case('sent-only slots cleared after both accept while UI still visible', '''
+enable(); targetMoney=0; playerItems[1]={name='SentGift',count=3}
+begin(); fire('TRADE_ACCEPT_UPDATE',1,1)
+playerItems={}; fire('TRADE_PLAYER_ITEM_CHANGED',1)
+fire('TRADE_CLOSED'); complete(); assert(#sent==1)
+assert(sent[1].message:find('Sent: SentGift x3',1,true))
+''')
+case('sent-only teardown API failure after both accept preserves final offer', '''
+enable(); targetMoney=0; playerItems[1]={name='SentGift',count=1}
+begin(); fire('TRADE_ACCEPT_UPDATE',1,1)
+GetTradePlayerItemInfo=function() error('trade already closing') end
+fire('TRADE_PLAYER_ITEM_CHANGED',1); fire('TRADE_CLOSED'); complete()
+assert(#sent==1 and sent[1].message:find('Sent: SentGift',1,true))
+''')
+case('NPC disappears before close with only one accepted', '''
+enable(); targetMoney=0; playerItems[1]={name='SentGift',count=1}; begin()
+UnitExists=function(unit) assert(unit=='NPC'); return false end
+playerItems={}; fire('TRADE_PLAYER_ITEM_CHANGED',1); fire('TRADE_ACCEPT_UPDATE',0,0)
+fire('TRADE_CLOSED'); complete(); assert(#sent==1)
+''')
+case('real offer removal resets acceptance and does not report the old item', '''
+enable(); playerItems[1]={name='Removed',count=1}; begin()
+fire('TRADE_ACCEPT_UPDATE',1,1)
+playerItems={}; fire('TRADE_PLAYER_ITEM_CHANGED',1); fire('TRADE_ACCEPT_UPDATE',0,0)
+fire('TRADE_ACCEPT_UPDATE',1,1); fire('TRADE_CLOSED'); complete()
+assert(#sent==1 and not sent[1].message:find('Removed',1,true))
+''')
+case('offer replacement after acceptance reset uses new item and quantity', '''
+enable(); targetMoney=0; playerItems[1]={name='Old',count=1}; begin()
+fire('TRADE_ACCEPT_UPDATE',1,1)
+playerItems[1]={name='New',count=5}; fire('TRADE_PLAYER_ITEM_CHANGED',1)
+fire('TRADE_ACCEPT_UPDATE',0,0); fire('TRADE_ACCEPT_UPDATE',1,1)
+fire('TRADE_CLOSED'); complete()
+assert(#sent==1 and sent[1].message:find('Sent: New x5',1,true))
+assert(not sent[1].message:find('Old',1,true))
+''')
+case('both accepted and cancelled still does not send', '''
+enable(); targetMoney=0; playerItems[1]={name='NotGiven',count=1}; begin()
+fire('TRADE_ACCEPT_UPDATE',1,1); playerItems={}; fire('TRADE_PLAYER_ITEM_CHANGED',1)
+fire('TRADE_REQUEST_CANCEL'); fire('TRADE_CLOSED'); complete(); assert(#sent==0)
+''')
+case('diagnostic trace is bounded and never includes partner or item names', '''
+enable(); targetMoney=0; playerItems[1]={name='PrivateGift',count=1}; begin()
+for i=1,40 do fire('TRADE_PLAYER_ITEM_CHANGED',1) end
+fire('TRADE_ACCEPT_UPDATE',1,1); playerItems={}; fire('TRADE_PLAYER_ITEM_CHANGED',1)
+fire('TRADE_CLOSED'); complete()
+local lines={}
+DEFAULT_CHAT_FRAME={AddMessage=function(_,line) lines[#lines+1]=line end}
+MimDiceTradeWhisper.PrintDebug()
+assert(#lines>0 and #lines<=32)
+local joined=table.concat(lines,' ')
+assert(joined:find('accepted offer kept',1,true) and joined:find('send called',1,true))
+assert(not joined:find('PrivateGift',1,true) and not joined:find('Partner',1,true))
+''')
 case('OFF clears queued sends and all subscriptions', '''
 enable(); locked=true; begin(); complete(); assert(#sent==0)
 MimDiceDB.tradeWhisperEnabled=false; MimDiceTradeWhisper.ApplySettings()
