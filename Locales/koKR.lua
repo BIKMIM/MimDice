@@ -315,6 +315,8 @@ MimDice_RegisterLocale("koKR", "한국어", {
     ["Sent gold: "] = "보낸 골드: ",
     ["Received: "] = "받은 아이템: ",
     ["Sent: "] = "보낸 아이템: ",
+    [" x%.0f"] = " x%.0f개",
+    ["Trade time: "] = "거래 시각: ",
     ["Enchant: "] = "마부: ",
     ["%.0fg %.0fs %.0fc"] = "%.0f골 %.0f실 %.0f코",
 })

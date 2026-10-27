@@ -55,7 +55,7 @@ local function Capture()
         if not itemName or itemName == "" then return end
         itemCount = Number(itemCount)
         if not itemCount then error("unreadable trade count") end
-        items[#items + 1] = itemName .. (itemCount > 1 and (" x" .. string.format("%.0f", itemCount)) or "")
+        items[#items + 1] = itemName .. string.format(L(" x%.0f"), itemCount)
     end
     for slot = 1, 6 do
         local name, _, count = GetTradePlayerItemInfo(slot)
@@ -92,18 +92,21 @@ local function BuildMessages(snap)
     local tokens = {}
     if snap.targetMoney > 0 then tokens[#tokens + 1] = L("Received gold: ") .. Money(snap.targetMoney) end
     if snap.playerMoney > 0 then tokens[#tokens + 1] = L("Sent gold: ") .. Money(snap.playerMoney) end
-    for _, item in ipairs(snap.got) do tokens[#tokens + 1] = L("Received: ") .. item end
-    for _, item in ipairs(snap.gave) do tokens[#tokens + 1] = L("Sent: ") .. item end
+    if #snap.gave > 0 then tokens[#tokens + 1] = L("Sent: ") .. table.concat(snap.gave, ", ") end
+    if #snap.got > 0 then tokens[#tokens + 1] = L("Received: ") .. table.concat(snap.got, ", ") end
     local messages, current = {}, L("[Trade complete] ")
     local prefix = current
+    -- 완료 시각을 한 번만 확정해 지연 전송되는 모든 줄에도 같은 시각을 남긴다.
+    local suffix = " (" .. L("Trade time: ") .. date("%H:%M:%S") .. ")"
+    local limit = 250 - #suffix
     for _, token in ipairs(tokens) do
         -- 긴 이름도 생략하지 않고 UTF-8 문자 경계에서 나눠 기록한다.
-        if #prefix + #token > 250 and current ~= prefix then
+        if #prefix + #token > limit and current ~= prefix then
             messages[#messages + 1] = current
             current = prefix
         end
-        while #prefix + #token > 250 do
-            local cut = 250 - #prefix
+        while #prefix + #token > limit do
+            local cut = limit - #prefix
             local byte = token:byte(cut + 1)
             while byte and byte >= 128 and byte <= 191 do
                 cut = cut - 1
@@ -113,12 +116,13 @@ local function BuildMessages(snap)
             token = token:sub(cut + 1)
         end
         local joined = current .. (current ~= prefix and " / " or "") .. token
-        if #joined > 250 then
+        if #joined > limit then
             messages[#messages + 1] = current
             current = prefix .. token
         else current = joined end
     end
     if current ~= prefix then messages[#messages + 1] = current end
+    for index, message in ipairs(messages) do messages[index] = message .. suffix end
     return messages
 end
 

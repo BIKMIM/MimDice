@@ -17,6 +17,8 @@ now, sent, timers = 100, {}, {}
 SECRET = {}
 function issecretvalue(v) return rawequal(v, SECRET) end
 function GetTime() return now end
+clock = '13:03:45'
+function date(format) assert(format=='%H:%M:%S'); return clock end
 function MimDice_L(s) return s end
 function UnitFullName(unit) assert(unit == 'NPC'); return targetName, realm end
 targetName, realm = 'Partner', 'OtherRealm'
@@ -153,9 +155,49 @@ begin(); complete(); advance(10); assert(#sent>1)
 local result=''
 for _,msg in ipairs(sent) do
     assert(#msg.message<=250)
-    result=result..msg.message:sub(#'[Trade complete] '+1)
+    result=result..msg.message:sub(#'[Trade complete] '+1,-#' (Trade time: 13:03:45)'-1)
 end
 assert(result=='Sent: '..string.rep('가',200)..' x12')
+''')
+case('items are grouped once per direction with explicit single-item quantity', '''
+enable(); targetMoney=0
+playerItems[1]={name='Apple',count=3}; playerItems[2]={name='Pear',count=1}
+targetItems[1]={name='Berry',count=2}; targetItems[2]={name='Melon',count=4}
+begin(); complete(); assert(#sent==1)
+local message=sent[1].message
+assert(message=='[Trade complete] Sent: Apple x3, Pear x1 / Received: Berry x2, Melon x4 (Trade time: 13:03:45)')
+''')
+case('all twelve item stacks and headings survive multi-message splitting', '''
+enable(); targetMoney=0
+for i=1,6 do
+    playerItems[i]={name=string.rep('보낸물건',7)..i,count=i}
+    targetItems[i]={name=string.rep('받은물건',7)..i,count=i+10}
+end
+begin(); complete(); clock='14:09:59'; advance(30)
+assert(#sent>1)
+local combined=''
+for _,msg in ipairs(sent) do
+    assert(#msg.message<=250 and msg.message:sub(-#' (Trade time: 13:03:45)')==' (Trade time: 13:03:45)')
+    combined=combined..msg.message:sub(#'[Trade complete] '+1,-#' (Trade time: 13:03:45)'-1)
+end
+local _,gave=combined:gsub('Sent: ',''); local _,got=combined:gsub('Received: ','')
+assert(gave==1 and got==1)
+for i=1,6 do
+    assert(combined:find(playerItems[i].name..' x'..i,1,true))
+    assert(combined:find(targetItems[i].name..' x'..(i+10),1,true))
+end
+''')
+case('timestamp is completion time even when the whisper is delayed', '''
+enable(); locked=true; clock='13:02:01'; begin()
+clock='13:03:45'; complete(); clock='13:04:12'; locked=false; advance(1)
+assert(#sent==1 and sent[1].message:sub(-#' (Trade time: 13:03:45)')==' (Trade time: 13:03:45)')
+''')
+case('Korean grouped receipt uses actual locale and quantity suffix', '''
+enable(); targetMoney=0
+playerItems[1]={name='사과',count=3}; playerItems[2]={name='배',count=1}
+targetItems[1]={name='딸기',count=2}
+begin(); complete()
+assert(#sent==1 and sent[1].message=='[거래완료] 보낸 아이템: 사과 x3개, 배 x1개 / 받은 아이템: 딸기 x2개 (거래 시각: 13:03:45)')
 ''')
 case('large money beyond signed 32 bit', '''
 enable(); targetMoney=3500000000; begin(); complete()
@@ -338,6 +380,10 @@ source = (ROOT / 'TradeWhisper.lua').read_text(encoding='utf-8-sig')
 def run_case(source, name, code):
     vm = LuaRuntime(unpack_returned_tuples=True)
     vm.execute(MOCK)
+    if name.startswith('Korean grouped receipt'):
+        vm.execute("function GetLocale() return 'koKR' end")
+        for filename in ('Localization.lua','Locales/koKR.lua'):
+            vm.execute((ROOT / filename).read_text(encoding='utf-8-sig'))
     if name.startswith('existing ON'):
         vm.execute("MimDiceDB={tradeWhisperEnabled=true,custom='keep'}")
     vm.execute(source)
