@@ -143,13 +143,10 @@ end
 -- =====================================================================
 local SA = {}
 local SA_OptionWindow = nil
-local SA_TabOption = nil
-local SA_TabSkin = nil         -- 스킨 탭
 local SA_SkinWindow = nil      -- 스킨 옵션창
 local SA_EntryFrames = {}
 
 -- 대화 소리 설정 (Lua 5.1 메인 청크 200 local 제한을 피하기 위해 SA 테이블에 보관)
-SA.TabChat = nil
 SA.ChatWindow = nil
 SA.ChatEntryFrames = {}
 SA.CHAT_SYSTEM_ENTRIES = {
@@ -1284,7 +1281,7 @@ end
 
 -- 창 하나에 스킨 칠하기 (각진 1px 테두리로 교체) / 원래 모양·색으로 복구
 local function SA_SkinWindowApply(win, pal)
-    if win.SetBackdrop then
+    if win.SetBackdrop and not win.MimDiceSettingsPage then
         if not win.MimDiceSkinFlat then
             win:SetBackdrop(SA_SKIN_FLAT_BACKDROP)   -- 각진 테두리로 교체 (색 초기화됨 → 아래서 다시 칠함)
             win.MimDiceSkinFlat = true
@@ -1296,7 +1293,7 @@ local function SA_SkinWindowApply(win, pal)
 end
 local function SA_SkinWindowRestore(win)
     local orig = win.MimDiceSkinOrig
-    if win.SetBackdrop and orig then
+    if win.SetBackdrop and orig and not win.MimDiceSettingsPage then
         if win.MimDiceSkinFlat then
             if orig.backdrop then win:SetBackdrop(orig.backdrop) end
             win.MimDiceSkinFlat = false
@@ -3597,6 +3594,7 @@ function SA_OpenSoundPicker(anchor, getSel, onSelect)
 
     p:ClearAllPoints()
     p:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2)
+    p:SetScale(anchor:GetEffectiveScale() / UIParent:GetEffectiveScale())
     p:Show()
     p:Raise()
 end
@@ -5646,252 +5644,233 @@ end)
 -- 탭 켜짐/꺼짐 색상 (옵션/스킨 공용. 스킨 켜짐이면 팔레트 색 사용)
 local function SA_SetTabActive(tab, on)
     if not tab then return end
+    if tab.bd and tab.bg then
+        if SA_SkinOn() then
+            local pal = SA_SkinPal()
+            if on then
+                tab.bd:SetColorTexture(pal.border[1], pal.border[2], pal.border[3], 1)
+                tab.bg:SetColorTexture(pal.hover[1], pal.hover[2], pal.hover[3], 0.90)
+                tab.text:SetTextColor(pal.accent[1], pal.accent[2], pal.accent[3], pal.accent[4] or 1)
+            else
+                tab.bd:SetColorTexture(pal.border[1], pal.border[2], pal.border[3], 1)
+                tab.bg:SetColorTexture(pal.tab[1], pal.tab[2], pal.tab[3], 0.95)
+                tab.text:SetTextColor(0.62, 0.62, 0.62)
+            end
+        else
+            if on then
+                tab.bd:SetColorTexture(1, 0.82, 0, 1)
+                tab.bg:SetColorTexture(0.5, 0.1, 0.1, 0.95)
+                tab.text:SetTextColor(1, 1, 0)
+            else
+                tab.bd:SetColorTexture(0.55, 0.55, 0.55, 1)
+                tab.bg:SetColorTexture(0.12, 0.12, 0.12, 0.90)
+                tab.text:SetTextColor(0.75, 0.75, 0.75)
+            end
+        end
+        return
+    end
     if SA_SkinOn() then
         local pal = SA_SkinPal()
         if on then
-            tab:SetBackdropColor(pal.hover[1], pal.hover[2], pal.hover[3], 0.90)
-            tab:SetBackdropBorderColor(pal.border[1], pal.border[2], pal.border[3], 1)
-            tab.text:SetTextColor(pal.accent[1], pal.accent[2], pal.accent[3], pal.accent[4] or 1)
+            if tab.SetBackdropColor then tab:SetBackdropColor(pal.hover[1], pal.hover[2], pal.hover[3], 0.90) end
+            if tab.SetBackdropBorderColor then tab:SetBackdropBorderColor(pal.border[1], pal.border[2], pal.border[3], 1) end
+            if tab.text then tab.text:SetTextColor(pal.accent[1], pal.accent[2], pal.accent[3], pal.accent[4] or 1) end
         else
-            tab:SetBackdropColor(pal.tab[1], pal.tab[2], pal.tab[3], 0.95)
-            tab:SetBackdropBorderColor(pal.border[1], pal.border[2], pal.border[3], 1)
-            tab.text:SetTextColor(0.62, 0.62, 0.62)
+            if tab.SetBackdropColor then tab:SetBackdropColor(pal.tab[1], pal.tab[2], pal.tab[3], 0.95) end
+            if tab.SetBackdropBorderColor then tab:SetBackdropBorderColor(pal.border[1], pal.border[2], pal.border[3], 1) end
+            if tab.text then tab.text:SetTextColor(0.62, 0.62, 0.62) end
         end
         return
     end
     if on then
-        tab:SetBackdropColor(0.5, 0.1, 0.1, 0.9)
-        tab:SetBackdropBorderColor(1, 0.82, 0, 1)
-        tab.text:SetTextColor(1, 1, 0)
+        if tab.SetBackdropColor then tab:SetBackdropColor(0.5, 0.1, 0.1, 0.9) end
+        if tab.SetBackdropBorderColor then tab:SetBackdropBorderColor(1, 0.82, 0, 1) end
+        if tab.text then tab.text:SetTextColor(1, 1, 0) end
     else
-        tab:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
-        tab:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
-        tab.text:SetTextColor(0.6, 0.6, 0.6)
+        if tab.SetBackdropColor then tab:SetBackdropColor(0.1, 0.1, 0.1, 0.8) end
+        if tab.SetBackdropBorderColor then tab:SetBackdropBorderColor(0.5, 0.5, 0.5, 1) end
+        if tab.text then tab.text:SetTextColor(0.6, 0.6, 0.6) end
     end
 end
 
--- 탭 2개의 모양(각진/원래 테두리)·색·호버를 현재 스킨 상태에 맞춰 일괄 갱신
--- (전역: SA_SkinRefresh에서 호출)
+-- 하나의 설정창과 가로 탭. 저장된 알림/소리/꾸미기 데이터는 수정하지 않는다.
 function SA_SkinRefreshTabs()
-    -- 0) 가로 배치: 스킨(각진)일 땐 탭을 살짝 띄우고(+2), 기본 모습일 땐 원래처럼 살짝 겹침(-4).
-    --    우측 창들도 탭 위치에 맞춰 함께 움직여서 탭-창 간격이 항상 8px로 일정하게.
-    if SA_TabOption and _G.MainWindow then
-        -- 스킨 켬: 플랫 1px 테두리라 탭을 메인창에 딱 붙임(0) / 끔: 원래 그림 테두리에 살짝 겹침(-4)
-        local tx = SA_SkinOn() and 0 or -4
-        SA_TabOption:ClearAllPoints()
-        SA_TabOption:SetPoint("TOPLEFT", _G.MainWindow, "TOPRIGHT", tx, -30)
-        local wx = tx + 34 + (SA_SkinOn() and 16 or 14)  -- 탭 폭 34 + 우측 창까지 여유 간격
-        if SA_OptionWindow then
-            SA_OptionWindow:ClearAllPoints()
-            SA_OptionWindow:SetPoint("TOPLEFT", _G.MainWindow, "TOPRIGHT", wx, 0)
-            SA_OptionWindow:SetPoint("BOTTOMLEFT", _G.MainWindow, "BOTTOMRIGHT", wx, 0)
-        end
-        if SA.ChatWindow then
-            SA.ChatWindow:ClearAllPoints()
-            SA.ChatWindow:SetPoint("TOPLEFT", _G.MainWindow, "TOPRIGHT", wx, 0)
-            SA.ChatWindow:SetPoint("BOTTOMLEFT", _G.MainWindow, "BOTTOMRIGHT", wx, 0)
-        end
-        if SA_SkinWindow then   -- 스킨 창은 내용이 많아 고정 높이 (위쪽만 맞춤)
-            SA_SkinWindow:ClearAllPoints()
-            SA_SkinWindow:SetPoint("TOPLEFT", _G.MainWindow, "TOPRIGHT", wx, 0)
-        end
+    local mainWin = _G.MainWindow
+    if not mainWin or not SA.SettingsWindow then return end
+    local shell = SA.SettingsWindow
+    local scale = shell:GetScale() or 1.2
+    shell:ClearAllPoints()
+    shell:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", 48 / scale, 0)
+    -- 배율이 달라도 화면에서 메인창의 위아래 끝에 맞춘다.
+    shell:SetPoint("BOTTOMLEFT", mainWin, "BOTTOMRIGHT", 48 / scale, 0)
+    for _, tab in ipairs(SA.SettingsTabs) do
+        SA_SetTabActive(tab, shell:IsShown() and tab.key == SA.SettingsTab)
     end
-    -- 1) 테두리 모양 전환 (스킨 켬 = 각진 1px / 끔 = 원래 테두리)
-    for _, t in ipairs({ SA_TabOption, SA.TabChat, SA_TabSkin }) do
-        if t and t.SetBackdrop then
-            if SA_SkinOn() and not t.MimDiceSkinFlat then
-                if not t.MimDiceSkinOrig then
-                    t.MimDiceSkinOrig = { backdrop = t.GetBackdrop and t:GetBackdrop() or nil }
-                end
-                t:SetBackdrop(SA_SKIN_FLAT_BACKDROP)
-                t.MimDiceSkinFlat = true
-            elseif not SA_SkinOn() and t.MimDiceSkinFlat then
-                if t.MimDiceSkinOrig and t.MimDiceSkinOrig.backdrop then
-                    t:SetBackdrop(t.MimDiceSkinOrig.backdrop)
-                end
-                t.MimDiceSkinFlat = false
+    if SA.SettingsButton then
+        local button = SA.SettingsButton
+        local active = shell:IsShown()
+        if SA_SkinOn() then
+            if not button.MimDiceSkinFlat then
+                button:SetBackdrop(SA_SKIN_FLAT_BACKDROP)
+                button.MimDiceSkinFlat = true
+            end
+            local pal = SA_SkinPal()
+            local bg = active and pal.hover or pal.tab
+            button:SetBackdropColor(bg[1], bg[2], bg[3], 0.95)
+            button:SetBackdropBorderColor(pal.border[1], pal.border[2], pal.border[3], 1)
+        else
+            if button.MimDiceSkinFlat or not button.MimDiceRoundSet then
+                button:SetBackdrop({
+                    bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+                    edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+                    tile = true, tileSize = 16, edgeSize = 14,
+                    insets = { left = 3, right = 3, top = 3, bottom = 3 },
+                })
+                button.MimDiceSkinFlat = false
+                button.MimDiceRoundSet = true
+            end
+            if active then
+                button:SetBackdropColor(0.5, 0.1, 0.1, 0.9)
+                button:SetBackdropBorderColor(1, 0.82, 0, 1)
+            else
+                button:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
+                button:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
             end
         end
-    end
-    -- 2) 색 칠하기 (SetBackdrop이 색을 초기화하므로 반드시 그 뒤에)
-    SA_SetTabActive(SA_TabOption, SA_OptionWindow and SA_OptionWindow:IsShown())
-    SA_SetTabActive(SA.TabChat, SA.ChatWindow and SA.ChatWindow:IsShown())
-    SA_SetTabActive(SA_TabSkin, SA_SkinWindow and SA_SkinWindow:IsShown())
-    -- 3) 호버색
-    for _, t in ipairs({ SA_TabOption, SA.TabChat, SA_TabSkin }) do
-        if t then
-            if SA_SkinOn() then
-                if not t.MimHover then
-                    t.MimHover = t:CreateTexture(nil, "HIGHLIGHT")   -- 마우스오버 시 자동 표시
-                    t.MimHover:SetPoint("TOPLEFT", 2, -2)
-                    t.MimHover:SetPoint("BOTTOMRIGHT", -2, 2)
-                end
-                local pal = SA_SkinPal()
-                t.MimHover:SetColorTexture(pal.hover[1], pal.hover[2], pal.hover[3], (pal.hover[4] or 0.30) * 0.85)
-                t.MimHover:Show()
-            elseif t.MimHover then
-                t.MimHover:Hide()
-            end
-        end
+        button.icon:SetVertexColor(1, 1, 1, 1)
     end
 end
 
-local function SA_ToggleWindow()
-    if SA_OptionWindow:IsShown() then
-        SA_OptionWindow:Hide()
-        SA_SetTabActive(SA_TabOption, false)
-    else
-        -- 옵션창들은 같은 자리를 쓰므로 하나만 표시
-        if SA.ChatWindow and SA.ChatWindow:IsShown() then
-            SA.ChatWindow:Hide()
-            SA_SetTabActive(SA.TabChat, false)
-        end
-        if SA_SkinWindow and SA_SkinWindow:IsShown() then
-            SA_SkinWindow:Hide()
-            SA_SetTabActive(SA_TabSkin, false)
-        end
-        SA_OptionWindow:Show()
-        SA_RefreshList()
-        SA_SetTabActive(SA_TabOption, true)
+function SA.SelectSettingsTab(key)
+    local pages = { alerts = SA_OptionWindow, chat = SA.ChatWindow, appearance = SA_SkinWindow }
+    if not pages[key] then key = "alerts" end
+    -- Hide the previous page first so its dependent popups close before switching.
+    for pageKey, page in pairs(pages) do
+        if pageKey ~= key then page:Hide() end
     end
+    SA.SettingsTab = key
+    MimDiceDB.settingsTab = key
+    SA.SettingsWindow:Show()
+    pages[key]:Show()
+    if key == "alerts" then SA_RefreshList()
+    elseif key == "chat" and SA_RefreshChatList then SA_RefreshChatList()
+    elseif key == "appearance" and SA_RefreshSkinWindow then SA_RefreshSkinWindow() end
+    SA_SkinRefreshTabs()
 end
 
-function SA.ToggleChatWindow()
-    if not SA.ChatWindow then return end
-    if SA.ChatWindow:IsShown() then
-        SA.ChatWindow:Hide()
-        SA_SetTabActive(SA.TabChat, false)
+function SA.ToggleSettings()
+    if SA.SettingsWindow:IsShown() then
+        SA.SettingsWindow:Hide()
     else
-        if SA_OptionWindow and SA_OptionWindow:IsShown() then
-            SA_OptionWindow:Hide()
-            SA_SetTabActive(SA_TabOption, false)
-        end
-        if SA_SkinWindow and SA_SkinWindow:IsShown() then
-            SA_SkinWindow:Hide()
-            SA_SetTabActive(SA_TabSkin, false)
-        end
-        SA.ChatWindow:Show()
-        if SA_RefreshChatList then SA_RefreshChatList() end
-        SA_SetTabActive(SA.TabChat, true)
-    end
-end
-
-local function SA_ToggleSkinWindow()
-    if not SA_SkinWindow then return end
-    if SA_SkinWindow:IsShown() then
-        SA_SkinWindow:Hide()
-        SA_SetTabActive(SA_TabSkin, false)
-    else
-        if SA_OptionWindow and SA_OptionWindow:IsShown() then
-            SA_OptionWindow:Hide()
-            SA_SetTabActive(SA_TabOption, false)
-        end
-        if SA.ChatWindow and SA.ChatWindow:IsShown() then
-            SA.ChatWindow:Hide()
-            SA_SetTabActive(SA.TabChat, false)
-        end
-        SA_SkinWindow:Show()
-        if SA_RefreshSkinWindow then SA_RefreshSkinWindow() end
-        SA_SetTabActive(SA_TabSkin, true)
+        SA.SelectSettingsTab(MimDiceDB.settingsTab or "alerts")
     end
 end
 
 local function SA_CreateTab()
-    local mainWin = _G["MainWindow"]
+    local mainWin = _G.MainWindow
     if not mainWin then return end
+    local shell = CreateFrame("Frame", "SA_SettingsWindow", UIParent, "BackdropTemplate")
+    SA.SettingsWindow = shell
+    shell:SetScale(1.2)
+    shell:SetWidth(380)
+    shell:SetFrameStrata("HIGH")
+    shell:SetBackdrop({
+        bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
+        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+        tile = true, tileSize = 16, edgeSize = 16,
+        insets = { left = 4, right = 4, top = 4, bottom = 4 },
+    })
+    shell:SetBackdropColor(0, 0, 0, 0.8)
+    shell:SetBackdropBorderColor(0.6, 0.6, 0.6, 1)
+    shell:EnableMouse(true)
+    SA_WireBundleDrag(shell)
+    shell:Hide()
+    shell:HookScript("OnHide", function()
+        for _, page in pairs({ SA_OptionWindow, SA.ChatWindow, SA_SkinWindow }) do page:Hide() end
+        SA_SkinRefreshTabs()
+    end)
+    mainWin:HookScript("OnHide", function() shell:Hide() end)
+    mainWin:HookScript("OnSizeChanged", function() SA_SkinRefreshTabs() end)
+    tinsert(UISpecialFrames, "SA_SettingsWindow")
 
-    local LINE_STEP = 15
-    local OPTICAL_X = {
-        ["대"] = 0.5,
-        ["화"] = -0.5,
+    local title = shell:CreateFontString(nil, "OVERLAY")
+    title:SetPoint("TOPLEFT", 15, -12)
+    title:SetFont(MimDiceFontPath(), 14, "OUTLINE")
+    title:SetText(L("Settings"))
+    title:SetTextColor(1, 0.82, 0)
+    local close = CreateFrame("Button", nil, shell, "UIPanelCloseButton")
+    close.MimDiceIsClose = true
+    close:SetPoint("TOPRIGHT", -2, -2)
+    close:SetScript("OnClick", function() shell:Hide() end)
+
+    SA.SettingsTabs = {}
+    local labels = {
+        { "alerts", "Alert Settings" }, { "chat", "Chat Sounds" }, { "appearance", "Appearance" },
     }
+    for i, entry in ipairs(labels) do
+        local tab = CreateFrame("Button", nil, shell)
+        tab.key = entry[1]
+        tab:SetSize(110, 26)
+        tab:SetPoint("TOPLEFT", 17 + (i - 1) * 118, -40)
 
-    local function SplitTabLines(label)
-        local lines = {}
-        for part in tostring(label or ""):gmatch("[^\n]+") do
-            lines[#lines + 1] = part
-        end
-        return lines
+        -- 1px 각진 테두리 (위쪽 잘림 방지: SetAllPoints 테두리 + 1px 안쪽 배경)
+        tab.bd = tab:CreateTexture(nil, "BACKGROUND", nil, 0)
+        tab.bd:SetAllPoints()
+        tab.bg = tab:CreateTexture(nil, "BACKGROUND", nil, 1)
+        tab.bg:SetPoint("TOPLEFT", 1, -1)
+        tab.bg:SetPoint("BOTTOMRIGHT", -1, 1)
+
+        tab.text = tab:CreateFontString(nil, "OVERLAY")
+        tab.text:SetPoint("CENTER")
+        tab.text:SetFont(MimDiceFontPath(), 12, "OUTLINE")
+        tab.text:SetText(L(entry[2]))
+
+        local hl = tab:CreateTexture(nil, "HIGHLIGHT")
+        hl:SetPoint("TOPLEFT", 1, -1)
+        hl:SetPoint("BOTTOMRIGHT", -1, 1)
+        hl:SetColorTexture(1, 1, 1, 0.15)
+
+        tab:SetScript("OnClick", function() SA.SelectSettingsTab(tab.key) end)
+        SA.SettingsTabs[i] = tab
     end
 
-    local function VerticalTabHeight(label)
-        local lines = SplitTabLines(label)
-        return math.max(60, 30 + #lines * LINE_STEP)
-    end
-
-    local function BuildVerticalTabText(tab, label)
-        local lines = SplitTabLines(label)
-        local n = #lines
-        local fsList = {}
-        local mid = (n + 1) * 0.5
-        for i, ch in ipairs(lines) do
-            local fs = tab:CreateFontString(nil, "OVERLAY")
-            local xOff = OPTICAL_X[ch] or 0
-            local yOff = (mid - i) * LINE_STEP - 0.5
-            fs:SetPoint("CENTER", tab, "CENTER", xOff, yOff)
-            fs:SetFont(MimDiceFontPath(), 12, "OUTLINE")
-            fs:SetJustifyH("CENTER")
-            fs:SetJustifyV("MIDDLE")
-            fs:SetText(ch)
-            fs:SetTextColor(0.6, 0.6, 0.6)
-            fsList[#fsList + 1] = fs
-        end
-        tab.text = {
-            SetTextColor = function(_, r, g, b, a)
-                local fontPath = MimDiceFontPath()
-                for _, fs in ipairs(fsList) do
-                    fs:SetFont(fontPath, 12, "OUTLINE")
-                    fs:SetTextColor(r, g, b, a)
-                end
-            end,
-        }
-    end
-
-    local tabBackdrop = {
+    local button = CreateFrame("Button", "SA_SettingsButton", mainWin, "BackdropTemplate")
+    SA.SettingsButton = button
+    button:SetSize(34, 44)
+    button:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", -4, -30)
+    -- 주변 UI와 어울리는 기존의 부드러운 둥근 툴팁 테두리 사용
+    button:SetBackdrop({
         bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
         edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
         tile = true, tileSize = 16, edgeSize = 14,
-        insets = { left = 3, right = 3, top = 3, bottom = 3 }
-    }
-
-    -- 옵션 탭 (일반 설정 + 소리/알림 관련)
-    local optionTabLabel = L("옵\n션")
-    SA_TabOption = CreateFrame("Button", "SA_TabOption", mainWin, "BackdropTemplate")
-    SA_TabOption:SetSize(34, VerticalTabHeight(optionTabLabel))
-    SA_TabOption:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", -4, -30)
-    SA_TabOption:SetBackdrop(tabBackdrop)
-    SA_TabOption:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
-    SA_TabOption:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
-    BuildVerticalTabText(SA_TabOption, optionTabLabel)
-
-    SA_TabOption:SetScript("OnClick", SA_ToggleWindow)
-
-    -- 대화소리 탭 (채널별 대화 소리 설정)
-    local chatTabLabel = L("대\n화\n소\n리")
-    SA.TabChat = CreateFrame("Button", "SA_TabChat", mainWin, "BackdropTemplate")
-    SA.TabChat:SetSize(34, VerticalTabHeight(chatTabLabel))
-    SA.TabChat:SetPoint("TOPLEFT", SA_TabOption, "BOTTOMLEFT", 0, -6)
-    SA.TabChat:SetBackdrop(tabBackdrop)
-    SA.TabChat:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
-    SA_TabChat:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
-    BuildVerticalTabText(SA.TabChat, chatTabLabel)
-
-    SA.TabChat:SetScript("OnClick", SA.ToggleChatWindow)
-
-    -- 스킨 탭 (플랫 다크 테마 프리셋 + 색 커스텀)
-    local skinTabLabel = L("스\n킨")
-    SA_TabSkin = CreateFrame("Button", "SA_TabSkin", mainWin, "BackdropTemplate")
-    SA_TabSkin:SetSize(34, VerticalTabHeight(skinTabLabel))
-    SA_TabSkin:SetPoint("TOPLEFT", SA.TabChat, "BOTTOMLEFT", 0, -6)
-    SA_TabSkin:SetBackdrop(tabBackdrop)
-    SA_TabSkin:SetBackdropColor(0.1, 0.1, 0.1, 0.8)
-    SA_TabSkin:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
-    BuildVerticalTabText(SA_TabSkin, skinTabLabel)
-
-    SA_TabSkin:SetScript("OnClick", SA_ToggleSkinWindow)
-
-    -- 스킨이 켜져 있으면 탭 색을 팔레트로 정리
+        insets = { left = 3, right = 3, top = 3, bottom = 3 },
+    })
+    button.MimDiceRoundSet = true
+    button.icon = button:CreateTexture(nil, "ARTWORK")
+    button.icon:SetSize(24, 24)
+    button.icon:SetPoint("CENTER")
+    button.icon:SetTexture("Interface\\AddOns\\MimDice\\img\\settings_gear.tga", "CLAMP", "CLAMP", "LINEAR")
+    button:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD")
+    button:SetScript("OnClick", SA.ToggleSettings)
+    button:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(L("Settings"))
+        GameTooltip:Show()
+    end)
+    button:SetScript("OnLeave", function() GameTooltip:Hide() end)
     SA_SkinRefreshTabs()
+    SA_SkinRegisterWindow(shell)
+end
+
+-- Existing controls become pages of the common shell; their saved-data paths stay intact.
+function SA.AttachSettingsPage(page)
+    page.MimDiceSettingsPage = true
+    page:SetParent(SA.SettingsWindow)
+    page:ClearAllPoints()
+    page:SetPoint("TOPLEFT", SA.SettingsWindow, "TOPLEFT", 0, -72)
+    page:SetPoint("BOTTOMRIGHT", SA.SettingsWindow, "BOTTOMRIGHT", 0, 0)
+    page:SetBackdrop(nil)
+    page:Hide()
 end
 
 local function SA_CreateWindow()
@@ -5914,22 +5893,6 @@ local function SA_CreateWindow()
 
     -- 옵션창 드래그하면 메인창도 이동
     SA_WireBundleDrag(SA_OptionWindow)   -- 점프 없는 번들 드래그
-    
-    -- ★ 메인 창이 닫힐 때 옵션 창(옵션/대화/스킨)도 함께 닫히도록 연동 ★
-    mainWin:HookScript("OnHide", function()
-        if SA_OptionWindow and SA_OptionWindow:IsShown() then
-            SA_OptionWindow:Hide()
-            SA_SetTabActive(SA_TabOption, false)
-        end
-        if SA.ChatWindow and SA.ChatWindow:IsShown() then
-            SA.ChatWindow:Hide()
-            SA_SetTabActive(SA.TabChat, false)
-        end
-        if SA_SkinWindow and SA_SkinWindow:IsShown() then
-            SA_SkinWindow:Hide()
-            SA_SetTabActive(SA_TabSkin, false)
-        end
-    end)
     
     SA_OptionWindow:SetBackdrop({
         bgFile = "Interface\\ChatFrame\\ChatFrameBackground",
@@ -5958,19 +5921,39 @@ local function SA_CreateWindow()
 
     -- (옛 제목 "스킬 사운드 알림 설정"은 섹션 헤더로 대체되어 제거됨)
 
-    local closeBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelCloseButton")
-    closeBtn.MimDiceIsClose = true   -- 스킨: 닫기(X) 플랫화 대상
-    closeBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -2, -2)
-    closeBtn:SetScript("OnClick", function() SA_ToggleWindow() end)
+
+    -- Scroll the entire alerts page; the shell's title and tabs stay fixed.
+    local pageScroll = CreateFrame("ScrollFrame", "SA_AlertsScrollFrame", SA_OptionWindow, "UIPanelScrollFrameTemplate")
+    pageScroll:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 0, -4)
+    pageScroll:SetPoint("BOTTOMRIGHT", SA_OptionWindow, "BOTTOMRIGHT", -26, 10)
+    pageScroll:EnableMouseWheel(true)
+    local content = CreateFrame("Frame", "SA_AlertsScrollContent", pageScroll)
+    content:SetSize(350, 600)
+    pageScroll:SetScrollChild(content)
+    pageScroll:HookScript("OnSizeChanged", function(self)
+        local maxScroll = math.max(0, content:GetHeight() - self:GetHeight())
+        self:SetVerticalScroll(math.min(self:GetVerticalScroll(), maxScroll))
+    end)
+    SA_OptionWindow.pageScroll = pageScroll
+    SA_OptionWindow.content = content
 
     -- ── 밈줌 카페 링크 ──────────────────────────
-    local cafeLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    local cafeLabel = content:CreateFontString(nil, "OVERLAY")
     cafeLabel:SetFont(MimDiceFontPath(), 11)
     cafeLabel:SetTextColor(0.6, 0.8, 1)
-    cafeLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 6, -8)
+    cafeLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 6, -8)
     cafeLabel:SetText(L("네이버 밈줌 카페  |cff4488ffhttps://cafe.naver.com/mimzoom|r"))
 
-    local urlPopup = CreateFrame("Frame", nil, SA_OptionWindow, "BackdropTemplate")
+    local soundFolderHelp = content:CreateFontString(nil, "OVERLAY")
+    soundFolderHelp:SetPoint("TOPLEFT", cafeLabel, "BOTTOMLEFT", 9, -8)
+    soundFolderHelp:SetWidth(320)
+    soundFolderHelp:SetFont(MimDiceFontPath(), 11)
+    soundFolderHelp:SetJustifyH("LEFT")
+    soundFolderHelp:SetWordWrap(true)
+    soundFolderHelp:SetTextColor(0.9, 0.9, 0.9)
+    soundFolderHelp:SetText(L("CUSTOM_SOUND_FOLDER_HELP"))
+
+    local urlPopup = CreateFrame("Frame", nil, content, "BackdropTemplate")
     urlPopup:SetSize(310, 36)
     urlPopup:SetPoint("TOPLEFT", cafeLabel, "BOTTOMLEFT", 0, -4)
     urlPopup:SetFrameStrata("DIALOG")
@@ -6004,7 +5987,7 @@ local function SA_CreateWindow()
     end)
     urlBox:SetScript("OnEscapePressed", function() urlPopup:Hide() end)
 
-    local cafeLinkBtn = CreateFrame("Button", nil, SA_OptionWindow)
+    local cafeLinkBtn = CreateFrame("Button", nil, content)
     cafeLinkBtn:SetHeight(16)
     cafeLinkBtn:SetPoint("TOPLEFT",  cafeLabel, "TOPLEFT",  0, 0)
     cafeLinkBtn:SetPoint("BOTTOMRIGHT", cafeLabel, "BOTTOMRIGHT", 0, 0)
@@ -6024,22 +6007,29 @@ local function SA_CreateWindow()
     end)
     cafeLinkBtn:SetScript("OnLeave", function() GameTooltip:Hide() end)
 
+    SA_OptionWindow.cafeLabel = cafeLabel
+    SA_OptionWindow.soundFolderHelp = soundFolderHelp
+    local body = CreateFrame("Frame", nil, content)
+    body:SetSize(350, 500)
+    body:SetPoint("TOPLEFT", soundFolderHelp, "BOTTOMLEFT", -15, -12)
+    SA_OptionWindow.body = body
+
     -- ── 옵션 섹션 ──────────────────────────
-    local optionSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    optionSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -28)
+    local optionSectionLabel = body:CreateFontString(nil, "OVERLAY")
+    optionSectionLabel:SetPoint("TOP", body, "TOP", 0, 0)
     optionSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
-    optionSectionLabel:SetText(L("옵 션"))
+    optionSectionLabel:SetText(L("Alert Settings"))
     optionSectionLabel:SetTextColor(1, 0.82, 0)
 
     -- 언어: 자동 감지 또는 설치된 번역 중 하나를 강제로 선택한다.
-    local languageLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    languageLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -52)
+    local languageLabel = body:CreateFontString(nil, "OVERLAY")
+    languageLabel:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -24)
     languageLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     languageLabel:SetText(L("언어"))
     languageLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    local languageDrop = CreateFrame("Frame", "MimDiceLanguageDropdown", SA_OptionWindow, "UIDropDownMenuTemplate")
-    languageDrop:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 105, -40)
+    local languageDrop = CreateFrame("Frame", "MimDiceLanguageDropdown", body, "UIDropDownMenuTemplate")
+    languageDrop:SetPoint("TOPLEFT", body, "TOPLEFT", 105, -12)
     UIDropDownMenu_SetWidth(languageDrop, 150)
 
     local function LanguageChoiceName(value)
@@ -6095,9 +6085,9 @@ local function SA_CreateWindow()
     RefreshLanguageDrop()
 
     -- 자동 팝업 체크박스
-    local autoPopupCb = CreateFrame("CheckButton", "SA_AutoPopupCheck", SA_OptionWindow, "UICheckButtonTemplate")
+    local autoPopupCb = CreateFrame("CheckButton", "SA_AutoPopupCheck", body, "UICheckButtonTemplate")
     autoPopupCb:SetSize(22, 22)
-    autoPopupCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -74)
+    autoPopupCb:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -46)
     autoPopupCb:SetChecked(MimDiceDB and MimDiceDB.autoPopup)
     autoPopupCb:SetScript("OnClick", function(self)
         if MimDiceDB then
@@ -6110,19 +6100,19 @@ local function SA_CreateWindow()
             DEFAULT_CHAT_FRAME:AddMessage(L("|cff00ff00[MimDice]|r 자동 팝업: ") .. status)
         end
     end)
-    local autoPopupLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    local autoPopupLabel = body:CreateFontString(nil, "OVERLAY")
     autoPopupLabel:SetPoint("LEFT", autoPopupCb, "RIGHT", 2, 0)
     autoPopupLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     autoPopupLabel:SetText(L("주사위 굴리면 자동으로 창 열기"))
     autoPopupLabel:SetTextColor(0.9, 0.9, 0.9)
 
     -- 자동 리셋 체크박스
-    local autoResetCb = CreateFrame("CheckButton", "SA_AutoResetCheck", SA_OptionWindow, "UICheckButtonTemplate")
+    local autoResetCb = CreateFrame("CheckButton", "SA_AutoResetCheck", body, "UICheckButtonTemplate")
     autoResetCb:SetSize(22, 22)
-    autoResetCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -96)
+    autoResetCb:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -68)
     autoResetCb:SetChecked(MimDiceDB and MimDiceDB.autoReset)
 
-    local autoResetMinBox = CreateFrame("EditBox", "SA_AutoResetMinBox", SA_OptionWindow, "InputBoxTemplate")
+    local autoResetMinBox = CreateFrame("EditBox", "SA_AutoResetMinBox", body, "InputBoxTemplate")
     autoResetMinBox:SetSize(30, 20)
     autoResetMinBox:SetPoint("LEFT", autoResetCb, "RIGHT", 4, 0)
     autoResetMinBox:SetAutoFocus(false)
@@ -6140,7 +6130,7 @@ local function SA_CreateWindow()
     end)
     autoResetMinBox:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
 
-    local autoResetSuffix = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    local autoResetSuffix = body:CreateFontString(nil, "OVERLAY")
     autoResetSuffix:SetPoint("LEFT", autoResetMinBox, "RIGHT", 4, 0)
     autoResetSuffix:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     autoResetSuffix:SetText(L("분동안 주사위 굴림 없을 시 초기화"))
@@ -6177,15 +6167,15 @@ local function SA_CreateWindow()
     end)
 
     -- ── << 죽음 알림 >> 섹션 (모든 직업 공용) ──────────────
-    local deathSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    deathSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -122)
+    local deathSectionLabel = body:CreateFontString(nil, "OVERLAY")
+    deathSectionLabel:SetPoint("TOP", body, "TOP", 0, -94)
     deathSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     deathSectionLabel:SetText(L("죽음 알림"))
     deathSectionLabel:SetTextColor(1, 0.82, 0)
 
-    local deathCb = CreateFrame("CheckButton", "SA_DeathCheck", SA_OptionWindow, "UICheckButtonTemplate")
+    local deathCb = CreateFrame("CheckButton", "SA_DeathCheck", body, "UICheckButtonTemplate")
     deathCb:SetSize(22, 22)
-    deathCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -140)
+    deathCb:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -112)
     deathCb:SetChecked(MimDiceDB and MimDiceDB.deathTrack and MimDiceDB.deathTrack.enabled)
     deathCb:SetScript("OnClick", function(self)
         if MimDiceDB and MimDiceDB.deathTrack then
@@ -6194,63 +6184,91 @@ local function SA_CreateWindow()
             DEFAULT_CHAT_FRAME:AddMessage(L("|cff00ff00[MimDice]|r 죽음 알림: ") .. status)
         end
     end)
-    local deathLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    local deathLabel = body:CreateFontString(nil, "OVERLAY")
     deathLabel:SetPoint("LEFT", deathCb, "RIGHT", 2, 0)
     deathLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     deathLabel:SetText(L("파티/공대원 사망 시 사운드+메시지"))
     deathLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    local deathCfgBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    local deathCfgBtn = CreateFrame("Button", nil, body, "UIPanelButtonTemplate")
     deathCfgBtn:SetSize(50, 22)
-    deathCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -140)
+    deathCfgBtn:SetPoint("TOPRIGHT", body, "TOPRIGHT", -15, -112)
     deathCfgBtn:SetText(L("설정"))
     deathCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     deathCfgBtn:SetScript("OnClick", function() SA_ToggleDeathConfig() end)
 
+    -- 거래 완료 알림
+    local tradeSectionLabel = body:CreateFontString(nil, "OVERLAY")
+    tradeSectionLabel:SetPoint("TOP", body, "TOP", 0, -138)
+    tradeSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
+    tradeSectionLabel:SetText(L("Trade Completion Alerts"))
+    tradeSectionLabel:SetTextColor(1, 0.82, 0)
+
+    local tradeCb = CreateFrame("CheckButton", "SA_TradeWhisperCheck", body, "UICheckButtonTemplate")
+    tradeCb:SetSize(22, 22)
+    tradeCb:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -156)
+    tradeCb:SetChecked(MimDiceDB.tradeWhisperEnabled == true)
+    tradeCb:SetScript("OnClick", function(self)
+        MimDiceDB.tradeWhisperEnabled = self:GetChecked() and true or false
+        MimDiceTradeWhisper.ApplySettings()
+    end)
+    local tradeLabel = body:CreateFontString(nil, "OVERLAY")
+    tradeLabel:SetPoint("LEFT", tradeCb, "RIGHT", 2, 0)
+    tradeLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    tradeLabel:SetText(L("Whisper trade details on completion"))
+    tradeLabel:SetTextColor(0.9, 0.9, 0.9)
+    tradeCb:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(L("Whisper trade details on completion"))
+        GameTooltip:AddLine(L("Sends trade details to the other player. MimRaid handles this when its trade whisper is enabled."), 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    tradeCb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+
     -- ── << 블러드 >> 섹션 (모든 직업 공용, 지속시간 바) ──────────────
-    local buffSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    buffSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -166)
+    local buffSectionLabel = body:CreateFontString(nil, "OVERLAY")
+    buffSectionLabel:SetPoint("TOP", body, "TOP", 0, -182)
     buffSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     buffSectionLabel:SetText(L("버프 / 파티 알림"))
     buffSectionLabel:SetTextColor(1, 0.82, 0)
 
-    local bloodCb = CreateFrame("CheckButton", "SA_BloodCheck", SA_OptionWindow, "UICheckButtonTemplate")
+    local bloodCb = CreateFrame("CheckButton", "SA_BloodCheck", body, "UICheckButtonTemplate")
     bloodCb:SetSize(22, 22)
-    bloodCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -184)
+    bloodCb:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -200)
     bloodCb:SetChecked(MimDiceDB and MimDiceDB.buffTrack and MimDiceDB.buffTrack.BLOODLUST and MimDiceDB.buffTrack.BLOODLUST.enabled)
     bloodCb:SetScript("OnClick", function(self)
         if MimDiceDB and MimDiceDB.buffTrack and MimDiceDB.buffTrack.BLOODLUST then
             MimDiceDB.buffTrack.BLOODLUST.enabled = self:GetChecked() and true or false
         end
     end)
-    local bloodLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    local bloodLabel = body:CreateFontString(nil, "OVERLAY")
     bloodLabel:SetPoint("LEFT", bloodCb, "RIGHT", 2, 0)
     bloodLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     bloodLabel:SetText(L("블러드 (사운드 + 지속시간 바)"))
     bloodLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    local bloodCfgBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    local bloodCfgBtn = CreateFrame("Button", nil, body, "UIPanelButtonTemplate")
     bloodCfgBtn:SetSize(50, 22)
-    bloodCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -184)
+    bloodCfgBtn:SetPoint("TOPRIGHT", body, "TOPRIGHT", -15, -200)
     bloodCfgBtn:SetText(L("설정"))
     bloodCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     bloodCfgBtn:SetScript("OnClick", function() SA_ToggleBuffConfig("BLOODLUST") end)
 
-    local readyCb = CreateFrame("CheckButton", "SA_BloodlustReadyCheck", SA_OptionWindow, "UICheckButtonTemplate")
+    local readyCb = CreateFrame("CheckButton", "SA_BloodlustReadyCheck", body, "UICheckButtonTemplate")
     readyCb:SetSize(22, 22)
-    readyCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -206)
+    readyCb:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -222)
     readyCb:SetChecked(MimDiceBloodlustReminder.GetSettings().enabled)
     readyCb:SetScript("OnClick", function(self)
         MimDiceBloodlustReminder.GetSettings().enabled = self:GetChecked() and true or false
         MimDiceBloodlustReminder.ApplySettings()
     end)
-    local readyCfgBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    local readyCfgBtn = CreateFrame("Button", nil, body, "UIPanelButtonTemplate")
     readyCfgBtn:SetSize(50, 22)
-    readyCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -206)
+    readyCfgBtn:SetPoint("TOPRIGHT", body, "TOPRIGHT", -15, -222)
     readyCfgBtn:SetText(L("설정"))
     readyCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     readyCfgBtn:SetScript("OnClick", function() SA_ToggleBuffConfig("BLOODLUST_READY") end)
-    local readyLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    local readyLabel = body:CreateFontString(nil, "OVERLAY")
     readyLabel:SetPoint("LEFT", readyCb, "RIGHT", 2, 0)
     readyLabel:SetPoint("RIGHT", readyCfgBtn, "LEFT", -4, 0)
     readyLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
@@ -6260,30 +6278,30 @@ local function SA_CreateWindow()
     readyLabel:SetTextColor(0.9, 0.9, 0.9)
 
     -- 마력 주입은 소리와 사용자 문구, 게임에 맡기는 지속시간 바를 설정한다.
-    local piCb = CreateFrame("CheckButton", "SA_PowerInfusionCheck", SA_OptionWindow, "UICheckButtonTemplate")
+    local piCb = CreateFrame("CheckButton", "SA_PowerInfusionCheck", body, "UICheckButtonTemplate")
     piCb:SetSize(22, 22)
-    piCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -228)
+    piCb:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -244)
     piCb:SetChecked(MimDicePowerInfusion.GetSettings().enabled)
     piCb:SetScript("OnClick", function(self)
         MimDicePowerInfusion.GetSettings().enabled = self:GetChecked() and true or false
         MimDicePowerInfusion.ApplySettings()
     end)
-    local piLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    local piLabel = body:CreateFontString(nil, "OVERLAY")
     piLabel:SetPoint("LEFT", piCb, "RIGHT", 2, 0)
     piLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     piLabel:SetText(L("마력 주입 (사운드 + 지속시간 바)"))
     piLabel:SetTextColor(0.9, 0.9, 0.9)
-    local piCfgBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    local piCfgBtn = CreateFrame("Button", nil, body, "UIPanelButtonTemplate")
     piCfgBtn:SetSize(50, 22)
-    piCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -228)
+    piCfgBtn:SetPoint("TOPRIGHT", body, "TOPRIGHT", -15, -244)
     piCfgBtn:SetText(L("설정"))
     piCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     piCfgBtn:SetScript("OnClick", function() SA_ToggleBuffConfig("POWERINFUSE") end)
 
     -- 전투부활 줄: [✓] 전투부활 ............ [설정]  (사운드/아이콘 세부는 전부 "설정" 안으로 이동)
-    local brCb = CreateFrame("CheckButton", nil, SA_OptionWindow, "UICheckButtonTemplate")
+    local brCb = CreateFrame("CheckButton", nil, body, "UICheckButtonTemplate")
     brCb:SetSize(22, 22)
-    brCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -252)
+    brCb:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -268)
     brCb:SetChecked(MimDiceDB and MimDiceDB.battleRes and MimDiceDB.battleRes.enabled)
     brCb:SetScript("OnClick", function(self)
         if MimDiceDB.battleRes then
@@ -6292,67 +6310,67 @@ local function SA_CreateWindow()
             SA_UpdateBattleResRuntime()   -- 마스터 끄면 아이콘도 숨기고 티커 중지
         end
     end)
-    local brLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    local brLabel = body:CreateFontString(nil, "OVERLAY")
     brLabel:SetPoint("LEFT", brCb, "RIGHT", 2, 0)
     brLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     brLabel:SetText(L("전투부활 (사운드 + 아이콘)"))
     brLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    local brCfgBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    local brCfgBtn = CreateFrame("Button", nil, body, "UIPanelButtonTemplate")
     brCfgBtn:SetSize(50, 22)
-    brCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -252)
+    brCfgBtn:SetPoint("TOPRIGHT", body, "TOPRIGHT", -15, -268)
     brCfgBtn:SetText(L("설정"))
     brCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     brCfgBtn:SetScript("OnClick", function() SA_ToggleBattleResIconConfig() end)
 
     -- 파티 신청 줄: [✓] 파티 신청 (사운드+메시지) ..... [설정]
-    local paCb = CreateFrame("CheckButton", nil, SA_OptionWindow, "UICheckButtonTemplate")
+    local paCb = CreateFrame("CheckButton", nil, body, "UICheckButtonTemplate")
     paCb:SetSize(22, 22)
-    paCb:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -276)
+    paCb:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -292)
     paCb:SetChecked(MimDiceDB and MimDiceDB.partyAlert and MimDiceDB.partyAlert.enabled)
     paCb:SetScript("OnClick", function(self)
         SA_SetPartyAlertEnabled(self:GetChecked())
     end)
     SA_OptionWindow.partyAlertCb = paCb
-    local paLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
+    local paLabel = body:CreateFontString(nil, "OVERLAY")
     paLabel:SetPoint("LEFT", paCb, "RIGHT", 2, 0)
     paLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     paLabel:SetText(L("파티 신청 (사운드 + 메시지)"))
     paLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    local paCfgBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    local paCfgBtn = CreateFrame("Button", nil, body, "UIPanelButtonTemplate")
     paCfgBtn:SetSize(50, 22)
-    paCfgBtn:SetPoint("TOPRIGHT", SA_OptionWindow, "TOPRIGHT", -15, -276)
+    paCfgBtn:SetPoint("TOPRIGHT", body, "TOPRIGHT", -15, -292)
     paCfgBtn:SetText(L("설정"))
     paCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     paCfgBtn:SetScript("OnClick", function() SA_TogglePartyConfig() end)
 
     -- 구분선
-    local divider = SA_OptionWindow:CreateTexture(nil, "ARTWORK")
-    divider:SetSize(350, 1)
-    divider:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -308)
+    local divider = body:CreateTexture(nil, "ARTWORK")
+    divider:SetSize(320, 1)
+    divider:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -324)
     divider:SetColorTexture(0.5, 0.5, 0.5, 0.6)
 
     -- ── << 스킬 사운드 알림 >> 섹션 ─────────────────
-    local skillSectionLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    skillSectionLabel:SetPoint("TOP", SA_OptionWindow, "TOP", 0, -320)
+    local skillSectionLabel = body:CreateFontString(nil, "OVERLAY")
+    skillSectionLabel:SetPoint("TOP", body, "TOP", 0, -336)
     skillSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     skillSectionLabel:SetText(L("차단 / 스킬 알림"))
     skillSectionLabel:SetTextColor(1, 0.82, 0)
 
-    local inputLabel = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    inputLabel:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -346)
+    local inputLabel = body:CreateFontString(nil, "OVERLAY")
+    inputLabel:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -362)
     inputLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     inputLabel:SetText(L("1. 추가할 스킬의 이름 또는 ID 입력 (꼭 띄어쓰기 지켜야 함)"))
     inputLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    local inputBox = CreateFrame("EditBox", "SA_SpellInput", SA_OptionWindow, "InputBoxTemplate")
+    local inputBox = CreateFrame("EditBox", "SA_SpellInput", body, "InputBoxTemplate")
     inputBox:SetSize(200, 22)
-    inputBox:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 20, -366)
+    inputBox:SetPoint("TOPLEFT", body, "TOPLEFT", 20, -382)
     inputBox:SetAutoFocus(false)
     inputBox:SetFont(MimDiceFontPath(), 12, "")
 
-    local addBtn = CreateFrame("Button", nil, SA_OptionWindow, "UIPanelButtonTemplate")
+    local addBtn = CreateFrame("Button", nil, body, "UIPanelButtonTemplate")
     addBtn:SetSize(80, 24)
     addBtn:SetPoint("LEFT", inputBox, "RIGHT", 10, 0)
     addBtn:SetText(L("스킬 추가"))
@@ -6410,20 +6428,16 @@ local function SA_CreateWindow()
         inputBox:ClearFocus()
     end)
 
-    -- ── 2. 목록 스크롤 프레임 ──────────────────────────────────────────
-    local listTitle = SA_OptionWindow:CreateFontString(nil, "OVERLAY")
-    listTitle:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 15, -406)
+    -- ── 2. 개별 소리 목록 (본문 전체와 함께 스크롤) ────────────────────
+    local listTitle = body:CreateFontString(nil, "OVERLAY")
+    listTitle:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -422)
     listTitle:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     listTitle:SetText(L("2. 사운드 개별 설정"))
     listTitle:SetTextColor(0.8, 0.8, 0.8)
 
-    local scrollFrame = CreateFrame("ScrollFrame", "SA_ListScrollFrame", SA_OptionWindow, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", SA_OptionWindow, "TOPLEFT", 10, -426)
-    scrollFrame:SetPoint("BOTTOMRIGHT", SA_OptionWindow, "BOTTOMRIGHT", -30, 10)
-
-    local scrollChild = CreateFrame("Frame", "SA_ListScrollChild", scrollFrame)
+    local scrollChild = CreateFrame("Frame", "SA_ListScrollChild", body)
+    scrollChild:SetPoint("TOPLEFT", body, "TOPLEFT", 10, -442)
     scrollChild:SetSize(330, 100)
-    scrollFrame:SetScrollChild(scrollChild)
     SA_OptionWindow.scrollChild = scrollChild
 end
 
@@ -6644,7 +6658,15 @@ function SA_RefreshList()
         end
     end
 
-    scrollChild:SetHeight(math.max(yOffset, 10))
+    local listHeight = math.max(yOffset, 10)
+    scrollChild:SetHeight(listHeight)
+    local page = SA_OptionWindow
+    page.body:SetHeight(442 + listHeight)
+    local headerHeight = 8 + page.cafeLabel:GetStringHeight() + 8 + page.soundFolderHelp:GetStringHeight() + 12
+    local contentHeight = headerHeight + 442 + listHeight + 12
+    page.content:SetHeight(contentHeight)
+    local maxScroll = math.max(0, contentHeight - page.pageScroll:GetHeight())
+    page.pageScroll:SetVerticalScroll(math.min(page.pageScroll:GetVerticalScroll(), maxScroll))
 end
 
 -- =====================================================================
@@ -6678,15 +6700,11 @@ function SA.CreateChatWindow()
         if SA_SoundPicker and SA_SoundPicker:IsShown() then SA_SoundPicker:Hide() end
     end)
 
-    local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
-    closeBtn.MimDiceIsClose = true
-    closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
-    closeBtn:SetScript("OnClick", function() SA.ToggleChatWindow() end)
 
     local title = win:CreateFontString(nil, "OVERLAY")
     title:SetPoint("TOP", win, "TOP", 0, -12)
     title:SetFont(MimDiceFontPath(), 14, "OUTLINE")
-    title:SetText(L("대화 소리 설정"))
+    title:SetText(L("Chat Sounds"))
     title:SetTextColor(1, 0.82, 0)
 
     -- 귓속말 알림 사용 시 와우 기본 귓속말 소리 끄기
@@ -6820,6 +6838,7 @@ function SA.CreateChatWindow()
     listTitle:SetText(L("2. 채널별 사운드 개별 설정"))
     listTitle:SetTextColor(0.8, 0.8, 0.8)
 
+    SA.AttachSettingsPage(win)
     SA_SkinRegisterWindow(win)
     SA.ChatWindow = win
 end
@@ -7372,7 +7391,6 @@ local function SA_CreateSkinWindow()
 
     local win = CreateFrame("Frame", "SA_SkinWindow", UIParent, "BackdropTemplate")
     win:SetWidth(380)
-    win:SetHeight(505)   -- 내용에 맞춘 고정 높이 (메인창 높이와 무관)
     win:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", 44, 0)
     win:SetFrameStrata("HIGH")
     win:SetBackdrop({
@@ -7391,36 +7409,46 @@ local function SA_CreateSkinWindow()
     end)
     win:Hide()
 
-    local closeBtn = CreateFrame("Button", nil, win, "UIPanelCloseButton")
-    closeBtn.MimDiceIsClose = true   -- 스킨: 닫기(X) 플랫화 대상
-    closeBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -2, -2)
-    closeBtn:SetScript("OnClick", function() SA_ToggleSkinWindow() end)
 
-    local title = win:CreateFontString(nil, "OVERLAY")
-    title:SetPoint("TOP", win, "TOP", 0, -12)
+    -- Keep every appearance control inside the scroll viewport, even when the main window shrinks.
+    local pageScroll = CreateFrame("ScrollFrame", "SA_AppearanceScrollFrame", win, "UIPanelScrollFrameTemplate")
+    pageScroll:SetPoint("TOPLEFT", win, "TOPLEFT", 0, -4)
+    pageScroll:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -26, 10)
+    pageScroll:EnableMouseWheel(true)
+    local content = CreateFrame("Frame", "SA_AppearanceScrollContent", pageScroll)
+    content:SetSize(350, 505)
+    pageScroll:SetScrollChild(content)
+    pageScroll:HookScript("OnSizeChanged", function(self)
+        local maxScroll = math.max(0, content:GetHeight() - self:GetHeight())
+        self:SetVerticalScroll(math.min(self:GetVerticalScroll(), maxScroll))
+    end)
+    win.pageScroll, win.content = pageScroll, content
+
+    local title = content:CreateFontString(nil, "OVERLAY")
+    title:SetPoint("TOP", content, "TOP", 0, -12)
     title:SetFont(MimDiceFontPath(), 14, "OUTLINE")
-    title:SetText(L("스킨"))
+    title:SetText(L("Appearance"))
     title:SetTextColor(1, 0.82, 0)
 
     -- ── 스킨 적용 체크 (라벨에 현재 프리셋 이름 표시) ──
-    local enCb = CreateFrame("CheckButton", nil, win, "UICheckButtonTemplate")
+    local enCb = CreateFrame("CheckButton", nil, content, "UICheckButtonTemplate")
     enCb:SetSize(24, 24)
-    enCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -34)
+    enCb:SetPoint("TOPLEFT", content, "TOPLEFT", 15, -34)
     enCb:SetScript("OnClick", function(self)
         MimDiceDB.skin.enabled = self:GetChecked() and true or false
         SA_SkinRefresh()
         SA_RefreshSkinWindow()
     end)
     win.enCb = enCb
-    local enLabel = win:CreateFontString(nil, "OVERLAY")
+    local enLabel = content:CreateFontString(nil, "OVERLAY")
     enLabel:SetPoint("LEFT", enCb, "RIGHT", 2, 0)
     enLabel:SetFont(MimDiceFontPath(), 12, "OUTLINE")
     enLabel:SetTextColor(0.9, 0.9, 0.9)
     win.enLabel = enLabel
 
     -- ── 프리셋 목록 ──
-    local presetLabel = win:CreateFontString(nil, "OVERLAY")
-    presetLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -80)
+    local presetLabel = content:CreateFontString(nil, "OVERLAY")
+    presetLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 15, -80)
     presetLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     presetLabel:SetText(L("기본 스킨 : 누르면 색이 채워지고 바로 적용됩니다"))
     presetLabel:SetTextColor(0.9, 0.9, 0.9)
@@ -7430,9 +7458,9 @@ local function SA_CreateSkinWindow()
     for i, preset in ipairs(SA_SKIN_PRESETS) do
         local col = (i - 1) % 2
         local rowN = math.floor((i - 1) / 2)
-        local row = CreateFrame("Button", nil, win)
-        row:SetSize(170, 20)
-        row:SetPoint("TOPLEFT", win, "TOPLEFT", 15 + col * 178, -98 - rowN * 22)
+        local row = CreateFrame("Button", nil, content)
+        row:SetSize(160, 20)
+        row:SetPoint("TOPLEFT", content, "TOPLEFT", 15 + col * 166, -98 - rowN * 22)
         local selBg = row:CreateTexture(nil, "BACKGROUND")   -- 선택 표시 (은은한 배경)
         selBg:SetAllPoints(); selBg:SetColorTexture(1, 1, 1, 0.10); selBg:Hide()
         local hl = row:CreateTexture(nil, "HIGHLIGHT")
@@ -7474,9 +7502,9 @@ local function SA_CreateSkinWindow()
 
     -- 10번째 칸: '커스텀 (내 색)' - 사용자가 만진 색이 영구 저장되는 슬롯
     do
-        local row = CreateFrame("Button", nil, win)
-        row:SetSize(170, 20)
-        row:SetPoint("TOPLEFT", win, "TOPLEFT", 15 + 178, -98 - 7 * 22)
+        local row = CreateFrame("Button", nil, content)
+        row:SetSize(160, 20)
+        row:SetPoint("TOPLEFT", content, "TOPLEFT", 15 + 166, -98 - 7 * 22)
         local selBg = row:CreateTexture(nil, "BACKGROUND")
         selBg:SetAllPoints(); selBg:SetColorTexture(1, 1, 1, 0.10); selBg:Hide()
         local hl = row:CreateTexture(nil, "HIGHLIGHT")
@@ -7539,21 +7567,21 @@ local function SA_CreateSkinWindow()
     end
 
     -- ── 색 커스텀 (스와치는 우측, 클릭하면 색 팝업) ──
-    local customLabel = win:CreateFontString(nil, "OVERLAY")
-    customLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -298)
+    local customLabel = content:CreateFontString(nil, "OVERLAY")
+    customLabel:SetPoint("TOPLEFT", content, "TOPLEFT", 15, -298)
     customLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     customLabel:SetText(L("색 커스텀 : 오른쪽 네모를 눌러 색을 고르세요"))
     customLabel:SetTextColor(0.9, 0.9, 0.9)
 
     local function mkColorRow(y, labelText, getFn, setFn, opacityOpt)
-        local lb = win:CreateFontString(nil, "OVERLAY")
-        lb:SetPoint("TOPLEFT", win, "TOPLEFT", 20, y)
+        local lb = content:CreateFontString(nil, "OVERLAY")
+        lb:SetPoint("TOPLEFT", content, "TOPLEFT", 20, y)
         lb:SetFont(MimDiceFontPath(), 11, "")
         lb:SetText(labelText)
         lb:SetTextColor(0.85, 0.85, 0.85)
-        local btn = CreateFrame("Button", nil, win)
+        local btn = CreateFrame("Button", nil, content)
         btn:SetSize(30, 18)
-        btn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -20, y + 2)
+        btn:SetPoint("TOPRIGHT", content, "TOPRIGHT", -20, y + 2)
         local border = btn:CreateTexture(nil, "BORDER")
         border:SetAllPoints(); border:SetColorTexture(0.6, 0.6, 0.6, 1)
         local swatch = btn:CreateTexture(nil, "ARTWORK")
@@ -7653,9 +7681,9 @@ local function SA_CreateSkinWindow()
 
 
     -- ── 색 기본값 복원 (현재 스킨의 원래 색/투명도로) ──
-    local resetBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
+    local resetBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
     resetBtn:SetSize(110, 22)
-    resetBtn:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -468)
+    resetBtn:SetPoint("TOPLEFT", content, "TOPLEFT", 15, -468)
     resetBtn:SetText(L("색 기본값 복원"))
     resetBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
     resetBtn:SetScript("OnClick", function()
@@ -7687,14 +7715,15 @@ local function SA_CreateSkinWindow()
 
 
     -- ── 폰트 고르기 (버튼에 현재 폰트 이름 표시) ──
-    local fontBtn = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
-    fontBtn:SetSize(225, 22)
-    fontBtn:SetPoint("TOPRIGHT", win, "TOPRIGHT", -15, -468)
+    local fontBtn = CreateFrame("Button", nil, content, "UIPanelButtonTemplate")
+    fontBtn:SetSize(200, 22)
+    fontBtn:SetPoint("TOPRIGHT", content, "TOPRIGHT", -15, -468)
     fontBtn:SetText(L("폰트 고르기"))
     fontBtn:GetFontString():SetFont(MimDiceFontPath(), 10, "")
     fontBtn:SetScript("OnClick", function() SA_ToggleFontWindow() end)
     win.fontBtn = fontBtn
 
+    SA.AttachSettingsPage(win)
     SA_SkinRegisterWindow(win)   -- 스킨 창 자신도 스킨 대상
     SA_SkinWindow = win
 end
@@ -7742,6 +7771,7 @@ function SoundAlert_OnLoad()
             SA_CreateWindow()
             SA.CreateChatWindow()
             SA_CreateSkinWindow()
+            SA.AttachSettingsPage(SA_OptionWindow)
             -- 사운드 옵션창 + 메인창에 스킨 적용 (켜져 있을 때만)
             SA_SkinRegisterWindow(SA_OptionWindow)
             SA_SkinRefresh()
