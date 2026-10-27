@@ -23,7 +23,10 @@ local function TargetName()
     local name, realm = UnitFullName("NPC")
     if type(issecretvalue) == "function" and issecretvalue(realm) then return nil end
     name, realm = Public(name, "string"), Public(realm, "string")
-    if not name or name == "" then return nil end
+    if not name or name == "" then
+        local full = GetUnitName and Public(GetUnitName("NPC", true), "string")
+        return full and full ~= "" and full or nil
+    end
     return realm and realm ~= "" and (name .. "-" .. realm) or name
 end
 
@@ -32,28 +35,30 @@ local function Capture()
     nextSnap.playerMoney = Number(GetPlayerTradeMoney())
     nextSnap.targetMoney = Number(GetTargetTradeMoney())
     if not nextSnap.playerMoney or not nextSnap.targetMoney then return nil end
-    for slot = 1, 7 do
-        local name, _, count, _, enchant = GetTradePlayerItemInfo(slot)
-        local other, _, otherCount, _, _, otherEnchant = GetTradeTargetItemInfo(slot)
-        if slot == 7 then
-            -- 7번 슬롯의 물건은 이동하지 않는다. 내 물건에 받은 마부는 '받음'이다.
-            enchant, otherEnchant = Public(enchant, "string"), Public(otherEnchant, "string")
-            if enchant and enchant ~= "" then nextSnap.got[#nextSnap.got + 1] = L("Enchant: ") .. enchant end
-            if otherEnchant and otherEnchant ~= "" then nextSnap.gave[#nextSnap.gave + 1] = L("Enchant: ") .. otherEnchant end
-        else
-            local function Add(items, itemName, itemCount)
-                if type(issecretvalue) == "function" and issecretvalue(itemName) then error("unreadable trade item") end
-                itemName = Public(itemName, "string")
-                if not itemName or itemName == "" then return end
-                itemCount = Number(itemCount)
-                if not itemCount then error("unreadable trade count") end
-                items[#items + 1] = itemName .. (itemCount > 1 and (" x" .. string.format("%.0f", itemCount)) or "")
-            end
-            Add(nextSnap.gave, name, count)
-            Add(nextSnap.got, other, otherCount)
-        end
+    -- 실제로 주고받는 1~6번 슬롯만 기록한다. 7번 마법부여 서비스는 제외한다.
+    local function Add(items, itemName, itemCount)
+        if type(issecretvalue) == "function" and issecretvalue(itemName) then error("unreadable trade item") end
+        itemName = Public(itemName, "string")
+        if not itemName or itemName == "" then return end
+        itemCount = Number(itemCount)
+        if not itemCount then error("unreadable trade count") end
+        items[#items + 1] = itemName .. (itemCount > 1 and (" x" .. string.format("%.0f", itemCount)) or "")
+    end
+    for slot = 1, 6 do
+        local name, _, count = GetTradePlayerItemInfo(slot)
+        local other, _, otherCount = GetTradeTargetItemInfo(slot)
+        Add(nextSnap.gave, name, count)
+        Add(nextSnap.got, other, otherCount)
     end
     return nextSnap
+end
+
+local function RefreshSnapshot()
+    if not session or session.closedAt then return end
+    -- 완료 직전 UI가 먼저 닫히면 API는 빈 슬롯을 반환할 수 있다.
+    if TradeFrame and not TradeFrame:IsShown() then return end
+    local ok, snap = pcall(Capture)
+    session.snapshot = ok and snap or nil
 end
 
 local function Money(copper)
@@ -69,11 +74,20 @@ local function BuildMessages(snap)
     local messages, current = {}, L("[Trade complete] ")
     local prefix = current
     for _, token in ipairs(tokens) do
-        -- 평문 이름으로 구성한다. UTF-8 문자 중간을 자르거나 링크를 훼손하지 않는다.
-        if #prefix + #token > 250 then
-            local shortened = token:sub(1, 250 - #prefix - 3)
-            shortened = shortened:gsub("[\194-\244][\128-\191]*$", "")
-            token = shortened .. "..."
+        -- 긴 이름도 생략하지 않고 UTF-8 문자 경계에서 나눠 기록한다.
+        if #prefix + #token > 250 and current ~= prefix then
+            messages[#messages + 1] = current
+            current = prefix
+        end
+        while #prefix + #token > 250 do
+            local cut = 250 - #prefix
+            local byte = token:byte(cut + 1)
+            while byte and byte >= 128 and byte <= 191 do
+                cut = cut - 1
+                byte = token:byte(cut + 1)
+            end
+            messages[#messages + 1] = prefix .. token:sub(1, cut)
+            token = token:sub(cut + 1)
         end
         local joined = current .. (current ~= prefix and " / " or "") .. token
         if #joined > 250 then
@@ -85,12 +99,8 @@ local function BuildMessages(snap)
     return messages
 end
 
-local function RaidHandlesWhisper()
-    return MimRaid and MimRaid.TradeAnnounce and MimRaid.cfg and MimRaid.cfg.tradeWhisperEnabled ~= false
-end
-
 local function Pump()
-    if not MimDiceDB.tradeWhisperEnabled or RaidHandlesWhisper() then
+    if not MimDiceDB.tradeWhisperEnabled then
         outbox, sending = {}, false
         return
     end
@@ -118,7 +128,7 @@ end
 local function Complete()
     local completed = session
     session = nil -- 중복 완료 신호가 와도 다시 보내지 않는다.
-    if not completed or not completed.snapshot or RaidHandlesWhisper() then return end
+    if not completed or not completed.snapshot then return end
     if completed.closedAt and GetTime() - completed.closedAt > 5 then return end
     local snap = completed.snapshot
     if not snap.target then return end
@@ -151,16 +161,16 @@ frame:SetScript("OnEvent", function(_, event, first, second)
         TW.ApplySettings()
     elseif event == "TRADE_SHOW" then
         session = { target = TargetName() }
+        RefreshSnapshot()
     elseif event == "TRADE_REQUEST_CANCEL" then
         session = nil
     elseif event == "TRADE_CLOSED" then
         if session and not session.closedAt then session.closedAt = GetTime() end
     elseif event == "TRADE_ACCEPT_UPDATE" then
         if not session or session.closedAt then return end
-        if Number(first) ~= 1 and Number(second) ~= 1 then session.snapshot = nil; return end
-        -- 성공은 수락 여부로 추측하지 않고 UI_INFO_MESSAGE에서만 확정한다.
-        local ok, snap = pcall(Capture)
-        session.snapshot = ok and snap or nil
+        if TradeFrame and not TradeFrame:IsShown() then return end
+        -- 수락 상태 값/거래 방향과 무관하게 내역을 보존한다. 성공은 서버 신호로만 확정한다.
+        RefreshSnapshot()
     elseif event == "UI_INFO_MESSAGE" or event == "UI_ERROR_MESSAGE" then
         local name
         first = Number(first)
@@ -170,11 +180,10 @@ frame:SetScript("OnEvent", function(_, event, first, second)
         end
         second = Public(second, "string")
         if name == "ERR_TRADE_CANCELLED" or (second and second == ERR_TRADE_CANCELLED) then session = nil
-        elseif event == "UI_INFO_MESSAGE" and (name == "ERR_TRADE_COMPLETE" or (second and second == ERR_TRADE_COMPLETE)) then Complete()
-        elseif event == "UI_ERROR_MESSAGE" and name and name:match("^ERR_TRADE_") then session = nil end
+        elseif event == "UI_INFO_MESSAGE" and (name == "ERR_TRADE_COMPLETE" or (second and second == ERR_TRADE_COMPLETE)) then Complete() end
+        -- 거래 중 아이템을 올리지 못한 오류 등은 취소가 아니다. 수정 뒤 같은 거래가 완료될 수 있다.
     elseif session and not session.closedAt then
-        -- 내용 변경 후에는 다음 수락 시점의 새 스냅샷만 사용한다.
-        session.snapshot = nil
+        RefreshSnapshot()
     end
 end)
 frame:RegisterEvent("ADDON_LOADED")

@@ -309,7 +309,7 @@ MimDice_RegisterLocale("koKR", "한국어", {
     ["Appearance"] = "꾸미기",
     ["Trade Completion Alerts"] = "거래완료 알림",
     ["Whisper trade details on completion"] = "거래완료 귓속말로 알림",
-    ["Sends trade details to the other player. MimRaid handles this when its trade whisper is enabled."] = "거래 내역을 상대방에게 보냅니다. 밈레이드의 거래 귓속말이 켜져 있으면 밈레이드에서만 보냅니다.",
+    ["Whispers items and gold given or received after a completed trade. The other player does not need an addon. Enable trade whispers in only one addon."] = "거래가 완료되면 주고받은 아이템과 골드 내역을 상대방에게 귓속말로 보냅니다.\n상대방에게 애드온이 없어도 받을 수 있습니다.\n다른 거래완료 귓속말 애드온이 있다면 한쪽 기능만 켜 주세요.",
     ["[Trade complete] "] = "[거래완료] ",
     ["Received gold: "] = "받은 골드: ",
     ["Sent gold: "] = "보낸 골드: ",

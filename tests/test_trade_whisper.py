@@ -5,6 +5,7 @@ import sys
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--lua-python', type=Path)
+parser.add_argument('--compare-head', action='store_true')
 args = parser.parse_args()
 if args.lua_python:
     sys.path.insert(0, str(args.lua_python))
@@ -100,8 +101,9 @@ case('accept and close alone never mean success', '''
 enable(); begin(); fire('TRADE_ACCEPT_UPDATE',1,1); fire('TRADE_CLOSED'); advance(20)
 assert(#sent==0)
 ''')
-case('withdrawn acceptance invalidates earlier contents', '''
-enable(); begin(); fire('TRADE_ACCEPT_UPDATE',0,0); complete(); assert(#sent==0)
+case('acceptance reset alone never sends; server completion still sends', '''
+enable(); begin(); fire('TRADE_ACCEPT_UPDATE',0,0); assert(#sent==0)
+complete(); assert(#sent==1)
 ''')
 case('failed snapshot cannot retain an earlier valid snapshot', '''
 enable(); begin()
@@ -114,8 +116,9 @@ enable(); begin(); fire('TRADE_REQUEST_CANCEL'); complete(); assert(#sent==0)
 case('localized cancel signal clears candidate', '''
 enable(); begin(); fire('UI_INFO_MESSAGE',nil,ERR_TRADE_CANCELLED); complete(); assert(#sent==0)
 ''')
-case('trade failure clears candidate', '''
-enable(); begin(); fire('UI_ERROR_MESSAGE',3); complete(); assert(#sent==0)
+case('trade error alone never sends; a corrected trade may still complete', '''
+enable(); begin(); fire('UI_ERROR_MESSAGE',3); assert(#sent==0)
+complete(); assert(#sent==1)
 ''')
 case('unrelated UI error does not discard actual completed trade', '''
 enable(); begin(); fire('UI_ERROR_MESSAGE',4); complete(); assert(#sent==1)
@@ -124,12 +127,12 @@ case('old closed candidate expires', '''
 enable(); begin(); fire('TRADE_CLOSED'); advance(6); complete(); assert(#sent==0)
 ''')
 case('new trade cannot reuse the previous partner or snapshot', '''
-enable(); begin(); fire('TRADE_CLOSED'); targetName='Next'; fire('TRADE_SHOW'); complete(); assert(#sent==0)
+enable(); begin(); fire('TRADE_CLOSED'); targetName='Next'; targetMoney=0
+fire('TRADE_SHOW'); complete(); assert(#sent==0)
 ''')
-case('changed money invalidates prior snapshot and recaptures new value', '''
+case('changed money refreshes both sides before server completion', '''
 enable(); begin(); targetMoney=2000000; fire('TRADE_MONEY_CHANGED')
-complete(); assert(#sent==0)
-begin(); complete(); assert(#sent==1 and sent[1].message:find('200g',1,true))
+complete(); assert(#sent==1 and sent[1].message:find('200g',1,true))
 ''')
 case('long Korean item lists retain both sides, valid UTF8, and byte limit', '''
 enable(); targetMoney=0
@@ -144,22 +147,25 @@ for i,msg in ipairs(sent) do
     if i>1 then assert(msg.time - sent[i-1].time >= 1) end
 end
 ''')
-case('oversized item name is shortened safely', '''
-enable(); targetMoney=0; playerItems[1]={name=string.rep('가',200), count=1}
-begin(); complete(); assert(#sent==1 and #sent[1].message<=250)
+case('oversized item name and count are preserved in UTF8 chunks', '''
+enable(); targetMoney=0; playerItems[1]={name=string.rep('가',200), count=12}
+begin(); complete(); advance(10); assert(#sent>1)
+local result=''
+for _,msg in ipairs(sent) do
+    assert(#msg.message<=250)
+    result=result..msg.message:sub(#'[Trade complete] '+1)
+end
+assert(result=='Sent: '..string.rep('가',200)..' x12')
 ''')
 case('large money beyond signed 32 bit', '''
 enable(); targetMoney=3500000000; begin(); complete()
 assert(sent[1].message:find('350000g',1,true))
 ''')
-case('enchant service has correct direction, slot 7 item is not transferred', '''
+case('enchant service and slot 7 item are excluded', '''
 enable(); targetMoney=0
 playerItems[7]={name='My sword',enchant='ReceivedEnchant'}
 targetItems[7]={name='Their sword',enchant='SentEnchant'}
-begin(); complete()
-assert(sent[1].message:find('Received: Enchant: ReceivedEnchant',1,true))
-assert(sent[1].message:find('Sent: Enchant: SentEnchant',1,true))
-assert(not sent[1].message:find('sword',1,true))
+begin(); complete(); assert(#sent==0)
 ''')
 case('empty trade sends nothing', '''
 enable(); targetMoney=0; begin(); complete(); assert(#sent==0)
@@ -180,10 +186,74 @@ enable(); playerItems[1]={name=SECRET,count=1}; begin(); complete(); assert(#sen
 case('secret event arguments do not throw or complete', '''
 enable(); begin(); fire('UI_INFO_MESSAGE',SECRET,SECRET); assert(#sent==0)
 ''')
-case('MimRaid enabled suppresses duplicate, disabled allows MimDice', '''
+case('MimDice sends its own receipt even when another addon is loaded', '''
 enable(); MimRaid={cfg={tradeWhisperEnabled=true},TradeAnnounce={}}
-begin(); complete(); assert(#sent==0)
-MimRaid.cfg.tradeWhisperEnabled=false; begin(); complete(); assert(#sent==1)
+begin(); complete(); assert(#sent==1)
+MimRaid.cfg.tradeWhisperEnabled=false; begin(); complete(); assert(#sent==2)
+''')
+for side, field, text in (
+    ('give item', 'playerItems[1]={name="Gift",count=3}; targetMoney=0', 'Sent: Gift x3'),
+    ('receive item', 'targetItems[1]={name="Gift",count=3}; targetMoney=0', 'Received: Gift x3'),
+    ('give gold', 'playerMoney=90000; targetMoney=0', 'Sent gold: 9g'),
+    ('receive gold', 'targetMoney=90000', 'Received gold: 9g'),
+):
+    for accepted in ('1,0', '0,1', '0,0', 'nil,nil'):
+        case(f'{side}: ordinary whisper, no recipient addon, accept {accepted}', f'''
+enable(); {field}; fire('TRADE_SHOW'); fire('TRADE_ACCEPT_UPDATE',{accepted})
+fire('TRADE_CLOSED'); complete(); advance(10)
+assert(#sent==1 and sent[1].target=='Partner-OtherRealm')
+assert(sent[1].message:find('{text}',1,true))
+''')
+    case(f'{side}: change event and server completion without accept event', f'''
+enable(); targetMoney=0; fire('TRADE_SHOW'); {field}
+fire('TRADE_TARGET_ITEM_CHANGED',1); fire('TRADE_CLOSED'); complete(); advance(10)
+assert(#sent==1 and sent[1].message:find('{text}',1,true))
+''')
+case('full NPC name fallback never guesses selected target', '''
+enable(); targetName=nil
+GetUnitName=function(unit,full) assert(unit=='NPC' and full); return 'Other-ActualRealm' end
+begin(); complete(); assert(#sent==1 and sent[1].target=='Other-ActualRealm')
+''')
+case('other addon enabled while receipt queued does not discard it', '''
+enable(); locked=true; begin(); complete()
+MimRaid={cfg={tradeWhisperEnabled=true},TradeAnnounce={}}
+locked=false; advance(1); assert(#sent==1)
+''')
+case('received item arrives after acceptance; last changed snapshot is sent', '''
+enable(); targetMoney=0; begin()
+targetItems[1]={name='LateGift',count=2}; fire('TRADE_TARGET_ITEM_CHANGED',1)
+fire('TRADE_CLOSED'); complete(); assert(#sent==1)
+assert(sent[1].message:find('Received: LateGift x2',1,true))
+''')
+case('both directions and currencies appear in one completed receipt', '''
+enable(); playerMoney=10000; targetMoney=20000
+playerItems[1]={name='Given',count=2}; targetItems[1]={name='Taken',count=4}
+begin(); complete(); advance(10)
+local message=''; for _,entry in ipairs(sent) do message=message..entry.message end
+for _,token in ipairs({'Received gold: 2g','Sent gold: 1g','Received: Taken x4','Sent: Given x2'}) do
+    assert(message:find(token,1,true))
+end
+''')
+case('removed offered item is not included in receipt', '''
+enable(); playerItems[1]={name='Removed',count=1}; begin()
+playerItems[1]=nil; fire('TRADE_PLAYER_ITEM_CHANGED',1); complete()
+assert(#sent==1 and not sent[1].message:find('Removed',1,true))
+''')
+case('invalid refreshed data cannot send previous contents', '''
+enable(); begin(); targetMoney=SECRET; fire('TRADE_MONEY_CHANGED')
+complete(); assert(#sent==0)
+''')
+case('cancel after receiving-only preview never emits a receipt', '''
+enable(); targetMoney=0; targetItems[1]={name='Unreceived',count=1}
+begin(); fire('TRADE_REQUEST_CANCEL'); fire('TRADE_CLOSED'); complete(); advance(10)
+assert(#sent==0)
+''')
+case('hidden trade UI teardown cannot erase received-only snapshot', '''
+enable(); targetMoney=0; targetItems[1]={name='ReceivedGift',count=1}; begin()
+TradeFrame={IsShown=function() return false end}
+targetItems={}; fire('TRADE_TARGET_ITEM_CHANGED',1); fire('TRADE_ACCEPT_UPDATE',0,0)
+fire('TRADE_CLOSED'); complete(); assert(#sent==1)
+assert(sent[1].message:find('Received: ReceivedGift',1,true))
 ''')
 case('OFF clears queued sends and all subscriptions', '''
 enable(); locked=true; begin(); complete(); assert(#sent==0)
@@ -211,7 +281,7 @@ assert(#sent==1 and sent[1].target=='Second-OtherRealm')
 ''')
 
 source = (ROOT / 'TradeWhisper.lua').read_text(encoding='utf-8-sig')
-for name, code in cases:
+def run_case(source, name, code):
     vm = LuaRuntime(unpack_returned_tuples=True)
     vm.execute(MOCK)
     if name.startswith('existing ON'):
@@ -224,4 +294,19 @@ for name, code in cases:
             message.message.encode('utf-8')
     except Exception as exc:
         raise AssertionError(f'{name}: {exc}') from exc
+
+if args.compare_head:
+    import subprocess
+    baseline = subprocess.check_output(['git','show','HEAD:TradeWhisper.lua'],cwd=ROOT).decode('utf-8-sig')
+    failures=[]
+    for name,code in cases:
+        try:
+            run_case(baseline,name,code)
+        except AssertionError:
+            failures.append(name)
+    print(f'Before fix: {len(failures)}/{len(cases)} scenarios failed')
+    for name in failures:
+        print(f'  {name}')
+for name,code in cases:
+    run_case(source,name,code)
 print(f'Trade whisper: {len(cases)}/{len(cases)} mocked Lua 5.1 scenarios passed')
