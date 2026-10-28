@@ -6752,7 +6752,7 @@ function SA.CreateChatWindow()
     local chatSoundSectionLabel = win:CreateFontString(nil, "OVERLAY")
     chatSoundSectionLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -90)
     chatSoundSectionLabel:SetFont(MimDiceFontPath(), 12, "OUTLINE")
-    chatSoundSectionLabel:SetText(L("대화 소리"))
+    chatSoundSectionLabel:SetText(L("Chat Sounds"))
     chatSoundSectionLabel:SetTextColor(1, 0.82, 0)
 
     -- 귓속말 알림 사용 시 와우 기본 귓속말 소리 끄기

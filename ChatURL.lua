@@ -57,56 +57,149 @@ end
 -- =====================================================================
 -- 3. URL 인식 및 하이퍼링크 분리/변환 로직
 -- =====================================================================
-local function SplitTrailingPunctuation(url)
+-- 일반 텍스트를 [글자 구간]과 [WoW 표시 코드 구간]으로 나눈 뒤, 글자 구간에서만 URL을 찾는다.
+-- 표시 코드(|c, |r, |T…|t, |A…|a 등)는 주소에 섞이지 않고, 코드 바로 뒤의 주소도 인식된다.
+local URL_PREFIXES = {
+    "[hH][tT][tT][pP][sS]?://",
+    "[wW][wW][wW]%.",
+    "[dD][iI][sS][cC][oO][rR][dD]%.[gG][gG]/",
+    "[dD][iI][sS][cC][oO][rR][dD]%.[cC][oO][mM]/[iI][nN][vV][iI][tT][eE]/",
+}
+
+-- 끝에 붙은 문장부호만 주소에서 뗀다.
+-- 경로 부분: . , ; : ! ? 는 문장부호로 본다.
+-- 쿼리(?)·해시(#) 부분: 값의 일부일 수 있으므로 . , 만 뗀다. (예: ?x=wow! 보존)
+-- 닫는 괄호와 작은따옴표는 짝이 맞지 않을 때만 뗀다.
+--   (예: Doom_(1993) · ?q='wow' 보존, (주소) · '주소' 의 바깥 기호 제거)
+-- " > } 는 주소에 그대로 쓸 수 없는 문자이므로 항상 뗀다.
+-- hasOpenQuote: URL 직전의 앞쪽 접두사가 여는 작은따옴표로 끝나는지 여부 (예: 'https:// 또는 ('https://)
+local function SplitTrailingPunctuation(url, hasOpenQuote)
     local trailing = ""
-
-    -- WoW 특수 시퀀스(|r, |c 등)가 URL 뒤에 붙은 경우 분리
-    local pipePos = url:find("|")
-    if pipePos then
-        trailing = url:sub(pipePos) .. trailing
-        url = url:sub(1, pipePos - 1)
-    end
-
+    local inQuery = url:find("[?#]") ~= nil
     local openParen = select(2, url:gsub("%(", ""))
     local closeParen = select(2, url:gsub("%)", ""))
     local openBracket = select(2, url:gsub("%[", ""))
     local closeBracket = select(2, url:gsub("%]", ""))
+    local openQuote = (hasOpenQuote == true)
 
     while #url > 0 do
         local last = url:sub(-1)
-        if last:find("[.,;:!?]") then
-            trailing = last .. trailing
-            url = url:sub(1, -2)
+        local strip = false
+        if last == "." or last == "," then
+            strip = true
+        elseif last:find("[;:!?]") then
+            -- 쿼리 시작 문자 ? 자체가 맨 끝이면 빈 쿼리이므로 문장부호로 본다.
+            if not inQuery or (last == "?" and not url:sub(1, -2):find("[?#]")) then
+                strip = true
+            end
         elseif last == ")" and closeParen > openParen then
-            trailing = last .. trailing
-            url = url:sub(1, -2)
+            strip = true
             closeParen = closeParen - 1
         elseif last == "]" and closeBracket > openBracket then
-            trailing = last .. trailing
-            url = url:sub(1, -2)
+            strip = true
             closeBracket = closeBracket - 1
-        elseif last:find("[}>\"']") then
-            trailing = last .. trailing
-            url = url:sub(1, -2)
-        else
-            break
+        elseif last == "'" then
+            if openQuote then
+                strip = true
+                openQuote = false
+            else
+                local qCount = select(2, url:gsub("'", ""))
+                if qCount % 2 == 1 then
+                    strip = true
+                end
+            end
+        elseif last:find("[}>\"]") then
+            strip = true
         end
+        if not strip then break end
+        trailing = last .. trailing
+        url = url:sub(1, -2)
+        inQuery = url:find("[?#]") ~= nil
     end
     return url, trailing
 end
 
-local function FormatOneURL(url)
-    local u, trailing = SplitTrailingPunctuation(url)
-    if #u == 0 then return url end
-    -- 하이퍼링크 태그 파이프 이스케이프
-    local escaped = u:gsub("|", "||")
-    -- 전용 하이퍼링크 접두사 mimdiceurl: 사용 (|cff149bfd 하늘색 링크)
-    return "|cff149bfd|Hmimdiceurl:" .. escaped .. "|h[" .. u .. "]|h|r" .. trailing
+-- 접두사 뒤에 실제 내용이 한 글자 이상 있어야 주소로 본다. ("www." "https://" 단독은 제외)
+local function HasBody(u)
+    for _, p in ipairs(URL_PREFIXES) do
+        if u:match("^" .. p .. ".") then return true end
+    end
+    return false
+end
+
+-- 주소 본문에는 파이프가 없으므로 링크 데이터·표시 문구에 그대로 넣어도 안전하다.
+-- 문장부호를 뗀 뒤에 검사하므로 "www." 가 "www" 로 잘린 링크도 생기지 않는다.
+local function FormatOneURL(url, hasOpenQuote)
+    local u, trailing = SplitTrailingPunctuation(url, hasOpenQuote)
+    if not HasBody(u) then return url end
+    return "|cff149bfd|Hmimdiceurl:" .. u .. "|h[" .. u .. "]|h|r" .. trailing
+end
+
+-- 한 단어(공백 사이 문자열, 파이프 없음)에서 URL 시작 위치를 찾는다.
+local function FindURLInWord(word)
+    local bestPos
+    for _, p in ipairs(URL_PREFIXES) do
+        local pos = word:find(p)
+        if pos and (not bestPos or pos < bestPos) then bestPos = pos end
+    end
+    if not bestPos then return nil end
+    local prefix = word:sub(1, bestPos - 1)
+    -- "abcwww.x" 처럼 글자에 바로 붙은 경우는 주소로 보지 않는다. 기호 뒤((, [, : 등)는 허용.
+    if prefix ~= "" and prefix:match("[%w_]$") then return nil end
+    return prefix, word:sub(bestPos)
+end
+
+-- 표시 코드가 없는 순수 글자 구간에서 URL을 링크로 바꾼다.
+-- prefix가 여는 작은따옴표로 끝나는지 확인 (예: 'https:// 또는 ('https://)
+-- O'Reilly: 처럼 영문자 뒤의 아포스트로피는 여는 인용부호로 보지 않는다.
+local function HasEnclosingQuote(prefix)
+    if not prefix or prefix == "" then return false end
+    if prefix:sub(-1) == "'" then
+        local prev = prefix:sub(-2, -2)
+        if prev == "" or not prev:match("[%w_]") then
+            return true
+        end
+    end
+    return false
+end
+
+-- 표시 코드가 없는 순수 글자 구간에서 URL을 링크로 바꾼다.
+local function FormatURLsInRun(run)
+    return (run:gsub("%S+", function(word)
+        local prefix, url = FindURLInWord(word)
+        if url then
+            local hasOpenQuote = HasEnclosingQuote(prefix)
+            return prefix .. FormatOneURL(url, hasOpenQuote)
+        end
+        return word
+    end))
+end
+
+-- pos 위치(파이프)에서 시작하는 표시 코드의 끝 위치를 돌려준다.
+-- 끝을 찾을 수 없는 아이콘 코드면 nil (구간 전체를 원문 보존).
+local function EscapeEnd(text, pos)
+    local nextChar = text:sub(pos + 1, pos + 1)
+    if nextChar == "c" then
+        local e = select(2, text:find("^|c%x%x%x%x%x%x%x%x", pos))
+        if e then return e end
+        e = select(2, text:find("^|cn[^:|]*:", pos))   -- |cnRED_FONT_COLOR: 형식
+        if e then return e end
+        return pos + 1
+    elseif nextChar == "T" or nextChar == "A" or nextChar == "K" then
+        -- 아이콘(|T…|t), 아틀라스(|A…|a), 보호된 이름(|K…|k)은 닫는 코드까지 한 구간
+        local close = "|" .. nextChar:lower()
+        local s = text:find(close, pos + 2, true)
+        if not s then return nil end
+        return s + 1
+    elseif nextChar == "" then
+        return pos
+    end
+    return pos + 1   -- ||, |r, |n 등 두 글자 코드
 end
 
 local function FormatURLsInPlainText(text)
     -- 깨진 링크 구간(|H 또는 |h가 닫히지 않고 남아있음)은 보수적으로 변환하지 않고 보존
-    if text:find("|[Hh]") then
+    if text:gsub("||", ""):find("|[Hh]") then   -- 글자 그대로의 파이프(||) 뒤 h(예: ||https://)는 제외
         return text
     end
 
@@ -115,41 +208,93 @@ local function FormatURLsInPlainText(text)
         return text
     end
 
-    -- 공백 기준 단어 매칭 및 대소문자 무관 접두사 인식 (원문의 대소문자는 완전 보존)
-    local result = text:gsub("(%S+)", function(word)
-        -- 1. http:// or https:// (대소문자 무관)
-        local prefix, url = word:match("^(.-)([hH][tT][tT][pP][sS]?://%S+)$")
-        if not url then
-            -- 2. www. (대소문자 무관)
-            prefix, url = word:match("^(.-)([wW][wW][wW]%.%S+)$")
+    local out = {}
+    local pos, len = 1, #text
+    while pos <= len do
+        local pipe = text:find("|", pos, true)
+        if not pipe then
+            out[#out + 1] = FormatURLsInRun(text:sub(pos))
+            break
         end
-        if not url then
-            -- 3. discord.gg/ (대소문자 무관)
-            prefix, url = word:match("^(.-)([dD][iI][sS][cC][oO][rR][dD]%.[gG][gG]/%S+)$")
+        if pipe > pos then
+            out[#out + 1] = FormatURLsInRun(text:sub(pos, pipe - 1))
         end
-        if not url then
-            -- 4. discord.com/invite/ (대소문자 무관)
-            prefix, url = word:match("^(.-)([dD][iI][sS][cC][oO][rR][dD]%.[cC][oO][mM]/[iI][nN][vV][iI][tT][eE]/%S+)$")
+        local codeEnd = EscapeEnd(text, pipe)
+        if not codeEnd then
+            return text   -- 닫히지 않은 아이콘 코드: 해석하지 않고 원문 보존
         end
+        out[#out + 1] = text:sub(pipe, codeEnd)
+        pos = codeEnd + 1
+    end
+    return table.concat(out)
+end
 
-        if url then
-            return prefix .. FormatOneURL(url)
+-- 이스케이프되지 않은 특정 태그(|h, |r)를 탐색 (중간의 ||는 2글자 건너뜀)
+local function FindUnescapedTag(s, tag, startPos)
+    local pos = startPos
+    local len = #s
+    local tagLen = #tag
+    while pos <= len do
+        if s:sub(pos, pos + 1) == "||" then
+            pos = pos + 2
+        elseif s:sub(pos, pos + tagLen - 1) == tag then
+            return pos, pos + tagLen - 1
+        else
+            local nextPipe = s:find("|", pos + 1, true)
+            if not nextPipe then break end
+            pos = nextPipe
         end
-        return word
-    end)
-    return result
+    end
+    return nil, nil
+end
+
+-- pos 위치에서 시작하는 올바른 하이퍼링크의 끝 위치를 반환 (|H...|h...|h 또는 |c...|H...|h...|h|r)
+local function MatchHyperlinkAt(s, pos)
+    local cur = pos
+    local hasColor = false
+    if s:sub(cur, cur + 1) == "|c" then
+        local colorEnd = s:find("^|c%x%x%x%x%x%x%x%x", cur)
+        if colorEnd then
+            cur = cur + 10
+            hasColor = true
+        end
+    end
+
+    if s:sub(cur, cur + 1) ~= "|H" then
+        return nil
+    end
+
+    -- 링크 데이터 끝 (|h) 탐색
+    local h1_start, h1_end = FindUnescapedTag(s, "|h", cur + 2)
+    if not h1_start then return nil end
+
+    -- 링크 표시문구 끝 (|h) 탐색 (내부의 ||hello 등은 이스케이프된 파이프로 통과)
+    local h2_start, h2_end = FindUnescapedTag(s, "|h", h1_end + 1)
+    if not h2_start then return nil end
+
+    if hasColor then
+        if s:sub(h2_end + 1, h2_end + 2) == "|r" then
+            return h2_end + 2
+        end
+    end
+    return h2_end
 end
 
 local function FindNextHyperlink(s, startPos)
-    local s1, e1 = s:find("|c%x%x%x%x%x%x%x%x|H.-|h.-|h|r", startPos)
-    local s2, e2 = s:find("|H.-|h.-|h", startPos)
-    if s1 and s2 then
-        if s1 <= s2 then return s1, e1 end
-        return s2, e2
-    elseif s1 then
-        return s1, e1
-    elseif s2 then
-        return s2, e2
+    local pos = startPos
+    local len = #s
+    while pos <= len do
+        if s:sub(pos, pos + 1) == "||" then
+            pos = pos + 2
+        else
+            local linkEnd = MatchHyperlinkAt(s, pos)
+            if linkEnd then
+                return pos, linkEnd
+            end
+            local nextPipe = s:find("|", pos + 1, true)
+            if not nextPipe then break end
+            pos = nextPipe
+        end
     end
     return nil, nil
 end
@@ -277,62 +422,52 @@ function CU.ShowCopyBox(rawUrl)
 end
 
 -- =====================================================================
--- 5. 하이퍼링크 클릭 처리 (중복 방지, 좌클릭 전용, 전용 mimdiceurl: 처리)
+-- 5. 하이퍼링크 클릭 처리 (전용 mimdiceurl: 링크, 왼쪽 클릭만, 경로 하나)
 -- =====================================================================
-local lastClickTime = 0
-local lastClickURL = nil
+local URL_LINK_PREFIX = "mimdiceurl:"   -- 11글자, 주소는 12번째 글자부터
 
-local function HandleMimDiceURLClick(rawLink, text, button)
-    -- 1. 활성화 여부 확인
-    if not CU.IsEnabled() then return false end
+local function OpenFromLink(rawLink, button)
+    if not CU.IsEnabled() then return end
+    local btn = PublicString(button)
+    if btn and btn ~= "LeftButton" then return end   -- 오른쪽 클릭 등은 무시
 
-    -- 2. 마우스 왼쪽 버튼 클릭만 허용 (우클릭 등 배제)
-    if button and button ~= "" and button ~= "LeftButton" then
-        return false
-    end
-
-    -- 3. 링크 타입 및 유효성 확인 ("mimdiceurl:" 접두사는 11글자)
     local link = PublicString(rawLink)
-    if not link or link:sub(1, 11) ~= "mimdiceurl:" then
-        return false
-    end
+    if not link or link:sub(1, #URL_LINK_PREFIX) ~= URL_LINK_PREFIX then return end
+    local url = link:sub(#URL_LINK_PREFIX + 1)
+    if url == "" then return end
 
-    -- 4. 11번째 글자 이후(12번째부터)가 실제 URL 본문
-    local u = link:sub(12):gsub("||", "|")
-    if not u or u == "" then return false end
-
-    -- 5. 동일 프레임/시점 중복 호출 방지 가드 (LinkUtil과 SetItemRef 동시 실행 차단)
-    local now = (GetTime and GetTime()) or 0
-    if now == lastClickTime and lastClickURL == u then
-        return true
-    end
-    lastClickTime = now
-    lastClickURL = u
-
-    -- 6. 복사창 열기
-    CU.ShowCopyBox(u)
-
-    -- 7. 불필요하게 뜬 빈 툴팁 닫기
-    if ItemRefTooltip and ItemRefTooltip:IsShown() then
-        ItemRefTooltip:Hide()
-    end
-    return true
+    CU.ShowCopyBox(url)
 end
 
--- LinkUtil 등록
+-- LinkUtil 처리기 인자: (link, text, linkData, contextData)
+-- 클릭한 버튼은 contextData.button 에 들어 있다.
+local function ButtonFromContext(contextData)
+    if type(issecretvalue) == "function" and issecretvalue(contextData) then return nil end
+    if type(contextData) ~= "table" then return nil end
+    return contextData.button
+end
+
+CU.OpenFromLink = OpenFromLink           -- 검사용
+CU.ButtonFromContext = ButtonFromContext -- 검사용
+
 if LinkUtil and LinkUtil.RegisterLinkHandler and LinkUtil.IsLinkHandlerRegistered then
+    -- 지원 클라이언트: 링크 처리기 하나로만 처리한다. (빈 툴팁도 열리지 않음)
     if not LinkUtil.IsLinkHandlerRegistered("mimdiceurl") then
-        LinkUtil.RegisterLinkHandler("mimdiceurl", function(link, text, button)
-            HandleMimDiceURLClick(link, text, button)
+        LinkUtil.RegisterLinkHandler("mimdiceurl", function(link, text, linkData, contextData)
+            OpenFromLink(link, ButtonFromContext(contextData))
+            if LinkProcessorResponse then return LinkProcessorResponse.Handled end
         end)
     end
-end
-
--- SetItemRef 보안 후킹 (LinkUtil이 없는 환경 또는 추가 보완용)
-if hooksecurefunc then
-    hooksecurefunc("SetItemRef", function(link, text, button, chatFrame)
-        HandleMimDiceURLClick(link, text, button)
+    CU.clickPath = "LinkUtil"
+elseif hooksecurefunc then
+    -- 처리기 등록이 없는 클라이언트에서만 SetItemRef 후처리 훅을 쓴다.
+    hooksecurefunc("SetItemRef", function(link, text, button)
+        if type(issecretvalue) == "function" and issecretvalue(link) then return end
+        if type(link) ~= "string" or link:sub(1, #URL_LINK_PREFIX) ~= URL_LINK_PREFIX then return end
+        OpenFromLink(link, button)
+        if ItemRefTooltip and ItemRefTooltip:IsShown() then ItemRefTooltip:Hide() end
     end)
+    CU.clickPath = "SetItemRef"
 end
 
 -- =====================================================================

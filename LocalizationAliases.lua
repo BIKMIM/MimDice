@@ -286,7 +286,7 @@ MimDice_RegisterSourceAliases({
     ["내가 보낸 대화는 소리 울리지 않기"] = "Do not play sound for my own messages",
     ["채팅창 링크/웹 주소 클릭하여 복사하기"] = "Click chat links / URLs to copy",
     ["채팅창 링크/웹주소 클릭하여 복사하기"] = "Click chat links / URLs to copy",
-    ["URL 복사하기"] = "Copy URL",
+    ["URL 복사하기"] = "Copy Chat URLs",
     ["웹 주소 복사"] = "Copy URL",
     ["Ctrl+C 로 복사하세요"] = "Press Ctrl+C to copy",
     ["채팅창에 올라온 웹 주소(http, https, www, discord 등)를 클릭하면 복사창이 열립니다."] = "Click web addresses (http, https, www, discord, etc.) in chat to open a copy window.",
