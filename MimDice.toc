@@ -27,6 +27,7 @@ PowerInfusionConfig.lua
 BloodlustReminder.lua
 BloodlustReminderConfig.lua
 TradeWhisper.lua
+ChatURL.lua
 SoundAlert.lua
 
 # --- Core Lua Logic ---

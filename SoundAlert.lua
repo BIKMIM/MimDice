@@ -532,6 +532,7 @@ function SA_InitDB()
     -- =================================================================
     -- 대화 소리 설정: 계정 공용 (모든 채널 기본값은 꺼짐 & 사운드 비워짐)
     -- =================================================================
+    if not MimDiceDB.chatURL then MimDiceDB.chatURL = { enabled = true } end
     if not MimDiceDB.chatSound then MimDiceDB.chatSound = {} end
     local cs = MimDiceDB.chatSound
     if cs.muteDefaultWhisper == nil then cs.muteDefaultWhisper = true end
@@ -6707,10 +6708,57 @@ function SA.CreateChatWindow()
     title:SetText(L("Chat Sounds"))
     title:SetTextColor(1, 0.82, 0)
 
+    -- ── << URL 복사하기 >> 섹션 (상단 노란색) ──────────────────────────
+    local urlSectionLabel = win:CreateFontString(nil, "OVERLAY")
+    urlSectionLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -34)
+    urlSectionLabel:SetFont(MimDiceFontPath(), 12, "OUTLINE")
+    urlSectionLabel:SetText(L("URL 복사하기"))
+    urlSectionLabel:SetTextColor(1, 0.82, 0)
+
+    -- 채팅창 링크/웹주소 클릭하여 복사하기
+    local chatURLCb = CreateFrame("CheckButton", "SA_ChatURLCheck", win, "UICheckButtonTemplate")
+    chatURLCb:SetSize(22, 22)
+    chatURLCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -54)
+    chatURLCb:SetChecked(MimDiceChatURL and MimDiceChatURL.IsEnabled())
+    chatURLCb:SetScript("OnClick", function(self)
+        if MimDiceChatURL then
+            MimDiceChatURL.SetEnabled(self:GetChecked() and true or false)
+        elseif MimDiceDB then
+            MimDiceDB.chatURL = MimDiceDB.chatURL or {}
+            MimDiceDB.chatURL.enabled = self:GetChecked() and true or false
+        end
+    end)
+    chatURLCb:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(L("채팅창 링크/웹주소 클릭하여 복사하기"))
+        GameTooltip:AddLine(L("채팅창에 올라온 웹 주소(http, https, www, discord 등)를 클릭하면 복사창이 열립니다."), 1, 1, 1, true)
+        GameTooltip:Show()
+    end)
+    chatURLCb:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    win.chatURLCb = chatURLCb
+
+    local chatURLLabel = win:CreateFontString(nil, "OVERLAY")
+    chatURLLabel:SetPoint("LEFT", chatURLCb, "RIGHT", 2, 0)
+    chatURLLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    chatURLLabel:SetText(L("채팅창 링크/웹주소 클릭하여 복사하기"))
+    chatURLLabel:SetTextColor(0.9, 0.9, 0.9)
+
+    local divider1 = win:CreateTexture(nil, "ARTWORK")
+    divider1:SetSize(350, 1)
+    divider1:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -82)
+    divider1:SetColorTexture(0.5, 0.5, 0.5, 0.6)
+
+    -- ── << 대화 소리 >> 섹션 (노란색) ───────────────────────────────
+    local chatSoundSectionLabel = win:CreateFontString(nil, "OVERLAY")
+    chatSoundSectionLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -90)
+    chatSoundSectionLabel:SetFont(MimDiceFontPath(), 12, "OUTLINE")
+    chatSoundSectionLabel:SetText(L("대화 소리"))
+    chatSoundSectionLabel:SetTextColor(1, 0.82, 0)
+
     -- 귓속말 알림 사용 시 와우 기본 귓속말 소리 끄기
     local muteWhisperCb = CreateFrame("CheckButton", "SA_ChatMuteWhisperCheck", win, "UICheckButtonTemplate")
     muteWhisperCb:SetSize(22, 22)
-    muteWhisperCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -36)
+    muteWhisperCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -110)
     muteWhisperCb:SetChecked(MimDiceDB and MimDiceDB.chatSound and MimDiceDB.chatSound.muteDefaultWhisper ~= false)
     muteWhisperCb:SetScript("OnClick", function(self)
         if MimDiceDB and MimDiceDB.chatSound then
@@ -6729,7 +6777,7 @@ function SA.CreateChatWindow()
     -- 내가 보낸 대화는 소리 울리지 않기
     local ignoreSelfCb = CreateFrame("CheckButton", "SA_ChatIgnoreSelfCheck", win, "UICheckButtonTemplate")
     ignoreSelfCb:SetSize(22, 22)
-    ignoreSelfCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -60)
+    ignoreSelfCb:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -132)
     ignoreSelfCb:SetChecked(MimDiceDB and MimDiceDB.chatSound and MimDiceDB.chatSound.ignoreSelf ~= false)
     ignoreSelfCb:SetScript("OnClick", function(self)
         if MimDiceDB and MimDiceDB.chatSound then
@@ -6744,21 +6792,21 @@ function SA.CreateChatWindow()
     ignoreSelfLabel:SetText(L("내가 보낸 대화는 소리 울리지 않기"))
     ignoreSelfLabel:SetTextColor(0.9, 0.9, 0.9)
 
-    local divider = win:CreateTexture(nil, "ARTWORK")
-    divider:SetSize(350, 1)
-    divider:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -88)
-    divider:SetColorTexture(0.5, 0.5, 0.5, 0.6)
+    local divider2 = win:CreateTexture(nil, "ARTWORK")
+    divider2:SetSize(350, 1)
+    divider2:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -158)
+    divider2:SetColorTexture(0.5, 0.5, 0.5, 0.6)
 
     -- 1. 사설/커스텀 채널 추가
     local inputLabel = win:CreateFontString(nil, "OVERLAY")
-    inputLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -98)
+    inputLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -168)
     inputLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     inputLabel:SetText(L("1. 사설/커스텀 채널 추가 (채널 번호 또는 이름)"))
     inputLabel:SetTextColor(0.9, 0.9, 0.9)
 
     local inputBox = CreateFrame("EditBox", "SA_ChatChannelInput", win, "InputBoxTemplate")
     inputBox:SetSize(200, 22)
-    inputBox:SetPoint("TOPLEFT", win, "TOPLEFT", 20, -118)
+    inputBox:SetPoint("TOPLEFT", win, "TOPLEFT", 20, -188)
     inputBox:SetAutoFocus(false)
     inputBox:SetFont(MimDiceFontPath(), 11, "")
     SA_WirePlaceholder(inputBox)
@@ -6772,7 +6820,7 @@ function SA.CreateChatWindow()
     addBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
 
     local scrollFrame = CreateFrame("ScrollFrame", "SA_ChatListScrollFrame", win, "UIPanelScrollFrameTemplate")
-    scrollFrame:SetPoint("TOPLEFT", win, "TOPLEFT", 10, -172)
+    scrollFrame:SetPoint("TOPLEFT", win, "TOPLEFT", 10, -238)
     scrollFrame:SetPoint("BOTTOMRIGHT", win, "BOTTOMRIGHT", -30, 10)
     win.scrollFrame = scrollFrame
 
@@ -6833,7 +6881,7 @@ function SA.CreateChatWindow()
 
     -- 2. 채널별 사운드 개별 설정
     local listTitle = win:CreateFontString(nil, "OVERLAY")
-    listTitle:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -152)
+    listTitle:SetPoint("TOPLEFT", win, "TOPLEFT", 15, -218)
     listTitle:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     listTitle:SetText(L("2. 채널별 사운드 개별 설정"))
     listTitle:SetTextColor(0.8, 0.8, 0.8)
@@ -6853,6 +6901,9 @@ function SA_RefreshChatList()
     end
     if SA.ChatWindow.ignoreSelfCb then
         SA.ChatWindow.ignoreSelfCb:SetChecked(cs.ignoreSelf ~= false)
+    end
+    if SA.ChatWindow.chatURLCb then
+        SA.ChatWindow.chatURLCb:SetChecked(MimDiceChatURL and MimDiceChatURL.IsEnabled())
     end
 
     local scrollChild = SA.ChatWindow.scrollChild
