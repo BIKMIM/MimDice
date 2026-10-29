@@ -1,5 +1,5 @@
 -- 마력 주입: 블리자드가 실제 오라 적용에 맞춰 소리를 재생한다.
--- 블러드와 별개다. 소리 등록은 ActionSounds와 같은 기준을 따른다.
+-- 블러드와 별개다. 소리 등록은 비전투 상태를 기준으로 등록한다.
 -- 전투 중만 아니면 등록하고, 로딩 화면(PLAYER_ENTERING_WORLD)마다 새로 등록한다.
 -- 레이드 안에서 리로드해도 Map/Chat 제한과 무관하게 바로 다시 등록된다.
 -- 새 등록이 성공한 뒤에만 이전 등록을 지운다. 새 등록이 막혀도 기존 소리는 계속 난다.
@@ -85,7 +85,7 @@ function PI.InitDB()
     if settings.barColor == nil then settings.barColor = { r = 0.2, g = 0.6, b = 1 } end
 end
 
--- 소리 등록 기준. ActionSounds와 같이 전투 중인지만 본다.
+-- 소리 등록 기준. 전투 중인지만 본다.
 local function CanAddSound()
     if type(InCombatLockdown) ~= "function" then return true end
     local ok, combat = pcall(InCombatLockdown)
@@ -360,7 +360,7 @@ function PI.Init(callback)
             loading = false
             suppressUntil = GetTime() + 3
             SyncPresence(true)
-            -- ActionSounds와 같이 지역에 들어올 때마다 등록을 새로 한다.
+            -- 지역에 들어올 때마다 등록을 새로 갱신한다.
             SyncSound(event == "PLAYER_ENTERING_WORLD")
             SyncDisplay()
             ScheduleDisplayRelease()

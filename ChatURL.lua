@@ -163,16 +163,42 @@ local function HasEnclosingQuote(prefix)
     return false
 end
 
+-- 색상 변경 코드(|c..., |cn...:, |r)는 시각적 문자를 출력하지 않으므로 앞뒤 문자열이 시각적으로 인접한다.
+-- 반면 아이콘(|T), 아틀라스(|A), 보호된 이름(|K), 리터럴 파이프(||), 줄바꿈(|n) 등은 문맥을 끊는다.
+local function IsColorCode(text, pos, codeEnd)
+    local tag = text:sub(pos, codeEnd)
+    if tag:match("^|c%x%x%x%x%x%x%x%x$") then return true end
+    if tag:match("^|cn[^:|]*:$") then return true end
+    if tag == "|r" then return true end
+    return false
+end
+
 -- 표시 코드가 없는 순수 글자 구간에서 URL을 링크로 바꾼다.
-local function FormatURLsInRun(run)
-    return (run:gsub("%S+", function(word)
+-- contextPrefix: 직전 색상 코드 바로 앞에 있던 여는 인용부호 문맥 (예: '|cffff0000)
+local function FormatURLsInRun(run, contextPrefix)
+    local hasURL = false
+    local isFirstWord = true
+    local hasLeadingSpace = run:match("^%s") ~= nil
+    local result = run:gsub("%S+", function(word)
         local prefix, url = FindURLInWord(word)
         if url then
-            local hasOpenQuote = HasEnclosingQuote(prefix)
+            local effectivePrefix = prefix
+            if isFirstWord and not hasLeadingSpace and contextPrefix then
+                effectivePrefix = contextPrefix .. prefix
+            end
+            isFirstWord = false
+            -- effectivePrefix 끝이 영문자나 밑줄이면 글자에 바로 붙은 것이므로 주소로 보지 않는다.
+            if effectivePrefix ~= "" and effectivePrefix:match("[%w_]$") then
+                return word
+            end
+            hasURL = true
+            local hasOpenQuote = HasEnclosingQuote(effectivePrefix)
             return prefix .. FormatOneURL(url, hasOpenQuote)
         end
+        isFirstWord = false
         return word
-    end))
+    end)
+    return result, hasURL
 end
 
 -- pos 위치(파이프)에서 시작하는 표시 코드의 끝 위치를 돌려준다.
@@ -210,18 +236,38 @@ local function FormatURLsInPlainText(text)
 
     local out = {}
     local pos, len = 1, #text
+    local trailingContext = nil
+
     while pos <= len do
         local pipe = text:find("|", pos, true)
         if not pipe then
-            out[#out + 1] = FormatURLsInRun(text:sub(pos))
+            local run = text:sub(pos)
+            local formattedRun = FormatURLsInRun(run, trailingContext)
+            out[#out + 1] = formattedRun
             break
         end
         if pipe > pos then
-            out[#out + 1] = FormatURLsInRun(text:sub(pos, pipe - 1))
+            local run = text:sub(pos, pipe - 1)
+            local formattedRun, hasURL = FormatURLsInRun(run, trailingContext)
+            out[#out + 1] = formattedRun
+            -- 순수 기호/텍스트 run(URL 없음)이 공백 없이 끝날 때만 다음 색상 코드 뒤 URL에 접두사 문맥을 전달
+            if hasURL or run:match("%s$") then
+                trailingContext = nil
+            else
+                local trailingWord = run:match("(%S+)$")
+                if run:find("%s") or not trailingContext then
+                    trailingContext = trailingWord
+                else
+                    trailingContext = trailingContext .. trailingWord
+                end
+            end
         end
         local codeEnd = EscapeEnd(text, pipe)
         if not codeEnd then
             return text   -- 닫히지 않은 아이콘 코드: 해석하지 않고 원문 보존
+        end
+        if not IsColorCode(text, pipe, codeEnd) then
+            trailingContext = nil
         end
         out[#out + 1] = text:sub(pipe, codeEnd)
         pos = codeEnd + 1

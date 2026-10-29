@@ -141,6 +141,27 @@ cases = [
     # 하이퍼링크 텍스트 내 || 포함 및 뒤이어 오는 URL
     ('hyperlink with escaped pipe in text', "|Hitem:1|h[||hello]|h https://discord.gg/AbC",
      "|Hitem:1|h[||hello]|h " + link("https://discord.gg/AbC")),
+    ('hyperlink with four pipes in text', "|Hitem:1|h[||||hello]|h https://discord.gg/AbC",
+     "|Hitem:1|h[||||hello]|h " + link("https://discord.gg/AbC")),
+    ('hyperlink with escaped H and r in text', "|Hitem:1|h[||H||r]|h https://discord.gg/AbC",
+     "|Hitem:1|h[||H||r]|h " + link("https://discord.gg/AbC")),
+    ('url immediately after hyperlink without space', "|Hitem:1|h[검]|hhttps://discord.gg/AbC",
+     "|Hitem:1|h[검]|h" + link("https://discord.gg/AbC")),
+    ('player link followed by url', "|cff0070dd|Hplayer:BIK|h[BIK]|h|r: https://discord.gg/AbC",
+     "|cff0070dd|Hplayer:BIK|h[BIK]|h|r: " + link("https://discord.gg/AbC")),
+    # 색상 코드 경계의 작은따옴표 문맥 보존
+    ('color wrapped with outer quotes', "'|cffff0000https://example.com/?name=O\'Reilly'|r",
+     "'|cffff0000" + link("https://example.com/?name=O\'Reilly") + "'|r"),
+    ('named color wrapped with outer quotes', "'|cnRED_FONT_COLOR:https://example.com/?name=O\'Reilly'|r",
+     "'|cnRED_FONT_COLOR:" + link("https://example.com/?name=O\'Reilly") + "'|r"),
+    ('prefix with quote and color wrap', "공략: '|cffff0000https://example.com/?name=O\'Reilly'|r",
+     "공략: '|cffff0000" + link("https://example.com/?name=O\'Reilly") + "'|r"),
+    ('word glued before color code ignored', "abc|cffff0000www.example.com|r",
+     "abc|cffff0000www.example.com|r"),
+    ('multiple color codes with apostrophe prefix', "O|cffff0000'|rhttps://example.com/?q='wow'",
+     "O|cffff0000'|r" + link("https://example.com/?q='wow'")),
+    ('color code before apostrophe with preceding letter', "O|cffff0000'https://example.com/?q='wow'",
+     "O|cffff0000'" + link("https://example.com/?q='wow'")),
 ]
 for name, src, expected in cases:
     once = fmt(src)

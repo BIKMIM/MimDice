@@ -692,7 +692,7 @@ end
 
 -- =====================================================================
 -- 차단 성공 감지
--- ActionSounds와 같이 '내 차단기 성공' 후 '적 시전 중단'을 짧은 창 안에서 묶는다.
+-- '내 차단기 성공' 후 '적 시전 중단'을 짧은 유효 시간 창 안에서 묶는다.
 -- 0.25초는 재생 지연이 아니라 두 이벤트의 상관관계 유효 시간이다.
 -- 12.1에서 아래 이벤트 인자는 secret이 될 수 있으므로 항상 secret -> type -> 비교 순서를 지킨다.
 -- =====================================================================
@@ -772,7 +772,7 @@ local function SA_RecordInterruptAttempt(unit, spellID)
         SA_interruptSourceGUID = SA_PublicUnitGUID(SA_interruptSourceUnit)
         SA_interruptExpiresAt = GetTime() + SA_INTERRUPT_WINDOW
     elseif unit == "player" and spellID == SA_DIVINE_TOLL_SPELL_ID and SA_IsProtectionPaladin() then
-        -- 방어 성기사 신성한 종은 다중 투사체 시간을 고려한 ActionSounds의 0.35초 예외를 따른다.
+        -- 방어 성기사 신성한 종은 다중 투사체 도달 시간을 고려해 0.35초 유효 시간을 둔다.
         SA_divineTollExpiresAt = GetTime() + SA_DIVINE_TOLL_WINDOW
     end
 end
@@ -799,7 +799,7 @@ local function SA_HandleInterruptResult(unit, interruptedBy)
 
     local now = GetTime()
 
-    -- ActionSounds의 방특 신성한 종 보완: 짧은 창 내 첫 중단 신호를 한 번만 사용한다.
+    -- 방어 성기사 신성한 종: 짧은 유효 시간 창 내 첫 중단 신호를 한 번만 사용한다.
     if SA_divineTollExpiresAt > 0 and now <= SA_divineTollExpiresAt then
         SA_ClearInterruptAttempt()
         SA_PlaySound(alert)
