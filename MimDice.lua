@@ -1,7 +1,7 @@
 -- Author         : BIK
 -- Create Date    : 2023-02-02 오후 05:37:12
 -- Last Updated   : 2026-10-28 오전 01:10:12
--- Version        : v1.15.27
+-- Version        : v1.15.28
 
 ---@diagnostic disable: undefined-global, param-type-mismatch, undefined-field, cast-local-type -- 전역 함수 정의 에러, 매개변수 타입 불일치, 정의되지 않은 필드, 로컬 타입 캐스팅 무시
 
