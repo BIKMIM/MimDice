@@ -5738,7 +5738,7 @@ function SA_SkinRefreshTabs()
                 button:SetBackdropBorderColor(0.5, 0.5, 0.5, 1)
             end
         end
-        button.icon:SetVertexColor(1, 1, 1, 1)
+        if button.icon then button.icon:SetVertexColor(1, 1, 1, 1) end
     end
 end
 
@@ -5836,7 +5836,6 @@ local function SA_CreateTab()
     end
 
     local button = CreateFrame("Button", "SA_SettingsButton", mainWin, "BackdropTemplate")
-    SA.SettingsButton = button
     button:SetSize(34, 44)
     button:SetPoint("TOPLEFT", mainWin, "TOPRIGHT", -4, -30)
     -- 주변 UI와 어울리는 기존의 부드러운 둥근 툴팁 테두리 사용
@@ -5859,6 +5858,8 @@ local function SA_CreateTab()
         GameTooltip:Show()
     end)
     button:SetScript("OnLeave", function() GameTooltip:Hide() end)
+    -- SetBackdrop이 OnSizeChanged를 즉시 부를 수 있어, 준비가 끝난 뒤 등록한다.
+    SA.SettingsButton = button
     SA_SkinRefreshTabs()
     SA_SkinRegisterWindow(shell)
 end
