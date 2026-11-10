@@ -30,6 +30,8 @@ BloodlustReminderConfig.lua
 TradeWhisper.lua
 ChatURL.lua
 SoundAlert.lua
+RollProgress.lua
+RollProgressConfig.lua
 
 # --- Core Lua Logic ---
 MimDice.lua

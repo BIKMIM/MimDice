@@ -18,8 +18,12 @@ function Reminder.GetSettings()
     if not MimDiceDB then return nil end
     if type(MimDiceDB.bloodlustReadyAlert) ~= "table" then MimDiceDB.bloodlustReadyAlert = {} end
     local config = MimDiceDB.bloodlustReadyAlert
+    -- 내장 소리는 숫자 번호 또는 밈다이스 효과음 경로(문자열)다. 숫자 문자열은 숫자로 복구한다.
+    if type(config.soundKey) == "string" and tonumber(config.soundKey) then config.soundKey = tonumber(config.soundKey) end
+    if type(config.soundID) == "string" and tonumber(config.soundID) then config.soundID = tonumber(config.soundID) end
+    local bundledKey = MimDiceSoundFiles and MimDiceSoundFiles.IsBundledPath(config.soundKey)
     for key, value in pairs(defaults) do
-        if type(config[key]) ~= type(value) then config[key] = value end
+        if type(config[key]) ~= type(value) and not (key == "soundKey" and bundledKey) then config[key] = value end
     end
     if type(config.color) ~= "table" then config.color = {} end
     for key, value in pairs({ r = 1, g = 0.82, b = 0 }) do

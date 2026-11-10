@@ -126,7 +126,7 @@ end }
 def make_vm(source):
     vm = LuaRuntime(unpack_returned_tuples=True)
     vm.execute(MOCK)
-    for name in ("BuffBarDefaults.lua", "SoundFiles.lua", "SoundList.lua", "PowerInfusion.lua"):
+    for name in ("BuffBarDefaults.lua", "SoundFiles.lua", "SoundList.lua", "PowerInfusion.lua", "RollProgress.lua", "RollProgressConfig.lua"):
         vm.execute((ROOT / name).read_text(encoding="utf-8-sig"))
     vm.execute(source + "\n" + EXPORT)
     vm.execute("SA_InitDB()")
@@ -337,17 +337,18 @@ case("soundkit catalog: only curated, existing, non-duplicate effects are listed
 local found, testSound = {}, nil
 for _, sound in ipairs(audit.presetSounds()) do
     found[sound.id] = (found[sound.id] or 0) + 1
-    if sound.id == 700001 then testSound = sound end
+    if sound.id == 700002 then testSound = sound end
 end
-assert(found[700001] == 1 and found[700002] == 1)
+assert(found[700001] == nil)   -- 소리가 안 나는 보스 귓속말 경고는 뺐다
+assert(found[700002] == 1)
 assert(found[700003] == nil)   -- 목록에 없는 UI 소리는 빠진다
 assert(found[567458] == 1)     -- 기존 내장음과 같은 번호는 중복 추가하지 않는다
-assert(testSound.isSoundKit and testSound.name == '보스 귓속말 경고')
+assert(testSound.isSoundKit and testSound.name == '역할 확인')
 local picked = { enabled = true }
 audit.setPreset(picked, testSound)
-assert(picked.soundType == 'preset' and picked.soundIsKit and picked.soundKey == 700001)
+assert(picked.soundType == 'preset' and picked.soundIsKit and picked.soundKey == 700002)
 audit.play(picked)
-assert(#state.plays == 1 and state.plays[1].kind == 'kit' and state.plays[1].value == 700001)
+assert(#state.plays == 1 and state.plays[1].kind == 'kit' and state.plays[1].value == 700002)
 ''')
 case("soundkit catalog: legacy file equivalents stay unique without changing saved sounds", '''
 local found, names = {}, {}
@@ -393,6 +394,29 @@ assert(entry.soundType == 'custom' and entry.soundFile == '짤.mp3' and entry.so
 audit.play(entry)
 assert(#state.plays >= 1 and state.plays[1].kind == 'file')
 assert(state.plays[1].value:find('짤.mp3', 1, true))
+''')
+case("legacy formats: numeric strings recover, valid values and custom names stay", '''
+local cs = MimDiceDB.chatSound
+cs.channels.BN_WHISPER = { enabled = true, soundType = 'preset', soundKey = '18019', soundName = '배틀넷 알림', soundFile = '돌진.mp3', isSystem = true }
+cs.channels.WHISPER = { enabled = true, soundType = 'preset', soundKey = 567402, soundName = '친구 접속', soundFile = '' , isSystem = true }
+cs.channels.GUILD = { enabled = true, soundType = 'id', soundKey = 12345, soundFile = '', isSystem = true }          -- 옛 ID 형식
+cs.channels.PARTY = { enabled = true, soundType = 'id', soundID = '54321', soundFile = '', isSystem = true }          -- 숫자 문자열 ID
+cs.channels.RAID = { enabled = true, soundType = 'custom', soundFile = 'battle01[53225].mp3', soundKey = 567397, isSystem = true }
+cs.channels.SAY = { enabled = true, soundType = 'preset', soundKey = 'broken.mp3', soundName = '예전 이름', isSystem = true }
+for _ = 1, 3 do SA_InitDB() end   -- 여러 번 불러도 결과가 같아야 한다
+local c = cs.channels
+assert(c.BN_WHISPER.soundKey == 18019 and c.BN_WHISPER.soundFile == '돌진.mp3' and c.BN_WHISPER.soundType == 'preset')
+assert(c.WHISPER.soundKey == 567402)
+assert(c.GUILD.soundType == 'id' and c.GUILD.soundID == 12345)
+assert(c.PARTY.soundID == 54321)
+assert(c.RAID.soundType == 'custom' and c.RAID.soundFile == 'battle01[53225].mp3' and c.RAID.soundKey == 567397)
+assert(c.SAY.soundKey == nil)   -- 복구할 수 없는 값만 정리
+for _, k in ipairs({ 'BN_WHISPER', 'WHISPER', 'GUILD', 'PARTY', 'RAID' }) do
+    state.plays = {}
+    audit.play(c[k], 'Dialog')
+    assert(#state.plays >= 1, k .. ' must still play')
+end
+assert(state.plays[1].kind == 'file')
 ''')
 case("power infusion: SoundKit selection reports native AuraSound limitation", '''
 local settings = MimDicePowerInfusion.GetSettings()

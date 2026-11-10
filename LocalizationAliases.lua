@@ -58,7 +58,6 @@ MimDice_RegisterSourceAliases({
     ["공격대 경고"] = "Raid Warning",
     ["WoW 효과음"] = "WoW Effects",
     ["밈다이스 효과음"] = "MimDice Effects",
-    ["보스 귓속말 경고"] = "Boss Whisper Warning",
     ["알람 시계 1"] = "Alarm Clock 1",
     ["알람 시계 2"] = "Alarm Clock 2",
     ["알람 시계 3"] = "Alarm Clock 3",

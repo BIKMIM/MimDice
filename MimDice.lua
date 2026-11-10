@@ -1,6 +1,6 @@
 -- Author         : BIK
 -- Create Date    : 2023-02-02 오후 05:37:12
--- Last Updated   : 2026-11-10 오후 21:48:46
+-- Last Updated   : 2026-11-11 오전 00:10:01
 -- Version        : v1.15.30
 
 ---@diagnostic disable: undefined-global, param-type-mismatch, undefined-field, cast-local-type -- 전역 함수 정의 에러, 매개변수 타입 불일치, 정의되지 않은 필드, 로컬 타입 캐스팅 무시
@@ -808,6 +808,21 @@ function MimDice_GROUP_ROSTER_UPDATE()
         UpdateClassIconsBasedOnParty()
         MimDice_UpdateList()
     end)
+    if MimDiceRollProgress then pcall(MimDiceRollProgress.OnRosterChanged) end
+end
+
+-- 주사위 진행 오버레이에 현재 구성원과 굴림 기록을 넘긴다.
+-- 이름을 못 읽은 구성원이 있으면 rosterComplete=false로 알려 거짓 '전원 완료'를 막는다.
+if MimDiceRollProgress then
+    MimDiceRollProgress.SetProvider(function()
+        local members = GetPlayerList()
+        local n = GetNumGroupMembers()
+        local complete = false
+        if not (issecretvalue and issecretvalue(n)) and type(n) == "number" and type(members) == "table" then
+            complete = #members >= n
+        end
+        return members, rollNames, complete
+    end)
 end
 
 -- 애드온 초기 로딩 시 호출되는 함수
@@ -1037,6 +1052,11 @@ function MimDice_CHAT_MSG_SYSTEM(msg)
                     end)
                 end
                 MimDice_UpdateList()
+                -- 굴린 인원/전체 인원 오버레이 (오류가 나도 주사위 기록에는 영향 없게)
+                if MimDiceRollProgress then
+                    local isFirstRoll = rollNames[actualFullName] == 1
+                    pcall(MimDiceRollProgress.OnRoll, actualFullName, isFirstRoll)
+                end
             end
         end)
         
@@ -1430,6 +1450,7 @@ function MimDice_ClearRolls()
     rollNames = {}
     RankList = {}
     MimDice_LastRollTime = 0
+    if MimDiceRollProgress then pcall(MimDiceRollProgress.OnReset) end
     
     DEFAULT_CHAT_FRAME:AddMessage(L("주사위가 초기화 되었습니다."))
     

@@ -130,7 +130,6 @@ local SOUND_CATEGORIES = {
 -- 아래 번호 중복 검사만으로는 퀘스트 완료/경보/귓속말 등의 중복을 걸러낼 수 없다.
 do
     local CURATED_SOUNDKITS = {
-        { key = "UI_RAID_BOSS_WHISPER_WARNING", name = "보스 귓속말 경고" },
         { key = "ALARM_CLOCK_WARNING_1",        name = "알람 시계 1" },
         { key = "ALARM_CLOCK_WARNING_2",        name = "알람 시계 2" },
         { key = "ALARM_CLOCK_WARNING_3",        name = "알람 시계 3" },
@@ -184,6 +183,11 @@ end
 
 -- 저장된 표시명은 이전 언어일 수 있으므로 soundKey를 우선해 현재 언어 이름을 찾는다.
 local function SA_PresetSoundName(entry)
+    -- 재생할 수 없는 값이면 예전 이름 대신 '사운드 선택...'을 보여 다시 고르도록 한다.
+    local key = entry and entry.soundKey
+    if type(key) ~= "number" and not MimDiceSoundFiles.IsBundledPath(key) then
+        return L("사운드 선택...")
+    end
     if entry and entry.soundKey then
         for _, category in ipairs(SOUND_CATEGORIES) do
             for _, sound in ipairs(category.sounds) do
@@ -630,6 +634,9 @@ function SA_InitDB()
         cch.isSystem = false
     end
 
+    -- 주사위 진행 알림 저장값 (기존 값 보존, 빈 칸만 기본값)
+    if MimDiceRollProgress then MimDiceRollProgress.GetSettings() end
+
     local migrateLegacyPresetFile = not MimDiceDB.soundTypeMigrationV1
 
     -- ── ID 타입 1회 마이그레이션 ──
@@ -641,6 +648,10 @@ function SA_InitDB()
     -- 숫자가 아닌 문자열(예전 파일명 잔재)은 ID 로도 내장으로도 인정하지 않고 제거한다.
     local function SA_FixSoundFields(e)
         if not e then return end
+        -- 0) "18019"처럼 숫자로만 된 문자열은 확실히 복구 가능한 형식이므로 숫자로 바꾼다.
+        --    (이름은 보이는데 재생 불가로 판정되는 상태 방지)
+        if type(e.soundKey) == "string" and tonumber(e.soundKey) then e.soundKey = tonumber(e.soundKey) end
+        if type(e.soundID) == "string" and tonumber(e.soundID) then e.soundID = tonumber(e.soundID) end
         -- 1) soundKey 에 든 파일명 잔재 제거 (+표시명 초기화)
         if type(e.soundKey) == "string" and tonumber(e.soundKey) == nil
            and not MimDiceSoundFiles.IsBundledPath(e.soundKey) then
@@ -998,6 +1009,23 @@ local SA_SKIN_PRESETS = {
     { key = "demonhunter", name = "악마사냥꾼 딥퍼플", alpha = 0.93, base = {0.14,0.08,0.16}, accentText = {0.64,0.19,0.79}, accentHover = {0.35,0.10,0.43} },
     { key = "evoker",      name = "기원사 에메랄드",   alpha = 0.93, base = {0.08,0.13,0.12}, accentText = {0.20,0.58,0.50}, accentHover = {0.11,0.32,0.28} },
 }
+-- 커스텀 슬롯 값을 현재 스킨 값으로 불러온다.
+local function SA_SkinLoadCustom(sk)
+    local c = sk.custom
+    sk.alpha = c.alpha or 0.93
+    sk.accentTextA = c.accentTextA or 1
+    sk.accentHoverA = c.accentHoverA or 0.30
+    sk.base = { r = c.base.r, g = c.base.g, b = c.base.b }
+    sk.accentText = { r = c.accentText.r, g = c.accentText.g, b = c.accentText.b }
+    sk.accentHover = { r = c.accentHover.r, g = c.accentHover.g, b = c.accentHover.b }
+    local cbh = c.btnHover or c.accentHover
+    sk.btnHover = { r = cbh.r, g = cbh.g, b = cbh.b }
+    sk.btnHoverA = c.btnHoverA or 0.30
+    local cbt = c.btnText or { r = 0.92, g = 0.92, b = 0.92 }
+    sk.btnText = { r = cbt.r, g = cbt.g, b = cbt.b }
+    sk.btnTextA = c.btnTextA or 1
+end
+
 local function SA_SkinPresetByKey(key)
     for _, p in ipairs(SA_SKIN_PRESETS) do if p.key == key then return p end end
     return SA_SKIN_PRESETS[1]
@@ -1019,6 +1047,24 @@ local function SA_SkinPal()
     local ah = sk.accentHover or { r = 0.35, g = 0.65, b = 1 }
     local bh = sk.btnHover or ah
     local bt = sk.btnText or { r = 0.92, g = 0.92, b = 0.92 }
+    if sk.preset == "custom" then
+        -- 밈레이드 스타일: 테두리는 배경보다 밝은 가는 선, 탭/버튼/입력칸은 한 단계 밝은 면.
+        local function lift(add)
+            return math.min(1, b.r + add), math.min(1, b.g + add * 1.1), math.min(1, b.b + add * 1.3)
+        end
+        return {
+            win    = { b.r, b.g, b.b, sk.alpha or 0.93 },
+            border = { lift(0.15) },
+            tab    = { lift(0.032) },
+            btn    = { lift(0.05) },
+            field  = { lift(0.05) },
+            tint   = { lift(0.20) },
+            accent = { at.r, at.g, at.b, sk.accentTextA or 1 },
+            hover  = { ah.r, ah.g, ah.b, sk.accentHoverA or 0.30 },
+            btnHover = { bh.r, bh.g, bh.b, sk.btnHoverA or 0.30 },
+            btnText  = { bt.r, bt.g, bt.b, sk.btnTextA or 1 },
+        }
+    end
     return {
         win    = { b.r, b.g, b.b, sk.alpha or 0.93 },   -- 창 배경 (기준색 + 투명도)
         border = { shade(0.45) },            -- 테두리: 배경보다 두 단계 어둡게
@@ -2514,6 +2560,23 @@ local function SA_CreateBuffConfig(key)
             OpenSoundPicker = SA_OpenSoundPicker,
             PresetSoundName = SA_PresetSoundName,
             MakeColorRow = SA_MakeColorRow,
+            MakeNumberSlider = SA_MakeNumberSlider,
+            AddPosRow = SA_AddPosRow,
+            ChainTabEnter = SA_ChainTabEnter,
+            SkinRegisterWindow = SA_SkinRegisterWindow,
+        })
+        SA_BuffConfigs[key] = win
+        return win
+    end
+    if key == "ROLL_PROGRESS" then
+        local win = MimDiceRollProgress.CreateConfig(SA_OptionWindow, {
+            WireBundleDrag = SA_WireBundleDrag,
+            MakeTypeSelector = SA_MakeTypeSelector,
+            WirePlaceholder = SA_WirePlaceholder,
+            SetBoxValue = SA_SetBoxValue,
+            OpenSoundPicker = SA_OpenSoundPicker,
+            PresetSoundName = SA_PresetSoundName,
+            SetPresetSound = SA.SetPresetSound,
             MakeNumberSlider = SA_MakeNumberSlider,
             AddPosRow = SA_AddPosRow,
             ChainTabEnter = SA_ChainTabEnter,
@@ -5711,6 +5774,7 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
         SA_InitDB()
         MimDicePowerInfusion.Init(SA_PlaySound)
         MimDiceBloodlustReminder.Init(SA_QueryBloodlustAuraPresence, SA_PlaySound)
+        if MimDiceRollProgress then MimDiceRollProgress.Init(SA_PlaySound) end
     elseif event == "PLAYER_LOGIN" then
         SA_SuppressBloodlustTriggers(3)
         SA_ClearInterruptAttempt()
@@ -6532,28 +6596,54 @@ local function SA_CreateWindow()
     paCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
     paCfgBtn:SetScript("OnClick", function() SA_TogglePartyConfig() end)
 
+    -- 주사위 진행 줄: [✓] 주사위 진행 알림 (남은 인원 + 완료음) ..... [설정]
+    local rpCb = CreateFrame("CheckButton", "SA_RollProgressCheck", body, "UICheckButtonTemplate")
+    rpCb:SetSize(22, 22)
+    rpCb:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -316)
+    rpCb:SetChecked(MimDiceRollProgress.GetSettings().enabled)
+    rpCb:SetScript("OnClick", function(self)
+        MimDiceRollProgress.SetEnabled(self:GetChecked())
+        local cfg = SA_BuffConfigs and SA_BuffConfigs.ROLL_PROGRESS
+        if cfg and cfg:IsShown() then cfg.Refresh() end
+    end)
+    SA_OptionWindow.rollProgressCb = rpCb
+    local rpCfgBtn = CreateFrame("Button", nil, body, "UIPanelButtonTemplate")
+    rpCfgBtn:SetSize(50, 22)
+    rpCfgBtn:SetPoint("TOPRIGHT", body, "TOPRIGHT", -15, -316)
+    rpCfgBtn:SetText(L("설정"))
+    rpCfgBtn:GetFontString():SetFont(MimDiceFontPath(), 11, "")
+    rpCfgBtn:SetScript("OnClick", function() SA_ToggleBuffConfig("ROLL_PROGRESS") end)
+    local rpLabel = body:CreateFontString(nil, "OVERLAY")
+    rpLabel:SetPoint("LEFT", rpCb, "RIGHT", 2, 0)
+    rpLabel:SetPoint("RIGHT", rpCfgBtn, "LEFT", -4, 0)
+    rpLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    rpLabel:SetJustifyH("LEFT")
+    rpLabel:SetWordWrap(false)
+    rpLabel:SetText(L("Roll progress (count + done sound)"))
+    rpLabel:SetTextColor(0.9, 0.9, 0.9)
+
     -- 구분선
     local divider = body:CreateTexture(nil, "ARTWORK")
     divider:SetSize(320, 1)
-    divider:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -324)
+    divider:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -348)
     divider:SetColorTexture(0.5, 0.5, 0.5, 0.6)
 
     -- ── << 스킬 사운드 알림 >> 섹션 ─────────────────
     local skillSectionLabel = body:CreateFontString(nil, "OVERLAY")
-    skillSectionLabel:SetPoint("TOP", body, "TOP", 0, -336)
+    skillSectionLabel:SetPoint("TOP", body, "TOP", 0, -360)
     skillSectionLabel:SetFont(MimDiceFontPath(), 13, "OUTLINE")
     skillSectionLabel:SetText(L("차단 / 스킬 알림"))
     skillSectionLabel:SetTextColor(1, 0.82, 0)
 
     local inputLabel = body:CreateFontString(nil, "OVERLAY")
-    inputLabel:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -362)
+    inputLabel:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -386)
     inputLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     inputLabel:SetText(L("1. 추가할 스킬의 이름 또는 ID 입력 (꼭 띄어쓰기 지켜야 함)"))
     inputLabel:SetTextColor(0.9, 0.9, 0.9)
 
     local inputBox = CreateFrame("EditBox", "SA_SpellInput", body, "InputBoxTemplate")
     inputBox:SetSize(200, 22)
-    inputBox:SetPoint("TOPLEFT", body, "TOPLEFT", 20, -382)
+    inputBox:SetPoint("TOPLEFT", body, "TOPLEFT", 20, -406)
     inputBox:SetAutoFocus(false)
     inputBox:SetFont(MimDiceFontPath(), 12, "")
 
@@ -6617,13 +6707,13 @@ local function SA_CreateWindow()
 
     -- ── 2. 개별 소리 목록 (본문 전체와 함께 스크롤) ────────────────────
     local listTitle = body:CreateFontString(nil, "OVERLAY")
-    listTitle:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -422)
+    listTitle:SetPoint("TOPLEFT", body, "TOPLEFT", 15, -446)
     listTitle:SetFont(MimDiceFontPath(), 11, "OUTLINE")
     listTitle:SetText(L("2. 사운드 개별 설정"))
     listTitle:SetTextColor(0.8, 0.8, 0.8)
 
     local scrollChild = CreateFrame("Frame", "SA_ListScrollChild", body)
-    scrollChild:SetPoint("TOPLEFT", body, "TOPLEFT", 10, -442)
+    scrollChild:SetPoint("TOPLEFT", body, "TOPLEFT", 10, -466)
     scrollChild:SetSize(330, 100)
     SA_OptionWindow.scrollChild = scrollChild
 end
@@ -6847,9 +6937,9 @@ function SA_RefreshList()
     local listHeight = math.max(yOffset, 10)
     scrollChild:SetHeight(listHeight)
     local page = SA_OptionWindow
-    page.body:SetHeight(442 + listHeight)
+    page.body:SetHeight(466 + listHeight)
     local headerHeight = 8 + page.cafeLabel:GetStringHeight() + 8 + page.soundFolderHelp:GetStringHeight() + 12
-    local contentHeight = headerHeight + 442 + listHeight + 12
+    local contentHeight = headerHeight + 466 + listHeight + 12
     page.content:SetHeight(contentHeight)
     local maxScroll = math.max(0, contentHeight - page.pageScroll:GetHeight())
     page.pageScroll:SetVerticalScroll(math.min(page.pageScroll:GetVerticalScroll(), maxScroll))
@@ -7762,21 +7852,9 @@ local function SA_CreateSkinWindow()
         row.acc = acc
         row:SetScript("OnClick", function()
             local sk = MimDiceDB.skin
-            local c = sk.custom
             sk.preset = "custom"
             sk.enabled = true
-            sk.alpha = c.alpha or 0.93
-            sk.accentTextA = c.accentTextA or 1
-            sk.accentHoverA = c.accentHoverA or 0.30
-            sk.base = { r = c.base.r, g = c.base.g, b = c.base.b }
-            sk.accentText = { r = c.accentText.r, g = c.accentText.g, b = c.accentText.b }
-            sk.accentHover = { r = c.accentHover.r, g = c.accentHover.g, b = c.accentHover.b }
-            local cbh = c.btnHover or c.accentHover
-            sk.btnHover = { r = cbh.r, g = cbh.g, b = cbh.b }
-            sk.btnHoverA = c.btnHoverA or 0.30
-            local cbt = c.btnText or { r = 0.92, g = 0.92, b = 0.92 }
-            sk.btnText = { r = cbt.r, g = cbt.g, b = cbt.b }
-            sk.btnTextA = c.btnTextA or 1
+            SA_SkinLoadCustom(sk)
             SA_SkinRefresh()
             SA_RefreshSkinWindow()
         end)
