@@ -118,6 +118,7 @@ function PI.CreateConfig(parent, helpers)
             function(sound)
                 local config = settings()
                 config.soundType, config.soundKey, config.soundName = "preset", sound.id, sound.name
+                config.soundIsKit = sound.isSoundKit and true or nil
                 PI.ApplySettings()
                 win.RefreshSoundRow()
                 listen()

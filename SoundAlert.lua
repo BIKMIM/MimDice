@@ -123,6 +123,65 @@ local SOUND_CATEGORIES = {
     }
 }
 
+-- 알림용으로 쓸 만한 WoW 기본 효과음만 골라 쉬운 한국어 이름으로 추가한다.
+-- 번호를 직접 적지 않고 SOUNDKIT 이름으로 찾으므로, 클라이언트에 없는 항목은 자동으로 빠진다.
+-- 배경음/반복음은 미리듣기를 멈출 방법이 없으므로 넣지 않는다.
+-- 기존 내장음과 같은 용도의 소리는 제외한다. 파일 ID와 SoundKit ID는 서로 달라
+-- 아래 번호 중복 검사만으로는 퀘스트 완료/경보/귓속말 등의 중복을 걸러낼 수 없다.
+do
+    local CURATED_SOUNDKITS = {
+        { key = "UI_RAID_BOSS_WHISPER_WARNING", name = "보스 귓속말 경고" },
+        { key = "ALARM_CLOCK_WARNING_1",        name = "알람 시계 1" },
+        { key = "ALARM_CLOCK_WARNING_2",        name = "알람 시계 2" },
+        { key = "ALARM_CLOCK_WARNING_3",        name = "알람 시계 3" },
+        { key = "PVP_THROUGH_QUEUE",            name = "전장 입장 가능" },
+        { key = "LFG_ROLE_CHECK",               name = "역할 확인" },
+        { key = "UI_BNET_TOAST",                name = "배틀넷 알림" },
+        { key = "UI_EPICLOOT_TOAST",            name = "영웅 아이템 획득" },
+        { key = "UI_LEGENDARY_LOOT_TOAST",      name = "전설 아이템 획득" },
+        { key = "ACHIEVEMENT_MENU_OPEN",        name = "업적 창" },
+        { key = "UI_GARRISON_TOAST_MISSION_COMPLETE", name = "임무 완료" },
+    }
+
+    local used = {}
+    for _, category in ipairs(SOUND_CATEGORIES) do
+        for _, sound in ipairs(category.sounds) do
+            if type(sound.id) == "number" then used[sound.id] = true end
+        end
+    end
+
+    local sounds = {}
+    if type(SOUNDKIT) == "table" then
+        for _, item in ipairs(CURATED_SOUNDKITS) do
+            local id = SOUNDKIT[item.key]
+            if type(id) == "number" and id > 0 and not used[id] then
+                used[id] = true
+                sounds[#sounds + 1] = { name = item.name, id = id, isSoundKit = true, searchNames = { item.key } }
+            end
+        end
+    end
+    if #sounds > 0 then
+        SOUND_CATEGORIES[#SOUND_CATEGORIES + 1] = { name = "WoW 효과음", sounds = sounds }
+    end
+end
+
+-- 밈다이스 sounds 폴더에 함께 배포되는 파일. 목록은 deploy.ps1이 SoundList.lua로 자동 생성한다.
+-- 내장에서 고르면 전체 경로를 soundKey로 저장한다. 커스텀 칸에 파일명을 직접 적은 기존 설정은
+-- soundType="custom" / soundFile 그대로 두므로 지금처럼 계속 재생된다.
+do
+    local prefix = MimDiceSoundFiles.BUNDLED_PREFIX
+    local sounds = {}
+    for _, file in ipairs(MimDiceBundledSoundList or {}) do
+        -- "1띠릭(낮은소리).mp3" -> "띠릭(낮은소리)": 앞 번호는 정렬용이라 표시에서 뺀다.
+        local name = file:gsub("%.[^%.]+$", ""):gsub("^%d+", ""):gsub("_", " ")
+        if name == "" then name = file end
+        sounds[#sounds + 1] = { name = name, id = prefix .. file, isBundled = true, searchNames = { file } }
+    end
+    if #sounds > 0 then
+        table.insert(SOUND_CATEGORIES, 2, { name = "밈다이스 효과음", sounds = sounds })
+    end
+end
+
 -- 저장된 표시명은 이전 언어일 수 있으므로 soundKey를 우선해 현재 언어 이름을 찾는다.
 local function SA_PresetSoundName(entry)
     if entry and entry.soundKey then
@@ -142,6 +201,15 @@ end
 -- 내부 변수 및 초기화
 -- =====================================================================
 local SA = {}
+SA.GetPresetSounds = function()
+    local sounds = {}
+    for _, category in ipairs(SOUND_CATEGORIES) do
+        for _, sound in ipairs(category.sounds) do
+            sounds[#sounds + 1] = sound
+        end
+    end
+    return sounds
+end
 local SA_OptionWindow = nil
 local SA_SkinWindow = nil      -- 스킨 옵션창
 local SA_EntryFrames = {}
@@ -562,6 +630,8 @@ function SA_InitDB()
         cch.isSystem = false
     end
 
+    local migrateLegacyPresetFile = not MimDiceDB.soundTypeMigrationV1
+
     -- ── ID 타입 1회 마이그레이션 ──
     -- 예전엔 ID 값을 soundKey 에 저장했는데 내장(preset)과 같은 칸이라 서로 덮어쓰는 문제가 있었다.
     -- ID 전용 칸 soundID 로 분리하고, 기존 id-type 항목의 soundKey 값을 soundID 로 옮긴다.
@@ -572,7 +642,8 @@ function SA_InitDB()
     local function SA_FixSoundFields(e)
         if not e then return end
         -- 1) soundKey 에 든 파일명 잔재 제거 (+표시명 초기화)
-        if type(e.soundKey) == "string" and tonumber(e.soundKey) == nil then
+        if type(e.soundKey) == "string" and tonumber(e.soundKey) == nil
+           and not MimDiceSoundFiles.IsBundledPath(e.soundKey) then
             e.soundKey = nil
             e.soundName = nil
         end
@@ -585,9 +656,9 @@ function SA_InitDB()
             e.soundID = e.soundKey
             e.soundKey = nil
         end
-        -- 4) '내장'인데 선택된 내장음(soundKey)이 없으면 소리가 아예 안 나는 깨진 상태.
-        --    커스텀 파일명이 남아 있으면 커스텀으로 복원 (구버전 잔재/미완성 선택 정리)
-        if e.soundType == "preset" and e.soundKey == nil
+        -- 구버전에서 내장 타입에 커스텀 파일명이 남은 데이터만 최초 로드 때 복원한다.
+        -- 매번 처리하면 사용자가 내장 타입으로 전환할 때마다 커스텀으로 되돌아간다.
+        if migrateLegacyPresetFile and e.soundType == "preset" and e.soundKey == nil
            and type(e.soundFile) == "string" and e.soundFile ~= "" then
             e.soundType = "custom"
         end
@@ -610,11 +681,12 @@ function SA_InitDB()
         if MimDiceDB.chatSound.customChannels then
             for _, cch in ipairs(MimDiceDB.chatSound.customChannels) do SA_FixSoundFields(cch) end
         end
+        MimDiceDB.soundTypeMigrationV1 = true
         -- 이미 소리를 입력해 둔 채널이 체크 해제 상태로 남아 있으면 1회 자동 활성화
         if not MimDiceDB.chatSound.autoEnableConfiguredV1 then
             if MimDiceDB.chatSound.channels then
                 for _, ch in pairs(MimDiceDB.chatSound.channels) do
-                    if (ch.soundType == "preset" and type(ch.soundKey) == "number")
+                    if (ch.soundType == "preset" and (type(ch.soundKey) == "number" or MimDiceSoundFiles.IsBundledPath(ch.soundKey)))
                        or (ch.soundType == "custom" and type(ch.soundFile) == "string" and ch.soundFile ~= "")
                        or (ch.soundType == "id" and tonumber(ch.soundID) ~= nil) then
                         ch.enabled = true
@@ -636,7 +708,11 @@ local function SA_PlaySound(entry, channel)
     -- 기존처럼 재생 API에 맡긴다. 대화 소리 설정만 보고 모든 알림을 미리 차단하지 않는다.
 
     if entry.soundType == "preset" and entry.soundKey then
-        if type(entry.soundKey) == "number" and entry.soundKey > 500000 then
+        if MimDiceSoundFiles.IsBundledPath(entry.soundKey) then
+            pcall(PlaySoundFile, entry.soundKey, channel or "Dialog")
+        elseif entry.soundIsKit then
+            pcall(PlaySound, entry.soundKey, channel)
+        elseif type(entry.soundKey) == "number" and entry.soundKey > 500000 then
             pcall(PlaySoundFile, entry.soundKey, channel)
         else
             pcall(PlaySound, entry.soundKey, channel)
@@ -662,7 +738,15 @@ local function SA_PlaySound(entry, channel)
                 pcall(PlaySound, numericID, channel)
             end
         end
+
     end
+end
+
+SA.SetPresetSound = function(entry, sound)
+    entry.soundType = "preset"
+    entry.soundKey = sound.id
+    entry.soundName = sound.name
+    entry.soundIsKit = sound.isSoundKit and true or nil
 end
 
 -- 정확 주문 ID 조회 전에 현재 오라 데이터가 제한되는 환경인지 확인한다.
@@ -2151,7 +2235,7 @@ local function SA_CreateDeathConfig()
             function() return MimDiceDB.deathTrack.soundKey end,
             function(snd)
                 local dt = MimDiceDB.deathTrack
-                dt.soundType = "preset"; dt.soundKey = snd.id; dt.soundName = snd.name
+                SA.SetPresetSound(dt, snd)
                 win.RefreshSoundRow()
                 local was = dt.enabled; dt.enabled = true
                 SA_PlaySound(dt); dt.enabled = was
@@ -2541,7 +2625,7 @@ local function SA_CreateBuffConfig(key)
             function() return MimDiceDB.buffTrack[key].soundKey end,
             function(snd)
                 local bt = MimDiceDB.buffTrack[key]
-                bt.soundType = "preset"; bt.soundKey = snd.id; bt.soundName = snd.name
+                SA.SetPresetSound(bt, snd)
                 win.RefreshSoundRow()
                 local was = bt.enabled; bt.enabled = true
                 SA_PlaySound(bt); bt.enabled = was
@@ -3463,8 +3547,7 @@ function SA_UpdateBattleResIcon()
     SA_UpdateBattleResRuntime()
 end
 
--- ── 사운드 선택 팝업 (각 항목 옆 ▶ 미리듣기) ─────────────────────────
--- 기본 UIDropDownMenu는 항목별 보조 버튼을 못 달아서, 스크롤 리스트로 직접 구현.
+-- ── 사운드 선택 팝업 (검색/스크롤, 각 항목 옆 ▶ 미리듣기) ───────────────
 --   이름 클릭 = 선택(팝업 닫힘) / ▶ 클릭 = 미리듣기(팝업 유지)
 local SA_SoundPicker = nil
 local SA_SoundPickerOnSelect = nil   -- 항목 선택 시 콜백 func(snd)
@@ -3472,14 +3555,10 @@ local SA_SoundPickerOnSelect = nil   -- 항목 선택 시 콜백 func(snd)
 local function SA_EnsureSoundPicker()
     if SA_SoundPicker then return SA_SoundPicker end
 
-    -- 모든 내장 사운드 평탄화
-    local all = {}
-    for _, cat in ipairs(SOUND_CATEGORIES) do
-        for _, snd in ipairs(cat.sounds) do all[#all + 1] = snd end
-    end
+    local all = SA.GetPresetSounds()
 
     local p = CreateFrame("Frame", "MimDice_SoundPicker", UIParent, "BackdropTemplate")
-    p:SetSize(330, 360)
+    p:SetSize(350, 390)
     p:SetFrameStrata("FULLSCREEN_DIALOG")   -- 설정창보다 위
     p:SetClampedToScreen(true)
     p:SetToplevel(true)
@@ -3508,23 +3587,63 @@ local function SA_EnsureSoundPicker()
     note:SetText(L("· 긴 사운드파일도 재생가능하도록 주음량대신 대화 채널을 사용합니다."))
     note:SetTextColor(0.7, 0.7, 0.7)
 
+    local search = CreateFrame("EditBox", nil, p, "InputBoxTemplate")
+    search:SetSize(314, 20)
+    search:SetPoint("TOPLEFT", 12, -56)
+    search:SetAutoFocus(false)
+    search:SetFont(MimDiceFontPath(), 11, "")
+    search:SetText(L("사운드 검색..."))
+    search:SetTextColor(0.5, 0.5, 0.5)
+    p.search = search
+
     local closeBtn = CreateFrame("Button", nil, p, "UIPanelCloseButton")
     closeBtn.MimDiceIsClose = true   -- 스킨: 닫기(X) 플랫화 대상
     closeBtn:SetPoint("TOPRIGHT", -2, -2)
     closeBtn:SetScript("OnClick", function() p:Hide() end)
 
     local scroll = CreateFrame("ScrollFrame", "MimDice_SoundPickerScroll", p, "UIPanelScrollFrameTemplate")
-    scroll:SetPoint("TOPLEFT", 10, -64)
+    scroll:SetPoint("TOPLEFT", 10, -82)
     scroll:SetPoint("BOTTOMRIGHT", -30, 10)
     local child = CreateFrame("Frame", nil, scroll)
-    child:SetSize(290, #all * 24)
+    child:SetSize(310, 1)
     scroll:SetScrollChild(child)
 
     p.rows = {}
-    for i, snd in ipairs(all) do
+    p.allSounds = all
+    p.filteredSounds = all
+
+    local function RenderRows(offset)
+        local filtered = p.filteredSounds
+        local firstIndex = math.floor((offset or scroll:GetVerticalScroll() or 0) / 24) + 1
+        child:SetHeight(math.max(#filtered * 24, 1))
+
+        for poolIndex, rowData in ipairs(p.rows) do
+            local soundIndex = firstIndex + poolIndex - 1
+            local snd = filtered[soundIndex]
+            local row = rowData.row
+            if snd then
+                row.snd = snd
+                row:ClearAllPoints()
+                row:SetPoint("TOPLEFT", 0, -(soundIndex - 1) * 24)
+                row.nameFS:SetText(snd.displayName or L(snd.name))
+                if p.currentID ~= nil and snd.id == p.currentID then
+                    row.sel:Show()
+                else
+                    row.sel:Hide()
+                end
+                row:Show()
+            else
+                row.snd = nil
+                row:Hide()
+            end
+        end
+    end
+    p.RenderRows = RenderRows
+    p.scroll, p.child = scroll, child
+
+    local function CreateRow()
         local row = CreateFrame("Button", nil, child)
-        row:SetSize(290, 22)
-        row:SetPoint("TOPLEFT", 0, -(i - 1) * 24)
+        row:SetSize(310, 22)
 
         -- 현재 선택된 사운드 표시 (금색)
         local sel = row:CreateTexture(nil, "BACKGROUND")
@@ -3538,17 +3657,18 @@ local function SA_EnsureSoundPicker()
         hl:SetAllPoints()
         hl:SetColorTexture(1, 1, 1, 0.12)
         hl:Hide()
+        row.hl = hl
 
         local nameFS = row:CreateFontString(nil, "OVERLAY")
         nameFS:SetPoint("LEFT", 6, 0)
         nameFS:SetPoint("RIGHT", -34, 0)
         nameFS:SetJustifyH("LEFT"); nameFS:SetWordWrap(false)
         nameFS:SetFont(MimDiceFontPath(), 11, "")
-        nameFS:SetText(L(snd.name))
+        row.nameFS = nameFS
 
         -- 줄(이름) 클릭 = 선택 후 닫기
-        row:SetScript("OnClick", function()
-            if SA_SoundPickerOnSelect then SA_SoundPickerOnSelect(snd) end
+        row:SetScript("OnClick", function(self)
+            if self.snd and SA_SoundPickerOnSelect then SA_SoundPickerOnSelect(self.snd) end
             p:Hide()
         end)
 
@@ -3558,20 +3678,68 @@ local function SA_EnsureSoundPicker()
         play:SetPoint("RIGHT", -3, 0)
         play:SetText("▶")
         play:GetFontString():SetFont(MimDiceFontPath(), 9, "")
-        play:SetScript("OnClick", function()
-            SA_PlaySound({ enabled = true, soundType = "preset", soundKey = snd.id }, "Dialog")
+        play:SetScript("OnClick", function(self)
+            local snd = self:GetParent().snd
+            if snd then
+                SA_PlaySound({
+                    enabled = true,
+                    soundType = "preset",
+                    soundKey = snd.id,
+                    soundIsKit = snd.isSoundKit,
+                }, "Dialog")
+            end
         end)
 
         -- 줄 또는 ▶ 어디에 마우스가 있어도 그 줄 하이라이트 유지
-        local function showHL() hl:Show() end
-        local function hideHL() if not row:IsMouseOver() and not play:IsMouseOver() then hl:Hide() end end
+        local function showHL() row.hl:Show() end
+        local function hideHL() if not row:IsMouseOver() and not play:IsMouseOver() then row.hl:Hide() end end
         row:SetScript("OnEnter", showHL)
         row:SetScript("OnLeave", hideHL)
         play:HookScript("OnEnter", showHL)
         play:HookScript("OnLeave", hideHL)
 
-        p.rows[i] = { row = row, snd = snd }
+        return { row = row }
     end
+
+    local function RefreshFilteredSounds()
+        local query = search:GetText() or ""
+        if query == L("사운드 검색...") then query = "" end
+        query = query:lower():match("^%s*(.-)%s*$")
+
+        local filtered = {}
+        for _, snd in ipairs(all) do
+            local searchText = (snd.name or "") .. " " .. L(snd.name or "") .. " " .. tostring(snd.id)
+            if snd.searchNames then
+                searchText = searchText .. " " .. table.concat(snd.searchNames, " ")
+            end
+            if query == "" or searchText:lower():find(query, 1, true) then
+                filtered[#filtered + 1] = snd
+            end
+        end
+        p.filteredSounds = filtered
+        scroll:SetVerticalScroll(0)
+        RenderRows(0)
+    end
+
+    local visibleRows = math.ceil((p:GetHeight() - 92) / 24) + 2
+    for i = 1, visibleRows do p.rows[i] = CreateRow() end
+    scroll:SetScript("OnVerticalScroll", function(_, offset) RenderRows(offset) end)
+    search:SetScript("OnEditFocusGained", function(self)
+        if self:GetText() == L("사운드 검색...") then
+            self:SetText("")
+            self:SetTextColor(1, 1, 1)
+        end
+    end)
+    search:SetScript("OnEditFocusLost", function(self)
+        if self:GetText() == "" then
+            self:SetText(L("사운드 검색..."))
+            self:SetTextColor(0.5, 0.5, 0.5)
+        end
+    end)
+    search:SetScript("OnTextChanged", function(_, userInput)
+        if userInput then RefreshFilteredSounds() end
+    end)
+    RenderRows(0)
 
     tinsert(UISpecialFrames, "MimDice_SoundPicker")   -- ESC로 닫기
     p:Hide()
@@ -3589,9 +3757,26 @@ function SA_OpenSoundPicker(anchor, getSel, onSelect)
     SA_SoundPickerOnSelect = onSelect
 
     local cur = getSel and getSel()
-    for _, r in ipairs(p.rows) do
-        if cur ~= nil and r.snd.id == cur then r.row.sel:Show() else r.row.sel:Hide() end
+    p.currentID = cur
+    if p.search then
+        p.search:SetText("")
+        p.search:SetText(L("사운드 검색..."))
+        p.search:SetTextColor(0.5, 0.5, 0.5)
     end
+    p.filteredSounds = p.allSounds
+    -- 스크롤 위치도 함께 되돌려야 한다. 안 그러면 이전 위치에 화면이 남아 빈 목록처럼 보인다.
+    -- 지금 고른 소리가 있으면 그 줄이 보이도록 이동한다.
+    local offset = 0
+    if cur ~= nil then
+        for i, snd in ipairs(p.allSounds) do
+            if snd.id == cur then offset = math.max((i - 3) * 24, 0); break end
+        end
+    end
+    local maxOffset = math.max(#p.allSounds * 24 - (p.scroll:GetHeight() or 0), 0)
+    offset = math.min(offset, maxOffset)
+    p.child:SetHeight(math.max(#p.allSounds * 24, 1))
+    p.scroll:SetVerticalScroll(offset)
+    p.RenderRows(offset)
 
     p:ClearAllPoints()
     p:SetPoint("TOPLEFT", anchor, "BOTTOMLEFT", 0, -2)
@@ -3677,7 +3862,7 @@ function SA_CreateBattleResIconConfig()
             function() return MimDiceDB.battleRes.soundKey end,
             function(snd)
                 local b = MimDiceDB.battleRes
-                b.soundType = "preset"; b.soundKey = snd.id; b.soundName = snd.name
+                SA.SetPresetSound(b, snd)
                 win.RefreshSoundRow()
                 SA_PlaySound(b, "Dialog")   -- 선택 시 한 번 들려줌
             end)
@@ -4695,7 +4880,7 @@ local function SA_CreatePartyConfig()
             function() return MimDiceDB.partyAlert.soundKey end,
             function(snd)
                 local pa = MimDiceDB.partyAlert
-                pa.soundType = "preset"; pa.soundKey = snd.id; pa.soundName = snd.name
+                SA.SetPresetSound(pa, snd)
                 win.RefreshSoundRow()
                 local was = pa.enabled; pa.enabled = true
                 SA_PlaySound(pa, "Dialog"); pa.enabled = was
@@ -4952,7 +5137,7 @@ local function SA_CreatePartyConfig()
             function() return MimDiceDB.partyAlert.fullParty.soundKey end,
             function(snd)
                 local fp = MimDiceDB.partyAlert.fullParty
-                fp.soundType = "preset"; fp.soundKey = snd.id; fp.soundName = snd.name
+                SA.SetPresetSound(fp, snd)
                 win.RefreshFpSoundRow()
                 local was = fp.enabled; fp.enabled = true
                 SA_PlaySound(fp, "Dialog"); fp.enabled = was
@@ -5254,7 +5439,7 @@ do
     local function SA_HasConfiguredSound(entry)
         if not entry then return false end
         if entry.soundType == "preset" then
-            return type(entry.soundKey) == "number"
+            return type(entry.soundKey) == "number" or MimDiceSoundFiles.IsBundledPath(entry.soundKey)
         elseif entry.soundType == "custom" then
             return type(entry.soundFile) == "string" and entry.soundFile ~= ""
         elseif entry.soundType == "id" then
@@ -6580,8 +6765,7 @@ function SA_RefreshList()
                 SA_OpenSoundPicker(row.soundSelectBtn,
                     function() return entry.soundKey end,
                     function(snd)
-                        entry.soundKey = snd.id
-                        entry.soundName = snd.name
+                        SA.SetPresetSound(entry, snd)
                         row.soundSelectBtn:SetText(L(snd.name))
                         SA_PlaySound(entry)
                     end)
@@ -7052,8 +7236,7 @@ function SA_RefreshChatList()
                 SA_OpenSoundPicker(row.soundSelectBtn,
                     function() return entry.soundKey end,
                     function(snd)
-                        entry.soundKey = snd.id
-                        entry.soundName = snd.name
+                        SA.SetPresetSound(entry, snd)
                         entry.enabled = true
                         row.cb:SetChecked(true)
                         row.soundSelectBtn:SetText(L(snd.name))

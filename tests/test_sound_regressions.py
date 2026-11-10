@@ -28,6 +28,12 @@ SECRET = {}
 function issecretvalue(v) return v == SECRET end
 function hasanysecretvalues(v) return false end
 function MimDice_L(s) return s end
+SOUNDKIT = {
+    UI_RAID_BOSS_WHISPER_WARNING = 700001, LFG_ROLE_CHECK = 700002,
+    IG_MAINMENU_OPEN = 700003, UI_BNET_TOAST = 567458,
+    RAID_WARNING = 8959, READY_CHECK = 8960, TELL_MESSAGE = 3081,
+    IG_PLAYER_INVITE = 880, MAP_PING = 3175, IG_QUEST_LIST_COMPLETE = 878,
+}
 LE_PARTY_CATEGORY_HOME, LE_PARTY_CATEGORY_INSTANCE = 1, 2
 Enum = { SecrecyLevel = { NeverSecret = 0 } }
 SlashCmdList, UISpecialFrames, StaticPopupDialogs = {}, {}, {}
@@ -107,7 +113,8 @@ audit = {
     play = SA_PlaySound, syncParty = SA_SyncGroupSize, fullParty = SA_CheckFullParty,
     permission = SA_PartyCanReceiveAlerts, interruptAttempt = SA_RecordInterruptAttempt,
     interruptResult = SA_HandleInterruptResult, auraSync = SA_SyncBloodlustAuraPresence,
-    event = SA_EventFrame:GetScript("OnEvent"),
+    event = SA_EventFrame:GetScript("OnEvent"), presetSounds = SA.GetPresetSounds,
+    setPreset = SA.SetPresetSound,
 }
 MimDiceBloodlustReminder = { Refresh = function()
     state.readyCalls = state.readyCalls + 1
@@ -119,7 +126,7 @@ end }
 def make_vm(source):
     vm = LuaRuntime(unpack_returned_tuples=True)
     vm.execute(MOCK)
-    for name in ("BuffBarDefaults.lua", "SoundFiles.lua", "PowerInfusion.lua"):
+    for name in ("BuffBarDefaults.lua", "SoundFiles.lua", "SoundList.lua", "PowerInfusion.lua"):
         vm.execute((ROOT / name).read_text(encoding="utf-8-sig"))
     vm.execute(source + "\n" + EXPORT)
     vm.execute("SA_InitDB()")
@@ -312,6 +319,90 @@ assert(not MimDiceDB.interruptAlert.enabled and MimDiceDB.interruptAlert.soundFi
 assert(not MimDiceDB.buffTrack.BLOODLUST.enabled and MimDiceDB.buffTrack.BLOODLUST.soundID == 635496)
 assert(not MimDiceDB.partyAlert.fullParty.enabled and MimDiceDB.partyAlert.fullParty.soundKey == 635496)
 assert(MimDiceDB.soundAlerts[1].soundFile == 'my-skill.ogg' and MimDiceDB.soundAlerts[1].enabled)
+''')
+case("chat sound: built-in selection is not reverted by legacy migration", '''
+local entry = { channelTarget = '4', soundType = 'preset', soundKey = nil, soundFile = 'old-alert.ogg' }
+MimDiceDB.chatSound.customChannels = { entry }
+MimDiceDB.soundTypeMigrationV1 = nil
+SA_InitDB()
+assert(entry.soundType == 'custom')
+entry.soundType = 'preset'
+SA_InitDB()
+assert(entry.soundType == 'preset' and entry.soundFile == 'old-alert.ogg')
+entry.soundKey = 635496
+SA_InitDB()
+assert(entry.soundType == 'preset' and entry.soundKey == 635496)
+''')
+case("soundkit catalog: only curated, existing, non-duplicate effects are listed", '''
+local found, testSound = {}, nil
+for _, sound in ipairs(audit.presetSounds()) do
+    found[sound.id] = (found[sound.id] or 0) + 1
+    if sound.id == 700001 then testSound = sound end
+end
+assert(found[700001] == 1 and found[700002] == 1)
+assert(found[700003] == nil)   -- 목록에 없는 UI 소리는 빠진다
+assert(found[567458] == 1)     -- 기존 내장음과 같은 번호는 중복 추가하지 않는다
+assert(testSound.isSoundKit and testSound.name == '보스 귓속말 경고')
+local picked = { enabled = true }
+audit.setPreset(picked, testSound)
+assert(picked.soundType == 'preset' and picked.soundIsKit and picked.soundKey == 700001)
+audit.play(picked)
+assert(#state.plays == 1 and state.plays[1].kind == 'kit' and state.plays[1].value == 700001)
+''')
+case("soundkit catalog: legacy file equivalents stay unique without changing saved sounds", '''
+local found, names = {}, {}
+for _, sound in ipairs(audit.presetSounds()) do
+    found[sound.id] = true
+    names[sound.name] = (names[sound.name] or 0) + 1
+end
+for _, id in ipairs({8959, 8960, 3081, 880, 3175, 878}) do
+    assert(not found[id])
+end
+for _, id in ipairs({567397, 558137, 567421, 567451, 567416, 567439}) do
+    assert(found[id])
+end
+assert(names['퀘스트 완료'] == 1)
+local saved = {enabled = true, soundType = 'preset', soundKey = 878,
+    soundName = '퀘스트 완료', soundIsKit = true}
+MimDiceDB.chatSound.channels.WHISPER = saved
+SA_InitDB()
+audit.play(saved)
+assert(saved.soundKey == 878 and saved.soundIsKit and saved.soundType == 'preset')
+assert(#state.plays == 1 and state.plays[1].kind == 'kit' and state.plays[1].value == 878)
+''')
+case("bundled sfx: listed, kept by migration, and played as a file", '''
+local prefix = MimDiceSoundFiles.BUNDLED_PREFIX
+local sfx
+for _, sound in ipairs(audit.presetSounds()) do
+    if sound.id == prefix .. '7뾰옹.mp3' then sfx = sound end
+end
+assert(sfx and sfx.isBundled and sfx.name == '뾰옹')
+local entry = { enabled = true, channelTarget = '4' }
+audit.setPreset(entry, sfx)
+MimDiceDB.chatSound.customChannels = { entry }
+SA_InitDB()
+assert(entry.soundType == 'preset' and entry.soundKey == prefix .. '7뾰옹.mp3')
+audit.play(entry)
+assert(#state.plays == 1 and state.plays[1].kind == 'file' and state.plays[1].value == prefix .. '7뾰옹.mp3')
+''')
+case("bundled sfx: typed custom filename of a bundled file keeps working", '''
+local entry = { enabled = true, channelTarget = '4', soundType = 'custom', soundFile = '짤.mp3' }
+MimDiceDB.chatSound.customChannels = { entry }
+SA_InitDB()
+assert(entry.soundType == 'custom' and entry.soundFile == '짤.mp3' and entry.soundKey == nil)
+audit.play(entry)
+assert(#state.plays >= 1 and state.plays[1].kind == 'file')
+assert(state.plays[1].value:find('짤.mp3', 1, true))
+''')
+case("power infusion: SoundKit selection reports native AuraSound limitation", '''
+local settings = MimDicePowerInfusion.GetSettings()
+settings.enabled = true
+settings.soundType = 'preset'
+settings.soundKey = 700001
+settings.soundIsKit = true
+MimDicePowerInfusion.Init(audit.play)
+local _, status = MimDicePowerInfusion.GetStatusText()
+assert(status == 'unsupported')
 ''')
 
 

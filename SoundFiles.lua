@@ -9,6 +9,13 @@ local folders = {
 }
 local resolvedPaths = {}
 
+-- 밈다이스에 함께 들어 있는 효과음. 내장 선택창에서 고르면 soundKey에 이 경로 문자열이 저장된다.
+SoundFiles.BUNDLED_PREFIX = "Interface\AddOns\MimDice\sounds\\"
+function SoundFiles.IsBundledPath(value)
+    return type(value) == "string"
+        and value:sub(1, #SoundFiles.BUNDLED_PREFIX) == SoundFiles.BUNDLED_PREFIX
+end
+
 -- Dialog is a game-wide switch, independent of its volume slider. Ask before
 -- changing it; a muted channel must not be reported as a missing sound file.
 local L = MimDice_L

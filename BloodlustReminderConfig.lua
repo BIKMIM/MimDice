@@ -104,6 +104,7 @@ function Reminder.CreateConfig(parent, helpers)
             function() return settings().soundKey end,
             function(sound)
                 settings().soundKey, settings().soundName = sound.id, sound.name
+                settings().soundIsKit = sound.isSoundKit and true or nil
                 win.RefreshSoundRow()
                 Reminder.TestSound()
             end)

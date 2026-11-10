@@ -57,7 +57,7 @@ function PI.InitDB()
         end
     end
     if legacy then
-        for _, key in ipairs({ "enabled", "soundType", "soundFile", "soundKey", "soundName", "soundID" }) do
+        for _, key in ipairs({ "enabled", "soundType", "soundFile", "soundKey", "soundName", "soundID", "soundIsKit" }) do
             if settings[key] == nil then settings[key] = legacy[key] end
         end
         for index = #MimDiceDB.soundAlerts, 1, -1 do
@@ -118,6 +118,12 @@ local function ResolveSound(settings)
         local path = MimDiceSoundFiles.Resolve(file)
         if not path then return nil, nil, "unavailable" end
         return { soundFileName = path }, "file:" .. path
+    end
+    if settings.soundType == "preset" and MimDiceSoundFiles.IsBundledPath(settings.soundKey) then
+        return { soundFileName = settings.soundKey }, "file:" .. settings.soundKey
+    end
+    if settings.soundType == "preset" and settings.soundIsKit then
+        return nil, nil, "unsupported"
     end
     local value = settings.soundType == "id" and settings.soundID or settings.soundKey
     local id = tonumber(value)

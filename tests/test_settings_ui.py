@@ -50,6 +50,8 @@ function methods:IsObjectType(kind) return self.kind == kind end
 function methods:GetChildren() return unpack(self.children) end
 function methods:GetRegions() return unpack(self.regions) end
 function methods:GetWidth() return self.width end
+function methods:GetScale() return self.scale or 1 end
+function methods:SetScale(v) self.scale=v end
 function methods:GetHeight() return self.height end
 function methods:SetWidth(w) self.width = w end
 function methods:SetHeight(h) self.height = h end
@@ -188,8 +190,13 @@ for _,enabled in ipairs({true,false,true,false}) do
         sa.ToggleSettings(); sa.ToggleSettings(); check(key)
     end
 end
-MainWindow:SetHeight(200); SA_SkinRefreshTabs(); assert(sa.SettingsWindow:GetHeight()==600)
-MainWindow:SetHeight(800); SA_SkinRefreshTabs(); assert(sa.SettingsWindow:GetHeight()==800)
+-- 설정창은 높이를 따로 정하지 않고 메인창 위·아래 끝에 연결된다.
+SA_SkinRefreshTabs()
+local anchored = {}
+for _, pt in ipairs(sa.SettingsWindow.points) do
+    if pt[2] == MainWindow then anchored[pt[1] .. '>' .. tostring(pt[3])] = true end
+end
+assert(anchored['TOPLEFT>TOPRIGHT'] and anchored['BOTTOMLEFT>BOTTOMRIGHT'])
 -- One scroll child owns both the introduction and the dynamic sound rows.
 local page = SA_OptionWindow
 assert(page.pageScroll:GetParent()==page)
