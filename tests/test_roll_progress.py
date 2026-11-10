@@ -331,11 +331,37 @@ MimDiceRollProgress.TestSound()
 assert(state.plays[1].kind == "kit" and state.plays[1].value == 700001)
 '''
 
+SELFTEST = r'''
+-- /밈주사위 테스트: 혼자서 가짜 파티로 진행/완료를 보고, 끝나면 원래 상태로 돌아온다
+local queue = {}
+C_Timer.After = function(_, f) queue[#queue + 1] = f end
+local function runAll() while #queue > 0 do local f = table.remove(queue, 1); f() end end
+local realRolls = { Me = 1 }
+local realMembers = { { fullName = "Me" }, { fullName = "Friend" } }
+local realProvider = function() return realMembers, realRolls, true end
+RP.SetProvider(realProvider)
+state.grouped, state.size = false, 1   -- 혼자
+state.fileExists = { [MimDiceSoundFiles.BUNDLED_PREFIX .. "3띠릭(높은소리).mp3"] = true }
+state.plays = {}
+RP.Init(audit.play)
+RP.RunTest("5")
+RP.RunTest("5")   -- 진행 중 다시 입력해도 겹치지 않음
+runAll()
+local done = 0
+for _, p in ipairs(state.plays) do if p.kind == "file" then done = done + 1 end end
+assert(done == 1, "self test must play the done sound exactly once: " .. done)
+assert(realRolls.Me == 1 and realRolls.Friend == nil, "real roll records must not change")
+-- 끝나면 진짜 상태로: 혼자이므로 실제 굴림은 무시된다
+RP.OnRoll("Me", true)
+local snap = RP.Snapshot()
+assert(snap.total == 2 and snap.set.Me, "real provider must be restored")
+'''
+
 passed = 0
-for name, body in (("rules", SCENARIO), ("display", DISPLAY), ("migration", MIGRATION)):
+for name, body in (("rules", SCENARIO), ("display", DISPLAY), ("migration", MIGRATION), ("selftest", SELFTEST)):
     vm = namespace['make_vm'](source)
     vm.execute(PRELUDE)
     vm.execute("state.plays = state.plays or {}")
     vm.execute(body)
     passed += 1
-print(f"Roll progress: {passed} / 3 scenario groups passed")
+print(f"Roll progress: {passed} / 4 scenario groups passed")

@@ -225,7 +225,10 @@ local function Snapshot()
 end
 RP.Snapshot = Snapshot
 
+local testMode = false   -- 혼자 시험하기 중이면 가짜 파티로 본다
+
 local function InGroup()
+    if testMode then return true end
     local ok, inGroup = pcall(IsInGroup)
     if not ok or IsSecret(inGroup) then return false end
     return inGroup == true
@@ -233,6 +236,7 @@ end
 
 -- 실제로 그룹을 떠났거나 혼자가 됐는지. 값을 읽을 수 없으면 "모름"(nil)
 local function GroupGone()
+    if testMode then return false end
     local ok, inGroup = pcall(IsInGroup)
     if not ok or IsSecret(inGroup) or type(inGroup) ~= "boolean" then return nil end
     if not inGroup then return true end
@@ -294,7 +298,7 @@ end
 -- 주사위 기록 직후 호출
 function RP.OnRoll(fullName, isFirstRoll)
     local config = RP.GetSettings()
-    if not config or not config.enabled or not InGroup() then return end
+    if not config or not (config.enabled or testMode) or not InGroup() then return end
     local snap = Snapshot()
     if not snap then return end
     if snap.total < 2 then
@@ -423,5 +427,61 @@ function RP.Init(soundPlayer, rosterProvider)
 end
 
 function RP.SetProvider(rosterProvider)
+    if testMode then RP.testSavedProvider = rosterProvider; return end
     provider = rosterProvider
+end
+
+-- ── 혼자 시험하기 (/밈주사위 테스트) ───────────────────────────────
+-- 가짜 파티원이 차례로 굴린 것처럼 흘려보내 실제 오버레이와 완료음을 확인한다.
+-- 진짜 주사위 기록/순위/목록에는 아무것도 남기지 않고, 끝나면 원래 상태로 돌린다.
+local testToken = 0
+local function Say(text)
+    if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cff00ff00[MimDice]|r " .. text) end
+end
+
+local function EndTest(token)
+    if token ~= testToken or not testMode then return end
+    testMode = false
+    provider = RP.testSavedProvider
+    announcedSet, rearmPending, rearmSawRoll = RP.testSaved[1], RP.testSaved[2], RP.testSaved[3]
+    RP.testSavedProvider, RP.testSaved = nil, nil
+    Say(L("Roll progress test finished."))
+end
+
+function RP.RunTest(count)
+    local config = RP.GetSettings()
+    if not config then return end
+    if testMode then Say(L("A roll progress test is already running.")); return end
+    count = math.max(2, math.min(40, tonumber(count) or 5))
+
+    testToken = testToken + 1
+    local token = testToken
+    testMode = true
+    RP.testSavedProvider = provider
+    RP.testSaved = { announcedSet, rearmPending, rearmSawRoll }
+    announcedSet, rearmPending, rearmSawRoll = nil, false, false
+
+    local members, rolls = {}, {}
+    for i = 1, count do members[i] = { fullName = "MimDiceTest" .. i } end
+    provider = function() return members, rolls, true end
+
+    if not config.enabled then Say(L("Roll progress alert is off. Showing the test anyway.")) end
+    Say(string.format(L("Roll progress test: %d members roll in turn."), count))
+
+    -- 앞쪽은 빠르게(표시 시간이 이어지는지), 중간에 한 번 같은 사람 재굴림, 마지막은 조금 쉬고 굴림
+    local delay = 0
+    for i = 1, count do
+        delay = delay + ((i == count) and 1.5 or 0.6)
+        local name = members[i].fullName
+        C_Timer.After(delay, function()
+            if token ~= testToken or not testMode then return end
+            rolls[name] = (rolls[name] or 0) + 1
+            RP.OnRoll(name, rolls[name] == 1)
+            if i == 2 then   -- 재굴림은 숫자/표시 시간을 바꾸지 않는다
+                rolls[members[1].fullName] = rolls[members[1].fullName] + 1
+                RP.OnRoll(members[1].fullName, false)
+            end
+        end)
+    end
+    C_Timer.After(delay + config.duration + 1, function() EndTest(token) end)
 end

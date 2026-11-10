@@ -908,6 +908,14 @@ function MimDice_OnLoad(self)
     SLASH_MIMDICE4 = "/ala"
     SLASH_MIMDICE5 = "/밈주사위"
     SlashCmdList["MIMDICE"] = function (msg)
+        -- /밈주사위 테스트 [인원] : 주사위 진행 알림 혼자 시험하기 (기록에는 남지 않음)
+        local cmd, arg = (type(msg) == "string" and msg or ""):match("^%s*(%S*)%s*(%S*)")
+        if cmd == "테스트" or cmd == "test" then
+            if MimDiceRollProgress and MimDiceRollProgress.RunTest then
+                MimDiceRollProgress.RunTest(arg)
+            end
+            return
+        end
         MimDice_ShowWindow()
     end
 end
