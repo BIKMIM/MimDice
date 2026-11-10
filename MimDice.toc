@@ -22,6 +22,7 @@ Locales\koKR.lua
 BuffBarDefaults.lua
 SoundFiles.lua
 SoundList.lua
+MoveHandle.lua
 PowerInfusionBar.lua
 PowerInfusion.lua
 PowerInfusionConfig.lua

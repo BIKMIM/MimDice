@@ -5,7 +5,7 @@ local L = MimDice_L
 function RP.CreateConfig(parent, helpers)
     local win = CreateFrame("Frame", "MimDice_RollProgressConfig", UIParent, "BackdropTemplate")
     RP.Config = win
-    win:SetSize(340, 372)
+    win:SetSize(340, 512)
     win:SetPoint("TOPLEFT", parent, "TOPRIGHT", 6, 0)
     win:SetFrameStrata("DIALOG")
     win:SetBackdrop({
@@ -100,8 +100,13 @@ function RP.CreateConfig(parent, helpers)
     local selectSound = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     selectSound:SetSize(135, 22)
     selectSound:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -92)
-    selectSound:GetFontString():SetFont(MimDiceFontPath(), 10, "")
-    selectSound:GetFontString():SetWordWrap(false)
+    do
+        -- 긴 소리 이름이 버튼 밖(옆 ID 버튼, ▶ 버튼)으로 넘치지 않게 버튼 안쪽 폭으로 자른다.
+        local fs = selectSound:GetFontString()
+        fs:SetFont(MimDiceFontPath(), 10, "")
+        fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
+        fs:ClearAllPoints(); fs:SetPoint("LEFT", 6, 0); fs:SetPoint("RIGHT", -6, 0)
+    end
     selectSound:SetScript("OnClick", function()
         helpers.OpenSoundPicker(selectSound,
             function() return settings().soundKey end,
@@ -132,19 +137,68 @@ function RP.CreateConfig(parent, helpers)
         end
     end
 
-    local font = helpers.MakeNumberSlider(win, "MimDice_RollProgressFont", -124, L("Font size"), 12, 60,
+    -- 화면 문구 (비워 두면 기본 문구). 숫자는 자동으로 붙는다.
+    local function TextBox(field, x, y, width, placeholder)
+        local box = CreateFrame("EditBox", nil, win, "InputBoxTemplate")
+        box:SetPoint("TOPLEFT", win, "TOPLEFT", x, y)
+        box:SetSize(width, 22)
+        box:SetAutoFocus(false)
+        box:SetFont(MimDiceFontPath(), 11, "")
+        box:SetMaxLetters(60)
+        box:SetScript("OnTextChanged", function(self, userInput)
+            if not userInput then return end
+            local value = self:GetText()
+            if value == self.placeholder then value = "" end
+            settings()[field] = value:match("^%s*(.-)%s*$")
+            RP.ApplySettings()
+        end)
+        box:SetScript("OnEnterPressed", function(self) self:ClearFocus() end)
+        box:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
+        helpers.WirePlaceholder(box)
+        return box
+    end
+    local progressLabel = Label("Progress text (count is added)", -122)
+    progressLabel:SetWidth(150)
+    local doneLabel = win:CreateFontString(nil, "OVERLAY")
+    doneLabel:SetPoint("TOPLEFT", win, "TOPLEFT", 172, -122)
+    doneLabel:SetSize(155, 16)
+    doneLabel:SetFont(MimDiceFontPath(), 11, "OUTLINE")
+    doneLabel:SetJustifyH("LEFT")
+    doneLabel:SetTextColor(0.9, 0.9, 0.9)
+    doneLabel:SetText(L("Done text"))
+    local progressBox = TextBox("progressText", 20, -140, 142, L("Rolls"))
+    local doneBox = TextBox("doneText", 177, -140, 148, L("Everyone has rolled"))
+
+    local progressColor = helpers.MakeColorRow(win, -174, L("Progress text color"),
+        function() return settings().progressColor end,
+        function(r, g, b) settings().progressColor = { r = r, g = g, b = b } end,
+        { 1, 0.82, 0 }, RP.ApplySettings)
+    local doneColor = helpers.MakeColorRow(win, -200, L("Done text color"),
+        function() return settings().doneColor end,
+        function(r, g, b) settings().doneColor = { r = r, g = g, b = b } end,
+        { 0.3, 1, 0.3 }, RP.ApplySettings)
+    local bgColor = helpers.MakeColorRow(win, -226, L("배경 색상"),
+        function() return settings().bgColor end,
+        function(r, g, b) settings().bgColor = { r = r, g = g, b = b } end,
+        { 0, 0, 0 }, RP.ApplySettings,
+        {
+            get = function() return settings().bgAlpha end,
+            set = function(a) settings().bgAlpha = a end,
+        })
+
+    local font = helpers.MakeNumberSlider(win, "MimDice_RollProgressFont", -254, L("Font size"), 12, 60,
         function() return settings().fontSize end,
         function(value) settings().fontSize = value end, RP.ApplySettings)
-    local duration = helpers.MakeNumberSlider(win, "MimDice_RollProgressDuration", -178, L("Display duration (seconds)"), 1, 10,
+    local duration = helpers.MakeNumberSlider(win, "MimDice_RollProgressDuration", -308, L("Display duration (seconds)"), 1, 10,
         function() return settings().duration end,
         function(value) settings().duration = value end, RP.ApplySettings)
-    local posRefresh, posX, posY = helpers.AddPosRow(win, -232,
+    local posRefresh, posX, posY = helpers.AddPosRow(win, -362,
         function() return settings().x end, function(value) settings().x = value end,
         function() return settings().y end, function(value) settings().y = value end, RP.ApplySettings)
     win.posRefresh = posRefresh
-    helpers.ChainTabEnter({ font.edit, duration.edit, posX, posY })
+    helpers.ChainTabEnter({ progressBox, doneBox, font.edit, duration.edit, posX, posY })
 
-    local help = Label("Shows how many members rolled when someone rolls for the first time, then alerts once when everyone has rolled. Only you can see it.", -266, 42)
+    local help = Label("Shows how many members rolled when someone rolls for the first time, then alerts once when everyone has rolled. Only you can see it.", -396, 42)
     help:SetFont(MimDiceFontPath(), 10, "")
     help:SetTextColor(0.7, 0.7, 0.7)
 
@@ -178,6 +232,11 @@ function RP.CreateConfig(parent, helpers)
         enabledCb:SetChecked(config.enabled)
         soundCb:SetChecked(config.soundEnabled)
         win.RefreshSoundRow()
+        helpers.SetBoxValue(progressBox, config.progressText, L("Rolls"))
+        helpers.SetBoxValue(doneBox, config.doneText, L("Everyone has rolled"))
+        progressColor()
+        doneColor()
+        bgColor()
         font.SyncValue()
         duration.SyncValue()
         posRefresh()

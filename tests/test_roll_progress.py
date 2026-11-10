@@ -22,8 +22,12 @@ function fm:GetText() return self.text_ end
 function fm:SetAlpha(a) self.alpha = a end
 function fm:SetScript(k, f) self.scripts[k] = f end
 function fm:GetScript(k) return self.scripts[k] end
-function fm:EnableMouse(v) self.mouse = v end
+function fm:EnableMouse(v) self.mouse = v; mouseCalls = (mouseCalls or 0) + 1; if inCombat then blockedCalls = (blockedCalls or 0) + 1 end end
 function fm:SetEditBorder(v) self.border = v end
+function fm:StartMoving() startMoves = (startMoves or 0) + 1; self.movingNow = true end
+function fm:StopMovingOrSizing() self.movingNow = false end
+function fm:GetCenter() return 960, 900 end
+function fm:GetTop() return 920 end
 function fm:GetStringWidth() return #(self.text_ or "") * 8 end
 function fm:SetPoint(...) self.point = {...} end
 function fm:SetFont(_, size) self.fontSize = size end
@@ -31,9 +35,10 @@ function fm:SetSize(w, h) self.w, self.h = w, h end
 function fm:CreateFontString() return NewFrame() end
 function fm:CreateTexture() return NewFrame() end
 function NewFrame()
-    return setmetatable({ scripts = {} }, { __index = function(_, k) return fm[k] or function() end end })
+    return setmetatable({ scripts = {} }, { __index = function(_, k) if fm[k] then return fm[k] end; if type(k) == "string" and k:match("^%u") then return function() end end end })
 end
-CreateFrame = function() return NewFrame() end
+allFrames = {}
+CreateFrame = function() local f = NewFrame(); allFrames[#allFrames + 1] = f; return f end
 MimDiceFontPath = function() return "font.ttf" end
 RP = MimDiceRollProgress
 '''
@@ -260,7 +265,8 @@ state.grouped = true
 RP.Init(audit.play)
 local display
 local realCreate = CreateFrame
-CreateFrame = function(...) local f = realCreate(...); if not display then display = f end; return f end
+allFrames = {}
+CreateFrame = function(...) local f = realCreate(...); if not display then display = f end; allFrames[#allFrames + 1] = f; return f end
 local function roll(name) rolls[name] = (rolls[name] or 0) + 1; RP.OnRoll(name, rolls[name] == 1) end
 local function tick(sec) display.scripts.OnUpdate(display, sec) end
 
@@ -282,12 +288,96 @@ roll("P5"); assert(display:IsShown())
 RP.SetEnabled(false); assert(not display:IsShown())
 RP.SetEnabled(true)
 
--- 위치 조정 중에는 사라지지 않고, 끝내면 클릭 통과로 돌아온다
+-- 위치 조정 중에는 사라지지 않는다. 마우스는 별도 손잡이만 받고, 알림 창은 끝까지 클릭 통과
 RP.SetEditing(true)
-assert(display:IsShown() and display.mouse == true)
+local h = RP._handle
+assert(display:IsShown() and h.frame:IsShown() and h.frame.mouse == true)
+assert(rawget(display, "mouse") == nil, "the alert frame itself must never take the mouse")
 tick(30); assert(display:IsShown())
 RP.SetEditing(false)
-assert(display.mouse == false)
+assert(not h.frame:IsShown() and rawget(display, "mouse") == nil)
+
+-- 사용자 문구/색/배경: 비우면 기본 문구, 적으면 숫자를 붙여 표시
+local cfg = RP.GetSettings()
+assert(cfg.progressText == "" and cfg.doneText == "" and cfg.bgAlpha == 0)
+assert(cfg.progressColor.r == 1 and cfg.doneColor.g == 1 and cfg.bgColor.r == 0)
+assert(cfg.progressColor ~= cfg.doneColor)   -- 기본값 표를 함께 쓰지 않음
+RP.OnReset()
+roll("P6")
+assert(display.text:GetText() == "Rolls 6 / 30", tostring(display.text:GetText()))
+cfg.progressText, cfg.doneText = "굴려굴려", "다 굴렸다!"
+RP.ApplySettings()
+assert(display.text:GetText() == "굴려굴려 6 / 30", "ApplySettings must redraw with the new text")
+RP.PreviewDone()   -- 실제 알림이 보이는 중이면 미리보기로 덮지 않는다
+assert(display.text:GetText() == "굴려굴려 6 / 30")
+RP.OnReset(); RP.PreviewDone()
+assert(display.text:GetText() == "다 굴렸다! (30 players)", tostring(display.text:GetText()))
+cfg.progressText, cfg.doneText = "", ""
+-- 잘못 저장된 색/투명도는 기본값으로 복구
+MimDiceDB.rollProgress.bgColor, MimDiceDB.rollProgress.bgAlpha = "red", 5
+cfg = RP.GetSettings()
+assert(cfg.bgColor.r == 0 and cfg.bgAlpha == 1)
+
+-- 게임 방해 방지: 일반 표시는 마우스 설정 함수를 부르지 않는다
+RP.OnReset(); RP.SetEditing(false)
+local before = mouseCalls or 0
+for i = 7, 20 do roll("P" .. i) end
+RP.PreviewProgress(); RP.PreviewDone(); RP.ApplySettings()
+assert((mouseCalls or 0) == before, "showing the overlay must not touch mouse settings")
+assert(rawget(display, "mouse") == nil)
+
+-- 전투 중: 조정 시작 거부, 굴림 표시에도 보호 함수 없음
+inCombat = true
+InCombatLockdown = function() return true end
+assert(RP.SetEditing(true) == false and not h.frame:IsShown() and RP.GetSettings().locked)
+for i = 21, 25 do roll("P" .. i) end
+assert((blockedCalls or 0) == 0, "EnableMouse must never be called in combat")
+inCombat = false
+InCombatLockdown = function() return false end
+
+-- 위치 조정 중 전투 잠금이 '이미 걸린 뒤'에 전투 이벤트가 와도 마우스를 잡은 상태가 남지 않는다
+RP.SetEditing(true)
+assert(h.frame:IsShown())
+inCombat = true
+InCombatLockdown = function() return true end
+RP.OnCombatStart()
+assert(not h.frame:IsShown() and RP.GetSettings().locked == true, "combat must close the handle even under lockdown")
+roll("P26")   -- 이후 실제 진행 알림: 클릭 통과 유지
+assert(display:IsShown() and rawget(display, "mouse") == nil and not h.frame:IsShown())
+assert((blockedCalls or 0) == 0)
+
+-- 드래그 도중 전투 진입: 이동이 멈추고 위치가 저장된다. 전투 중 새 이동은 시작하지 않는다
+inCombat = false
+InCombatLockdown = function() return false end
+RP.SetEditing(true)
+h.frame.scripts.OnDragStart(h.frame)
+assert(rawget(display, "movingNow") == true)
+inCombat = true
+InCombatLockdown = function() return true end
+RP.OnCombatStart()
+assert(rawget(display, "movingNow") == false and not h.frame:IsShown())
+local moves = startMoves
+h.frame.scripts.OnDragStart(h.frame)
+assert(startMoves == moves, "no StartMoving in combat")
+
+-- 알림 창이 숨겨지는 모든 경로에서 손잡이도 끝난다 (초기화 / 기능 끄기)
+inCombat = false
+InCombatLockdown = function() return false end
+RP.OnReset(); roll("P27")             -- 실제 진행 표시 중
+RP.SetEditing(true)
+assert(h.editing and h.frame:IsShown())
+RP.OnReset()                           -- 주사위 초기화 -> 표시 창 숨김
+assert(not h.editing and not h.frame:IsShown() and RP.GetSettings().locked, "reset must end the handle")
+roll("P28"); RP.SetEditing(true)
+RP.SetEnabled(false)                   -- 기능 끄기
+assert(not h.editing and not h.frame:IsShown())
+RP.SetEnabled(true)
+
+-- 전투가 끝나면 다시 조정할 수 있다
+inCombat = false
+InCombatLockdown = function() return false end
+assert(RP.SetEditing(true) == true and h.frame:IsShown())
+RP.SetEditing(false)
 
 -- 위치 초기화는 위치만 되돌린다
 local c = RP.GetSettings()
@@ -357,11 +447,55 @@ local snap = RP.Snapshot()
 assert(snap.total == 2 and snap.set.Me, "real provider must be restored")
 '''
 
+FIRSTCOMBAT = r'''
+-- 로그인 뒤 한 번도 표시하지 않다가 전투 중 첫 굴림: 보호 함수 호출이 없어야 한다
+inCombat = true
+InCombatLockdown = function() return true end
+local group, rolls = {}, {}
+for i = 1, 5 do group[i] = { fullName = "P" .. i } end
+RP.SetProvider(function() return group, rolls, true end)
+state.grouped = true
+RP.Init(audit.play)
+local before = mouseCalls or 0
+for i = 1, 5 do rolls["P" .. i] = 1; RP.OnRoll("P" .. i, true) end
+assert((blockedCalls or 0) == 0 and (mouseCalls or 0) == before, "first display in combat must not call EnableMouse")
+assert(RP.SetEditing(true) == false)   -- 전투 중 손잡이도 만들지 않는다
+assert(RP._handle and RP._handle.frame == nil)
+'''
+
+BLOODLUST = (helper.parent.parent / 'BloodlustReminder.lua').read_text(encoding='utf-8-sig') + r'''
+-- 블러드 사용 가능 알림: 알림 창은 마우스를 받지 않고, 전투 시작 시 조정 손잡이가 닫힌다
+local R = MimDiceBloodlustReminder
+R.Init(function() return false, true end, audit.play)
+local cfg = R.GetSettings()
+local display
+for _, f in ipairs(allFrames) do if f.handle then display = f end end
+assert(display and display.handle, "reminder display must use the move handle")
+local h = display.handle
+cfg.locked = false; R.ApplySettings()
+assert(h.frame:IsShown() and h.frame.mouse == true and rawget(display, "mouse") == nil)
+inCombat = true
+InCombatLockdown = function() return true end
+MimDiceMoveHandle.EndAllForCombat()   -- 잠금이 이미 걸린 뒤의 전투 이벤트
+assert(not h.frame:IsShown() and cfg.locked == true)
+R.Test()                               -- 전투 중 표시
+assert((blockedCalls or 0) == 0 and rawget(display, "mouse") == nil)
+cfg.locked = false; R.ApplySettings() -- 전투 중 조정 시작 시도
+assert(cfg.locked == true and not h.frame:IsShown())
+-- 알림이 숨겨지면 손잡이도 끝난다
+inCombat = false
+InCombatLockdown = function() return false end
+cfg.locked = false; R.ApplySettings()
+assert(h.editing and h.frame:IsShown())
+display:Hide()
+assert(not h.editing and not h.frame:IsShown() and cfg.locked == true, "hiding the alert must end the handle")
+'''
+
 passed = 0
-for name, body in (("rules", SCENARIO), ("display", DISPLAY), ("migration", MIGRATION), ("selftest", SELFTEST)):
+for name, body in (("rules", SCENARIO), ("display", DISPLAY), ("migration", MIGRATION), ("selftest", SELFTEST), ("firstcombat", FIRSTCOMBAT), ("bloodlust", BLOODLUST)):
     vm = namespace['make_vm'](source)
     vm.execute(PRELUDE)
     vm.execute("state.plays = state.plays or {}")
     vm.execute(body)
     passed += 1
-print(f"Roll progress: {passed} / 4 scenario groups passed")
+print(f"Roll progress: {passed} / 6 scenario groups passed")

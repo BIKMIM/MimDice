@@ -14,6 +14,7 @@ local DEFAULT_X, DEFAULT_Y = 0, -170   -- 화면 위 가운데 기준
 local defaults = {
     enabled = true, soundEnabled = true,
     soundType = "preset", soundFile = "", fontSize = 22, duration = 3,
+    progressText = "", doneText = "", bgAlpha = 0,
     x = DEFAULT_X, y = DEFAULT_Y, locked = true,
 }
 
@@ -68,34 +69,38 @@ function RP.GetSettings()
     if config.soundType ~= "preset" and config.soundType ~= "custom" and config.soundType ~= "id" then
         config.soundType = "preset"
     end
+    -- 색은 표마다 따로 만든다 (기본값 표를 여러 설정이 함께 쓰지 않게)
+    local function Color(key, r, g, b)
+        local c = config[key]
+        if type(c) ~= "table" or type(c.r) ~= "number" or type(c.g) ~= "number" or type(c.b) ~= "number" then
+            config[key] = { r = r, g = g, b = b }
+        end
+    end
+    Color("progressColor", 1, 0.82, 0)
+    Color("doneColor", 0.3, 1, 0.3)
+    Color("bgColor", 0, 0, 0)
+    config.bgAlpha = math.max(0, math.min(1, config.bgAlpha))
     config.fontSize = math.max(12, math.min(60, config.fontSize))
     config.duration = math.max(1, math.min(10, config.duration))
     return config
 end
 
 -- ── 표시 ─────────────────────────────────────────────────────────────
+-- 알림 창은 마우스를 전혀 받지 않는다(EnableMouse를 부르지 않음 = 기본 클릭 통과).
+-- 위치 조정은 MoveHandle의 별도 손잡이가 맡는다. 전투 중 보호 함수 호출이 생기지 않는다.
+local handle
+
 local function EnsureDisplay()
     if display then return display end
     display = CreateFrame("Frame", "MimDice_RollProgress", UIParent)
     display:SetFrameStrata("HIGH")
-    display:EnableMouse(false)        -- 평소에는 클릭을 막지 않는다
     display:SetMovable(true)
     display:SetClampedToScreen(true)  -- 해상도/배율이 바뀌어도 화면 안에 둔다
-    display:SetUserPlaced(false)
-    display:RegisterForDrag("LeftButton")
-    display:SetScript("OnDragStart", function(self)
-        local config = RP.GetSettings()
-        if config and not config.locked then self:StartMoving(); self.moving = true end
-    end)
-    display:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        self:SetUserPlaced(false)
-        self.moving = false
-        RP.SavePosition()
-    end)
-    display:SetScript("OnHide", function(self)
-        if self.moving then self:GetScript("OnDragStop")(self) end
-    end)
+
+    local bg = display:CreateTexture(nil, "BACKGROUND")   -- 사용자가 고른 배경색 (기본: 투명)
+    bg:SetAllPoints()
+    bg:SetColorTexture(0, 0, 0, 0)
+    display.bg = bg
 
     local text = display:CreateFontString(nil, "OVERLAY")
     text:SetPoint("CENTER")
@@ -104,22 +109,22 @@ local function EnsureDisplay()
     text:SetWordWrap(false)
     display.text = text
 
-    local border = {}
-    for _, edge in ipairs({
-        { "TOPLEFT", "TOPRIGHT", true }, { "BOTTOMLEFT", "BOTTOMRIGHT", true },
-        { "TOPLEFT", "BOTTOMLEFT", false }, { "TOPRIGHT", "BOTTOMRIGHT", false },
-    }) do
-        local line = display:CreateTexture(nil, "OVERLAY")
-        line:SetColorTexture(1, 0.82, 0, 1)
-        line:SetPoint(edge[1], display, edge[1], 0, 0)
-        line:SetPoint(edge[2], display, edge[2], 0, 0)
-        if edge[3] then line:SetHeight(2) else line:SetWidth(2) end
-        line:Hide()
-        border[#border + 1] = line
-    end
-    function display:SetEditBorder(shown)
-        for _, line in ipairs(border) do line:SetShown(shown) end
-    end
+    handle = MimDiceMoveHandle.Create(display, {
+        onStop = function() RP.SavePosition() end,
+        onCombat = function()   -- 전투가 시작돼 조정이 끝났다
+            local c = RP.GetSettings()
+            if c then c.locked = true end
+            if display.kind == "preview" then display.elapsed = 0; display:Hide() end
+            if RP.Config and RP.Config.RefreshEditBtn then RP.Config.RefreshEditBtn() end
+        end,
+        onHidden = function()   -- 초기화/기능 끄기 등으로 알림 창이 숨겨졌다
+            local c = RP.GetSettings()
+            if c then c.locked = true end
+            if RP.Config and RP.Config.RefreshEditBtn then RP.Config.RefreshEditBtn() end
+        end,
+    })
+    RP._handle = handle   -- 테스트 확인용
+    display:SetScript("OnHide", function() handle:TargetHidden() end)
 
     display:SetScript("OnUpdate", function(self, elapsed)
         local config = RP.GetSettings()
@@ -147,32 +152,53 @@ function RP.SavePosition()
     if RP.Config and RP.Config.posRefresh then RP.Config.posRefresh() end
 end
 
-local function Style(message, r, g, b)
+-- 문구: 비워 두면 기본 문구. 진행은 "문구 3 / 30", 완료는 "문구 (30명)"으로 붙인다.
+local function ProgressText(config, rolled, total)
+    if config.progressText ~= "" then
+        return string.format("%s %d / %d", config.progressText, rolled, total)
+    end
+    return string.format(L("Rolls %d / %d"), rolled, total)
+end
+local function DoneText(config, total)
+    if config.doneText ~= "" then
+        return config.doneText .. " " .. string.format(L("(%d players)"), total)
+    end
+    return string.format(L("Everyone has rolled (%d players)"), total)
+end
+
+-- which: "progress" 진행 / "done" 완료. 인자를 빼면 마지막 표시를 현재 설정으로 다시 그린다.
+local function Style(which, a, b)
     local config = RP.GetSettings()
     local frame = EnsureDisplay()
-    if not frame.moving then
+    if which then frame.which, frame.a, frame.b = which, a, b end
+    which = frame.which or "progress"
+    if not (handle and handle.moving) then
         frame:ClearAllPoints()
         frame:SetPoint("TOP", UIParent, "TOP", config.x, config.y)
     end
     local path = MimDiceFontPath and MimDiceFontPath() or STANDARD_TEXT_FONT
     frame.text:SetFont(path, config.fontSize, "OUTLINE")
-    if message then
-        frame.text:SetText(message)
-        frame.text:SetTextColor(r, g, b)
+    local color
+    if which == "done" then
+        frame.text:SetText(DoneText(config, frame.a or 30))
+        color = config.doneColor
+    else
+        frame.text:SetText(ProgressText(config, frame.a or 12, frame.b or 30))
+        color = config.progressColor
     end
-    -- 긴 완료 문구/영어 번역도 잘리지 않게 글자 폭에 맞춰 영역을 넓힌다.
+    frame.text:SetTextColor(color.r, color.g, color.b)
+    frame.bg:SetColorTexture(config.bgColor.r, config.bgColor.g, config.bgColor.b, config.bgAlpha)
+    -- 긴 문구/영어 번역도 잘리지 않게 글자 폭에 맞춰 영역을 넓힌다.
     local width = (frame.text:GetStringWidth() or 0) + 40
     frame:SetSize(math.max(240, width), config.fontSize * 2)
-    frame:EnableMouse(not config.locked)
-    frame:SetEditBorder(not config.locked)
 end
 
 -- kind: "live" 실제 알림 / "preview" 미리보기
-local function Show(kind, message, r, g, b)
+local function Show(kind, which, a, b)
     local frame = EnsureDisplay()
     -- 실제 알림 표시 중에는 미리보기로 덮지 않는다. 실제 알림은 미리보기를 덮는다.
     if kind == "preview" and frame:IsShown() and frame.kind == "live" then return false end
-    Style(message, r, g, b)
+    Style(which, a, b)
     frame.kind, frame.elapsed = kind, 0
     frame:SetAlpha(1)   -- 사라지는 중이었어도 바로 원래 밝기로
     frame:Show()
@@ -184,13 +210,6 @@ local function HideDisplay()
         display.elapsed = 0
         display:Hide()
     end
-end
-
-local function ProgressText(rolled, total)
-    return string.format(L("Rolls %d / %d"), rolled, total)
-end
-local function DoneText(total)
-    return string.format(L("Everyone has rolled (%d players)"), total)
 end
 
 local function PlayDone(config)
@@ -265,7 +284,7 @@ local function Sync(snap, config, newRoll)
         if not snap.complete then
             if newRoll then
                 rearmSawRoll = true
-                Show("live", ProgressText(snap.rolled, snap.total), 1, 0.82, 0)
+                Show("live", "progress", snap.rolled, snap.total)
             end
             return
         end
@@ -280,13 +299,13 @@ local function Sync(snap, config, newRoll)
 
     if allRolled and snap.complete and not announced then
         announcedSet = snap.set
-        Show("live", DoneText(snap.total), 0.3, 1, 0.3)
+        Show("live", "done", snap.total)
         PlayDone(config)
         return
     end
     if newRoll and not announced then
         -- 구성원 정보가 부족해 완료를 미룬 경우에도 진행 숫자는 보여 준다.
-        Show("live", ProgressText(snap.rolled, snap.total), 1, 0.82, 0)
+        Show("live", "progress", snap.rolled, snap.total)
     end
 end
 
@@ -344,7 +363,7 @@ function RP.SetEnabled(on)
     config.enabled = on and true or false
     if not config.enabled then
         config.locked = true
-        if display then display:EnableMouse(false); display:SetEditBorder(false) end
+        if handle then handle:End() end
         HideDisplay()
         return
     end
@@ -356,13 +375,13 @@ end
 
 function RP.PreviewProgress()
     if not RP.GetSettings() then return end
-    Show("preview", ProgressText(12, 30), 1, 0.82, 0)
+    Show("preview", "progress", 12, 30)
 end
 
 function RP.PreviewDone()
     local config = RP.GetSettings()
     if not config then return end
-    if Show("preview", DoneText(30), 0.3, 1, 0.3) then PlayDone(config) end
+    if Show("preview", "done", 30) then PlayDone(config) end
 end
 
 function RP.TestSound()
@@ -377,12 +396,19 @@ end
 -- 위치 조정 시작/끝
 function RP.SetEditing(on)
     local config = RP.GetSettings()
-    if not config then return end
-    config.locked = not on
+    if not config then return false end
     if on then
         local frame = EnsureDisplay()
+        if not handle:Begin() then   -- 전투 중에는 조정을 시작하지 않는다
+            if DEFAULT_CHAT_FRAME then
+                DEFAULT_CHAT_FRAME:AddMessage("|cffffff00[MimDice]|r " .. L("You can move it after combat."))
+            end
+            config.locked = true
+            return false
+        end
+        config.locked = false
         if not (frame:IsShown() and frame.kind == "live") then
-            Style(ProgressText(12, 30), 1, 0.82, 0)
+            Style("progress", 12, 30)
             frame.kind = "preview"
         else
             Style()
@@ -391,12 +417,11 @@ function RP.SetEditing(on)
         frame:SetAlpha(1)
         frame:Show()
     else
-        if display then
-            display:EnableMouse(false)
-            display:SetEditBorder(false)
-            if display.kind == "preview" then HideDisplay() end
-        end
+        config.locked = true
+        if handle then handle:End() end
+        if display and display.kind == "preview" then HideDisplay() end
     end
+    return true
 end
 
 function RP.ClosePreview()
@@ -417,6 +442,11 @@ function RP.ApplySettings()
     if display:IsShown() or not config.locked then
         Style()
     end
+end
+
+-- 전투 시작 처리 (테스트용 진입점). 실제로는 MoveHandle이 PLAYER_REGEN_DISABLED에서 부른다.
+function RP.OnCombatStart()
+    MimDiceMoveHandle.EndAllForCombat()
 end
 
 function RP.Init(soundPlayer, rosterProvider)

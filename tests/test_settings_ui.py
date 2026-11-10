@@ -21,7 +21,7 @@ local function object(kind, name, parent)
     setmetatable(o, { __index = function(_, k)
         if methods[k] then return methods[k] end
         if k:match('^Set') or k:match('^Enable') or k:match('^Register') or
-            k:match('^Clear') or k:match('^Stop') then return noop end
+            k:match('^Clear') or k:match('^Stop') or k:match('^Lock') or k:match('^Unlock') then return noop end
     end })
     if parent then table.insert(parent.children, o) end
     if name then _G[name] = o end
@@ -33,6 +33,10 @@ function CreateFrame(kind, name, parent, template)
     if template == 'UIPanelScrollFrameTemplate' then
         f.ScrollBar = object('Slider', nil, f)
     end
+    if template == 'OptionsSliderTemplate' and name then
+        for _, part in ipairs({ 'Low', 'High', 'Text' }) do _G[name .. part] = object('FontString', name .. part, f) end
+    end
+    if name then _G[name] = f end
     return f
 end
 function methods:SetParent(parent)
@@ -225,6 +229,13 @@ assert(page.content:GetHeight()==originalHeight+70, 'wrapped help text was omitt
 page.pageScroll:SetHeight(2000)
 page.pageScroll:GetScript('OnSizeChanged')(page.pageScroll)
 assert(page.pageScroll:GetVerticalScroll()==0, 'resizing did not clamp scroll position')
+-- 주사위 진행 알림 설정창: 열기/값 반영/닫기
+SA_ToggleBuffConfig('ROLL_PROGRESS')
+local rp = _G.MimDice_RollProgressConfig or MimDiceRollProgress.Config
+assert(rp and rp:IsShown(), 'roll progress config did not open')
+SA_ToggleBuffConfig('ROLL_PROGRESS')
+assert(not rp:IsShown(), 'roll progress config did not close')
+assert(MimDiceDB.rollProgress.locked == true, 'closing must end position editing')
 MimDiceDB.settingsTab=before.settingsTab
 MimDiceDB.skin.enabled=before.skin.enabled
 assert(same(before,MimDiceDB), 'navigation or skin refresh changed user settings')

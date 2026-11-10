@@ -306,7 +306,8 @@ function Bar.Init(settings, configureCheck)
         if frame.SetPropagateMouseClicks then frame:SetPropagateMouseClicks(true) end
         previewVisual.sb:SetMinMaxValues(0, 1)
         frame:SetScript("OnMouseDown", function(self, button)
-            if button == "LeftButton" and Settings().barLocked == false and Settings().barEnabled then
+            if button == "LeftButton" and not (InCombatLockdown and InCombatLockdown())
+               and Settings().barLocked == false and Settings().barEnabled then
                 self:StartMoving()
                 self.moving = true
             end

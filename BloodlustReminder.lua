@@ -62,28 +62,33 @@ local function EnsureDisplay()
     if display then return display end
     display = CreateFrame("Frame", "MimDice_BloodlustReadyAlert", UIParent)
     display:SetFrameStrata("HIGH")
-    display:EnableMouse(false)
+    -- 알림 창은 마우스를 받지 않는다(EnableMouse를 부르지 않음). 위치 조정은 별도 손잡이가 맡는다.
     display:SetMovable(true)
     display:SetClampedToScreen(true)
-    display:SetUserPlaced(false)
-    display:RegisterForDrag("LeftButton")
-    display:SetScript("OnDragStart", function(self)
-        if not Reminder.GetSettings().locked then self:StartMoving(); self.moving = true end
-    end)
-    display:SetScript("OnDragStop", function(self)
-        self:StopMovingOrSizing()
-        self:SetUserPlaced(false)
-        self.moving = false
-        local x, y = self:GetCenter()
-        local cx, cy = UIParent:GetCenter()
-        if x and y and cx and cy then
+    display.handle = MimDiceMoveHandle.Create(display, {
+        onStop = function()
+            local x, y = display:GetCenter()
+            local cx, cy = UIParent:GetCenter()
+            if x and y and cx and cy then
+                local config = Reminder.GetSettings()
+                config.x, config.y = math.floor(x - cx + 0.5), math.floor(y - cy + 0.5)
+            end
+            if Reminder.Config then Reminder.Config.posRefresh() end
+        end,
+        onCombat = function()   -- 전투 시작으로 조정이 끝났다
             local config = Reminder.GetSettings()
-            config.x, config.y = math.floor(x - cx + 0.5), math.floor(y - cy + 0.5)
-        end
-        if Reminder.Config then Reminder.Config.posRefresh() end
-    end)
+            if config then config.locked = true end
+            if display.preview then display:Hide() end
+            if Reminder.Config and Reminder.Config.RefreshLockBtn then Reminder.Config.RefreshLockBtn() end
+        end,
+        onHidden = function()   -- 알림이 숨겨지면 조정도 끝낸다
+            local config = Reminder.GetSettings()
+            if config then config.locked = true end
+            if Reminder.Config and Reminder.Config.RefreshLockBtn then Reminder.Config.RefreshLockBtn() end
+        end,
+    })
     display:SetScript("OnHide", function(self)
-        if self.moving then self:GetScript("OnDragStop")(self) end
+        if self.handle then self.handle:TargetHidden() end
         if self.pulseFrame then self.pulseFrame:SetScale(1) end
     end)
     display:Hide()
@@ -91,7 +96,6 @@ local function EnsureDisplay()
     local pulseFrame = CreateFrame("Frame", nil, display)
     pulseFrame:SetPoint("CENTER", display, "CENTER")
     pulseFrame:SetSize(1, 1)
-    pulseFrame:EnableMouse(false)
     display.pulseFrame = pulseFrame
     local text = pulseFrame:CreateFontString(nil, "OVERLAY")
     text:SetPoint("CENTER")
@@ -163,7 +167,7 @@ end
 local function StyleDisplay()
     local config = Reminder.GetSettings()
     local frame = EnsureDisplay()
-    if not frame.moving then
+    if not (frame.handle and frame.handle.moving) then
         frame:ClearAllPoints()
         frame:SetPoint("CENTER", UIParent, "CENTER", config.x, config.y)
     end
@@ -172,8 +176,12 @@ local function StyleDisplay()
     frame.text:SetText(config.message ~= "" and config.message or L("Bloodlust / Heroism ready!"))
     frame.pulseFrame:SetScale(1)
     frame:SetSize(math.max(200, frame.text:GetStringWidth() + 30), config.fontSize * 2)
-    frame:EnableMouse(not config.locked)
-    frame:SetEditBorder(not config.locked)
+    -- 조정 테두리와 마우스는 손잡이가 맡는다. 전투 중에는 손잡이를 열지 않는다.
+    if config.locked then
+        frame.handle:End()
+    elseif not frame.handle:Begin() then
+        config.locked = true
+    end
 end
 
 local function Show(preview)
@@ -195,10 +203,7 @@ end
 function Reminder.ClosePreview()
     local config = Reminder.GetSettings()
     if config then config.locked = true end
-    if display then
-        display:EnableMouse(false)
-        display:SetEditBorder(false)
-    end
+    if display and display.handle then display.handle:End() end
     if display and display.preview then display:Hide() end
 end
 

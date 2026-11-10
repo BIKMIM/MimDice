@@ -1555,7 +1555,7 @@ local function SA_EnsureDeathFrame()
 
     -- 드래그 (잠금 해제 상태에서만)
     f:SetScript("OnMouseDown", function(self, button)
-        if button == "LeftButton" and MimDiceDB and MimDiceDB.deathTrack and not MimDiceDB.deathTrack.locked then
+        if button == "LeftButton" and not InCombatLockdown() and MimDiceDB and MimDiceDB.deathTrack and not MimDiceDB.deathTrack.locked then
             self:StartMoving()
             self.moving = true
         end
@@ -2577,6 +2577,7 @@ local function SA_CreateBuffConfig(key)
             OpenSoundPicker = SA_OpenSoundPicker,
             PresetSoundName = SA_PresetSoundName,
             SetPresetSound = SA.SetPresetSound,
+            MakeColorRow = SA_MakeColorRow,
             MakeNumberSlider = SA_MakeNumberSlider,
             AddPosRow = SA_AddPosRow,
             ChainTabEnter = SA_ChainTabEnter,
@@ -3072,7 +3073,7 @@ local function SA_EnsureBuffBar(key)
 
     f:SetScript("OnMouseDown", function(self, btn)
         local b = MimDiceDB.buffTrack[key]
-        if btn == "LeftButton" and b and not b.locked then
+        if btn == "LeftButton" and not InCombatLockdown() and b and not b.locked then
             self:StartMoving()
             self.moving = true
         end
@@ -3402,7 +3403,7 @@ local function SA_EnsureBattleResIcon()
     f:RegisterForDrag("LeftButton")
     f:SetScript("OnDragStart", function(self)
         local b = MimDiceDB.battleRes
-        if b and not b.iconLocked then self:StartMoving(); self.isMoving = true end
+        if b and not b.iconLocked and not InCombatLockdown() then self:StartMoving(); self.isMoving = true end
     end)
     f:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing(); self.isMoving = false; savePos(self)
@@ -4466,7 +4467,7 @@ local function SA_EnsurePartyFrame()
         end
     end
     f:SetScript("OnMouseDown", function(self, btn)
-        if btn == "LeftButton" and MimDiceDB.partyAlert and not MimDiceDB.partyAlert.locked then
+        if btn == "LeftButton" and not InCombatLockdown() and MimDiceDB.partyAlert and not MimDiceDB.partyAlert.locked then
             self:StartMoving(); self.moving = true
         end
     end)
@@ -4830,6 +4831,80 @@ local function SA_CheckFullParty()
         if FlashClientIcon then FlashClientIcon() end   -- 백그라운드면 작업표시줄 와우 아이콘 반짝
     end
     SA_paLastGroupSize = n
+end
+
+-- 위치 조정 중에 전투가 시작되면 모든 기존 알림의 조정을 잠근다.
+-- PLAYER_REGEN_DISABLED는 보통 전투 잠금 직전에 오므로 각 갱신 함수가 마우스까지 정리한다.
+-- 잠금이 이미 걸린 뒤라면 마우스 설정은 건너뛰지만(각 함수의 InCombatLockdown 가드),
+-- 이동 시작은 위의 InCombatLockdown 검사로 막힌다.
+-- 전투 중에 잠근 항목. 전투가 끝나면 갱신을 한 번 더 불러 마우스 상태를 다시 맞춘다.
+local SA_CombatResync = {}
+local function SA_LockAllEditingForCombat()
+    local db = MimDiceDB
+    if not db then return end
+    local function moving(f)
+        if f and (f.moving or f.isMoving) then
+            f:StopMovingOrSizing(); f.moving, f.isMoving = false, false
+        end
+    end
+    if db.deathTrack and not db.deathTrack.locked then
+        moving(SA_DeathFrame)
+        db.deathTrack.locked = true
+        SA_CombatResync.death = true
+        pcall(SA_UpdateDeathFrame)
+    end
+    if db.buffTrack then
+        for key, bt in pairs(db.buffTrack) do
+            if type(bt) == "table" and bt.locked == false then
+                moving(SA_BuffBars[key])
+                bt.locked = true
+                SA_CombatResync["buff:" .. key] = key
+                pcall(SA_UpdateBuffBar, key)
+            end
+        end
+    end
+    -- 이미 끌고 있던 이동도 멈춘다 (잠금 상태와 관계없이)
+    moving(SA_BattleResIcon)
+    moving(SA_PartyFrame)
+    moving(SA_DeathFrame)
+    if db.battleRes and db.battleRes.iconLocked == false then
+        db.battleRes.iconLocked = true
+        SA_CombatResync.bres = true
+        pcall(SA_UpdateBattleResRuntime)
+    end
+    if db.partyAlert and db.partyAlert.locked == false then
+        db.partyAlert.locked = true
+        SA_CombatResync.party = true
+        pcall(SA_UpdatePartyFrame)
+    end
+    if MimDicePowerInfusion and MimDicePowerInfusion.GetSettings then
+        local pi = MimDicePowerInfusion.GetSettings()
+        if pi and pi.barLocked == false and MimDicePowerInfusion.CloseBarPreview then
+            pcall(MimDicePowerInfusion.CloseBarPreview)
+        end
+    end
+end
+-- 전투가 끝나면, 전투 중 잠금으로 건너뛰었을 수 있는 마우스 정리를 다시 한다.
+local function SA_ResyncAfterCombat()
+    local pending = SA_CombatResync
+    SA_CombatResync = {}
+    for name, value in pairs(pending) do
+        if name == "death" then pcall(SA_UpdateDeathFrame)
+        elseif name == "bres" then pcall(SA_UpdateBattleResRuntime)
+        elseif name == "party" then pcall(SA_UpdatePartyFrame)
+        else pcall(SA_UpdateBuffBar, value) end
+    end
+end
+SA.LockAllEditingForCombat = SA_LockAllEditingForCombat
+SA.ResyncAfterCombat = SA_ResyncAfterCombat
+do
+    local combatLock = CreateFrame("Frame")
+    combatLock:RegisterEvent("PLAYER_REGEN_DISABLED")
+    combatLock:RegisterEvent("PLAYER_REGEN_ENABLED")
+    combatLock:SetScript("OnEvent", function(_, event)
+        if event == "PLAYER_REGEN_DISABLED" then SA_LockAllEditingForCombat()
+        else SA_ResyncAfterCombat() end
+    end)
 end
 
 -- 임시 테스트/토글 슬래시 (옵션창 UI 통합 전 검증용): /밈파티 , /밈파티 test

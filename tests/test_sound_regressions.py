@@ -114,7 +114,7 @@ audit = {
     permission = SA_PartyCanReceiveAlerts, interruptAttempt = SA_RecordInterruptAttempt,
     interruptResult = SA_HandleInterruptResult, auraSync = SA_SyncBloodlustAuraPresence,
     event = SA_EventFrame:GetScript("OnEvent"), presetSounds = SA.GetPresetSounds,
-    setPreset = SA.SetPresetSound,
+    setPreset = SA.SetPresetSound, lockForCombat = SA.LockAllEditingForCombat,
 }
 MimDiceBloodlustReminder = { Refresh = function()
     state.readyCalls = state.readyCalls + 1
@@ -126,7 +126,7 @@ end }
 def make_vm(source):
     vm = LuaRuntime(unpack_returned_tuples=True)
     vm.execute(MOCK)
-    for name in ("BuffBarDefaults.lua", "SoundFiles.lua", "SoundList.lua", "PowerInfusion.lua", "RollProgress.lua", "RollProgressConfig.lua"):
+    for name in ("BuffBarDefaults.lua", "SoundFiles.lua", "SoundList.lua", "MoveHandle.lua", "PowerInfusion.lua", "RollProgress.lua", "RollProgressConfig.lua"):
         vm.execute((ROOT / name).read_text(encoding="utf-8-sig"))
     vm.execute(source + "\n" + EXPORT)
     vm.execute("SA_InitDB()")
@@ -417,6 +417,16 @@ for _, k in ipairs({ 'BN_WHISPER', 'WHISPER', 'GUILD', 'PARTY', 'RAID' }) do
     assert(#state.plays >= 1, k .. ' must still play')
 end
 assert(state.plays[1].kind == 'file')
+''')
+case("combat start: every unlocked position editor is locked", '''
+MimDiceDB.deathTrack.locked = false
+MimDiceDB.partyAlert.locked = false
+MimDiceDB.battleRes.iconLocked = false
+MimDiceDB.buffTrack.BLOODLUST.locked = false
+audit.lockForCombat()
+assert(MimDiceDB.deathTrack.locked and MimDiceDB.partyAlert.locked)
+assert(MimDiceDB.battleRes.iconLocked and MimDiceDB.buffTrack.BLOODLUST.locked)
+audit.lockForCombat()   -- 이미 잠겨 있으면 아무것도 안 함
 ''')
 case("power infusion: SoundKit selection reports native AuraSound limitation", '''
 local settings = MimDicePowerInfusion.GetSettings()

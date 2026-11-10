@@ -97,8 +97,13 @@ function Reminder.CreateConfig(parent, helpers)
     local selectSound = CreateFrame("Button", nil, win, "UIPanelButtonTemplate")
     selectSound:SetSize(135, 22)
     selectSound:SetPoint("TOPLEFT", win, "TOPLEFT", 157, -124)
-    selectSound:GetFontString():SetFont(MimDiceFontPath(), 10, "")
-    selectSound:GetFontString():SetWordWrap(false)
+    do
+        -- 긴 소리 이름이 버튼 밖(옆 ID 버튼, ▶ 버튼)으로 넘치지 않게 버튼 안쪽 폭으로 자른다.
+        local fs = selectSound:GetFontString()
+        fs:SetFont(MimDiceFontPath(), 10, "")
+        fs:SetJustifyH("LEFT"); fs:SetWordWrap(false)
+        fs:ClearAllPoints(); fs:SetPoint("LEFT", 6, 0); fs:SetPoint("RIGHT", -6, 0)
+    end
     selectSound:SetScript("OnClick", function()
         helpers.OpenSoundPicker(selectSound,
             function() return settings().soundKey end,
