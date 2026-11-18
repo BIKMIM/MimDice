@@ -82,10 +82,34 @@ function StaticPopup_Visible() return false end
 function StaticPopup_Show() state.notices = state.notices + 1; return true end
 function StaticPopup_Hide() end
 DEFAULT_CHAT_FRAME = { AddMessage = function() end }
-C_Timer = { After = function() end, NewTicker = function() return { Cancel = function() end } end }
+state.timers = {}
+C_Timer = { After = function(d, f) table.insert(state.timers, { at = state.now + d, f = f }) end, NewTicker = function() return { Cancel = function() end } end }
 C_Secrets = {
     ShouldAurasBeSecret = function() return state.restricted end,
     GetSpellAuraSecrecy = function() return state.secrecy or 0 end,
+}
+function runTimers()
+    local list = state.timers; state.timers = {}
+    for _, t in ipairs(list) do if t.at <= state.now then t.f() else table.insert(state.timers, t) end end
+end
+state.meter = {}
+Enum.DamageMeterSessionType = { Current = 1 }
+Enum.DamageMeterType = { Interrupts = 7 }
+C_DamageMeter = {
+    IsDamageMeterAvailable = function() return true end,
+    GetCombatSessionFromType = function()
+        if state.sessionUnknown then return nil end
+        return { combatSources = state.sessionRows or {} }
+    end,
+    GetCombatSessionSourceFromType = function(st, mt, guid)
+        if state.meterError then error("meter") end
+        if state.meterSecret then return SECRET end
+        local v = state.meter[guid]
+        if v == nil then return nil end
+        if v == "secret" then return { totalAmount = SECRET } end
+        if type(v) == "table" then return { totalAmount = SECRET, combatSpells = v } end
+        return { totalAmount = v, combatSpells = {} }
+    end,
 }
 C_UnitAuras = { GetPlayerAuraBySpellID = function(id) return state.auras[id] end }
 local methods = {}
@@ -245,11 +269,75 @@ audit.interruptAttempt('player', 2139)
 audit.interruptResult('target', 'player-guid'); assert(#state.plays == 1)
 audit.interruptResult('focus', 'player-guid'); assert(#state.plays == 1)
 ''')
-case("interrupt: pet success and secret result", '''
+case("interrupt: pet success, secret result alone is silent", '''
 audit.interruptAttempt('pet', 19647)
 audit.interruptResult('nameplate1', 'pet-guid'); assert(#state.plays == 1)
 audit.interruptAttempt('player', 2139)
-audit.interruptResult(SECRET, SECRET); assert(#state.plays == 2)
+audit.interruptResult(SECRET, SECRET); assert(#state.plays == 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: secret result + public meter increase plays once", '''
+state.meter['player-guid'] = 2
+audit.interruptAttempt('player', 2139)
+audit.interruptResult(SECRET, SECRET); assert(#state.plays == 0)
+state.meter['player-guid'] = 3
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 1)
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 1)
+audit.interruptResult('focus', SECRET); assert(#state.plays == 1)
+''')
+case("interrupt: first ever kick (no row -> row) counts via meter", '''
+audit.interruptAttempt('player', 2139)
+audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = 1
+state.now = state.now + 0.5; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: someone else kicked first (my meter unchanged) is silent", '''
+state.meter['player-guid'] = 2; state.meter['other-guid'] = 1
+audit.interruptAttempt('player', 2139)
+audit.interruptResult(SECRET, SECRET)
+state.meter['other-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 0)
+''')
+case("interrupt: secret meter, error, missing baseline are silent", '''
+state.meter['player-guid'] = 'secret'
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = 5; audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+assert(#state.plays == 0)
+state.meterError = true
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 0)
+state.meterError = false; state.meterSecret = true
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 0)
+''')
+case("interrupt: meter increase without interrupt result is silent", '''
+state.meter['player-guid'] = 0
+audit.interruptAttempt('player', 2139)
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 0)
+''')
+case("interrupt: late meter after evidence window and reset are silent", '''
+state.meter['player-guid'] = 0
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.now = state.now + 1.1; state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 0)
+state.meter['player-guid'] = 1
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+audit.event(nil, 'LOADING_SCREEN_ENABLED')
+state.meter['player-guid'] = 2; state.now = state.now + 0.5; runTimers()
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 0)
+''')
+case("interrupt: public self result before cast event", '''
+audit.interruptResult('target', 'player-guid'); assert(#state.plays == 0)
+state.now = state.now + 0.05
+audit.interruptAttempt('player', 2139); assert(#state.plays == 1)
+audit.interruptResult('focus', 'player-guid'); assert(#state.plays == 1)
+''')
+case("interrupt: channel natural end (nil interrupter) is silent", '''
+audit.interruptAttempt('player', 2139)
+audit.interruptResult('target', nil); audit.interruptResult('target', ''); assert(#state.plays == 0)
+audit.interruptResult('target', 'player-guid'); assert(#state.plays == 1)
 ''')
 case("interrupt: other player, timeout, mere cast, disabled", '''
 audit.interruptAttempt('player', 2139); assert(#state.plays == 0)
@@ -260,11 +348,496 @@ MimDiceDB.interruptAlert.enabled = false
 audit.interruptAttempt('player', 2139)
 audit.interruptResult('target', 'player-guid'); assert(#state.plays == 0)
 ''')
+case("interrupt: combat - secret amount, first kick (row appears)", '''
+audit.event(nil, 'PLAYER_ENTERING_WORLD')
+audit.interruptAttempt('player', 2139)
+audit.interruptResult(SECRET, SECRET); assert(#state.plays == 0)
+state.meter['player-guid'] = { 101 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 1)
+''')
+case("interrupt: combat - secret amount, new spell list grows / same spell silent", '''
+state.meter['player-guid'] = { 101 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 1)
+state.now = state.now + 2
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: meter already increased before cast event (baseline kept from earlier)", '''
+state.meter['player-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.meter['player-guid'] = 3
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 0)
+audit.interruptAttempt('player', 2139); assert(#state.plays == 0)
+audit.interruptResult(SECRET, SECRET); assert(#state.plays == 1)
+''')
+case("interrupt: secret result before cast event, then meter", '''
+state.meter['player-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptResult(SECRET, SECRET)
+audit.interruptAttempt('player', 2139); assert(#state.plays == 0)
+state.meter['player-guid'] = 3
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 1)
+''')
+case("interrupt: duplicate notice after success is not reused by next kick", '''
+state.class = 'PALADIN'; state.spec = 2
+audit.interruptAttempt('player', 375576)
+audit.interruptResult('target', 'player-guid'); assert(#state.plays == 1)
+state.now = state.now + 0.36
+audit.interruptResult('focus', 'player-guid')
+state.now = state.now + 0.05
+audit.interruptAttempt('player', 96231); assert(#state.plays == 1)
+''')
+case("interrupt: unknown first read then old total appears is silent", '''
+state.sessionUnknown = true
+audit.event(nil, 'PLAYER_ENTERING_WORLD')
+audit.interruptAttempt('player', 2139)
+audit.interruptResult(SECRET, SECRET)
+state.sessionUnknown = false; state.meter['player-guid'] = 5
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 0)
+''')
+case("interrupt: meter reset discards pending attempt and secret result", '''
+state.meter['player-guid'] = 4
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+audit.event(nil, 'DAMAGE_METER_RESET')
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 0)
+''')
+case("interrupt: next pull first kick (session id 1 -> 2) plays", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2); assert(#state.plays == 1)
+''')
+case("interrupt: next pull - session start, then kick result, then meter", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.interruptAttempt('player', 2139)
+state.meter['player-guid'] = nil
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED')
+audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2); assert(#state.plays == 1)
+''')
+case("interrupt: kick result before session start is previous-combat evidence (silent)", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.now = state.now + 0.1
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED')
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 0)
+''')
+case("interrupt: opener kick in the same frame as session start plays", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED')
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2); assert(#state.plays == 1)
+''')
+case("interrupt: mid-combat session event with spell list growth still counts", '''
+state.meter['player-guid'] = { 101 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED')
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED'); assert(#state.plays == 1)
+''')
+case("interrupt: normal kick +2 meter leftover is not reused", '''
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = 3
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 1)
+state.now = state.now + 0.4
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: previous-combat public self result dropped at session start", '''
+state.now = state.now + 5
+audit.interruptResult('target', 'player-guid', 'old')
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED')
+state.now = state.now + 0.05
+audit.interruptAttempt('player', 2139); assert(#state.plays == 0)
+''')
+case("interrupt: known limit - kick within 1.35s after Divine Toll counted as the toll", '''
+state.class = 'PALADIN'; state.spec = 2
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 375576); audit.interruptResult('target', SECRET)
+state.meter['player-guid'] = { 1, 2 }
+state.meter['player-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 1)
+state.now = state.now + 0.8
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.meter['player-guid'] = 3
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 1)
+state.now = state.now + 2
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.meter['player-guid'] = 4
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 2)
+''')
+case("interrupt: next pull - other player's kick only is silent", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED')
+state.meter['player-guid'] = nil
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 0)
+''')
+case("interrupt: target + nameplate duplicate secret notices, then meter", '''
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 2139)
+audit.interruptResult('target', SECRET); audit.interruptResult('nameplate1', SECRET)
+state.meter['player-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 1)
+state.now = state.now + 0.05
+state.meter['player-guid'] = 2
+audit.interruptAttempt('player', 2139); audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: late meter of a public success is not reused by next failed kick", '''
+state.class = 'PALADIN'; state.spec = 2
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 375576)
+audit.interruptResult('target', 'player-guid'); assert(#state.plays == 1)
+state.meter['player-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 0.4
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: duplicate notice arriving after next kick (same cast id) is ignored", '''
+audit.interruptAttempt('player', 2139)
+audit.interruptResult('target', 'player-guid', 'cast-A'); assert(#state.plays == 1)
+state.now = state.now + 0.05
+audit.interruptAttempt('player', 2139)
+audit.interruptResult('focus', 'player-guid', 'cast-A'); assert(#state.plays == 1)
+audit.interruptResult('target', 'player-guid', 'cast-B'); assert(#state.plays == 2)
+''')
+case("interrupt: Divine Toll extra targets after next kick are the same use", '''
+state.class = 'PALADIN'; state.spec = 2
+audit.interruptAttempt('player', 375576)
+audit.interruptResult('target', 'player-guid', 'c1'); assert(#state.plays == 1)
+state.now = state.now + 0.05
+audit.interruptAttempt('player', 96231)
+audit.interruptResult('nameplate2', 'player-guid', 'c2'); assert(#state.plays == 1)
+''')
+case("interrupt: my row exists in session but source lookup nil stays unknown", '''
+state.sessionRows = { { isLocalPlayer = true } }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 0)
+''')
+case("interrupt: pet replaced - new pet record not credited to old attempt", '''
+state.meter['pet-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('pet', 19647); audit.interruptResult(SECRET, SECRET)
+state.petGuid = 'pet-guid-2'; state.meter['pet-guid-2'] = { 1 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 0)
+''')
+case("interrupt: row with zero count / empty list is not a success", '''
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = 0
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 0)
+state.meter['player-guid'] = nil
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = {}
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 0)
+''')
+case("interrupt: Divine Toll +2 meter is one use, not reused by next failed kick", '''
+state.class = 'PALADIN'; state.spec = 2
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 375576)
+audit.interruptResult('target', SECRET); audit.interruptResult('nameplate2', SECRET)
+state.meter['player-guid'] = 3
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 1)
+state.now = state.now + 0.4
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: reverse-order success registers cast id", '''
+audit.interruptResult('target', 'player-guid', 'c1')
+audit.interruptAttempt('player', 31935); assert(#state.plays == 1)
+state.now = state.now + 0.7
+audit.interruptAttempt('player', 96231)
+audit.interruptResult('focus', 'player-guid', 'c1'); assert(#state.plays == 1)
+''')
+case("interrupt: meter-path success registers cast id", '''
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 2139); audit.interruptResult('target', SECRET, 'c9')
+state.meter['player-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 1)
+state.now = state.now + 0.7
+audit.interruptAttempt('player', 2139)
+audit.interruptResult('focus', 'player-guid', 'c9'); assert(#state.plays == 1)
+''')
+case("interrupt: session start then session id change is one switch (no reuse)", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED'); assert(#state.plays == 1)
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2); assert(#state.plays == 1)
+state.now = state.now + 0.05
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: public first success, then session id change, next failed kick silent", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED')
+audit.interruptAttempt('player', 2139); audit.interruptResult('target', 'player-guid', 'p1')
+assert(#state.plays == 1)
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2)
+state.now = state.now + 0.05
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: later real session change after stale switch flag still rebases", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED')
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2); assert(#state.plays == 1)
+''')
+case("interrupt: session start, old id update in between, then new id (no reuse)", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED'); assert(#state.plays == 1)
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2); assert(#state.plays == 1)
+state.now = state.now + 0.05
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: stale switch wait expires before next combat", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED')
+state.now = state.now + 30
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2); assert(#state.plays == 1)
+''')
+case("interrupt: same switch with session id 4.99s late does not reuse", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED'); assert(#state.plays == 1)
+state.now = state.now + 4.99
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2); assert(#state.plays == 1)
+state.now = state.now + 0.05
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: same switch with session id 5.01s late does not reuse", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED'); assert(#state.plays == 1)
+state.now = state.now + 5.01
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2); assert(#state.plays == 1)
+state.now = state.now + 0.05
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: same switch with session id 6s late does not reuse", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED'); assert(#state.plays == 1)
+state.now = state.now + 6
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2); assert(#state.plays == 1)
+state.now = state.now + 0.05
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: same switch with session id 60s late does not reuse", '''
+state.meter['player-guid'] = { 101, 202 }
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 30
+audit.interruptAttempt('player', 2139); audit.interruptResult(SECRET, SECRET)
+state.meter['player-guid'] = { 303 }
+audit.event(nil, 'DAMAGE_METER_CURRENT_SESSION_UPDATED'); assert(#state.plays == 1)
+state.now = state.now + 60
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 2); assert(#state.plays == 1)
+state.now = state.now + 0.05
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: public success meter 0.99s late is not reused by next failed kick", '''
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 31935)
+audit.interruptResult('target', 'player-guid', 'a1'); assert(#state.plays == 1)
+state.now = state.now + 0.99
+audit.interruptAttempt('player', 96231)
+state.meter['player-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: public success meter 1.01s late is not reused by next failed kick", '''
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 31935)
+audit.interruptResult('target', 'player-guid', 'a1'); assert(#state.plays == 1)
+state.now = state.now + 1.01
+audit.interruptAttempt('player', 96231)
+state.meter['player-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: public success meter 4.99s late is not reused by next failed kick", '''
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 31935)
+audit.interruptResult('target', 'player-guid', 'a1'); assert(#state.plays == 1)
+state.now = state.now + 4.99
+audit.interruptAttempt('player', 96231)
+state.meter['player-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: public success meter 6s late is not reused by next failed kick", '''
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 31935)
+audit.interruptResult('target', 'player-guid', 'a1'); assert(#state.plays == 1)
+state.now = state.now + 6
+audit.interruptAttempt('player', 96231)
+state.meter['player-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptResult('target', SECRET)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: after late meter is paid, a real next success still plays", '''
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 31935)
+audit.interruptResult('target', 'player-guid', 'a1'); assert(#state.plays == 1)
+state.now = state.now + 3
+state.meter['player-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 1)
+state.now = state.now + 1
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.meter['player-guid'] = 3
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 2)
+''')
+case("interrupt: Divine Toll public success, late +1 meter after failed kick 2s later", '''
+state.class = 'PALADIN'; state.spec = 2
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 375576)
+audit.interruptResult('target', 'player-guid', 't1'); assert(#state.plays == 1)
+state.now = state.now + 2
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.meter['player-guid'] = 1 + 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: Divine Toll public success, late +2 meter after failed kick 2s later", '''
+state.class = 'PALADIN'; state.spec = 2
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 375576)
+audit.interruptResult('target', 'player-guid', 't1'); assert(#state.plays == 1)
+state.now = state.now + 2
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.meter['player-guid'] = 1 + 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: Divine Toll public success, late +3 meter after failed kick 2s later", '''
+state.class = 'PALADIN'; state.spec = 2
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 375576)
+audit.interruptResult('target', 'player-guid', 't1'); assert(#state.plays == 1)
+state.now = state.now + 2
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.meter['player-guid'] = 1 + 3
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
+case("interrupt: Divine Toll late records split over two updates", '''
+state.class = 'PALADIN'; state.spec = 2
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+audit.interruptAttempt('player', 375576)
+audit.interruptResult('target', 'player-guid', 't1'); assert(#state.plays == 1)
+state.now = state.now + 2
+audit.interruptAttempt('player', 96231); audit.interruptResult('target', SECRET)
+state.meter['player-guid'] = 2
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.meter['player-guid'] = 3
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 1)
+''')
 case("interrupt: protection paladin Divine Toll", '''
 state.class = 'PALADIN'; state.spec = 2
 audit.interruptAttempt('player', 375576); state.now = state.now + 0.3
-audit.interruptResult('target', SECRET); assert(#state.plays == 1)
-audit.interruptResult('focus', SECRET); assert(#state.plays == 1)
+audit.interruptResult('target', SECRET); assert(#state.plays == 0)
+audit.interruptResult('target', nil); audit.interruptResult('target', 'other-guid'); assert(#state.plays == 0)
+state.now = state.now + 1; runTimers(); assert(#state.plays == 0)
+audit.interruptAttempt('player', 375576)
+audit.interruptResult('target', 'player-guid'); assert(#state.plays == 1)
+audit.interruptResult('focus', 'player-guid'); audit.interruptResult('nameplate2', 'player-guid')
+assert(#state.plays == 1)
+state.meter['player-guid'] = 1
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.meter['player-guid'] = 4
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1)
+state.now = state.now + 60
+audit.interruptAttempt('player', 375576)
+audit.interruptResult('target', SECRET); audit.interruptResult('nameplate3', SECRET)
+state.meter['player-guid'] = 6
+audit.event(nil, 'DAMAGE_METER_COMBAT_SESSION_UPDATED', 7, 1); assert(#state.plays == 2)
 ''')
 for restricted in (False, True):
     for spell_id in (57723, 57724, 80354, 95809, 160455, 264689, 390435):

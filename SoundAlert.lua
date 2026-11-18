@@ -787,8 +787,7 @@ end
 
 -- =====================================================================
 -- 차단 성공 감지
--- '내 차단기 성공' 후 '적 시전 중단'을 짧은 유효 시간 창 안에서 묶는다.
--- 0.25초는 재생 지연이 아니라 두 이벤트의 상관관계 유효 시간이다.
+-- 0.25초(신성한 종 0.35초)는 내 시도 기록의 유효 시간이다. 성공 증거는 아래 판정 원칙을 따른다.
 -- 12.1에서 아래 이벤트 인자는 secret이 될 수 있으므로 항상 secret -> type -> 비교 순서를 지킨다.
 -- =====================================================================
 local SA_INTERRUPT_WINDOW = 0.25
@@ -818,16 +817,33 @@ local SA_INTERRUPT_SPELLS = {
     [89766] = true,  -- Axe Toss (pet cast)
 }
 
-local SA_interruptSourceGUID
-local SA_interruptSourceUnit
-local SA_interruptExpiresAt = 0
-local SA_divineTollExpiresAt = 0
+-- 판정 원칙 (INTERRUPT_ALERT_IMPLEMENTATION_GUIDE.md)
+--   · 차단한 사람(interruptedBy)이 공개 값이고 내 캐릭터/소환수 GUID와 같을 때만 확정한다.
+--   · 비밀 값이면 시간만으로 성공 처리하지 않는다. 블리자드 미터의 내 차단 횟수가
+--     공개 숫자로 실제 늘어난 것이 보일 때만 성공으로 본다. 확인 못 하면 소리를 내지 않는다.
+--   · 차단한 사람이 없으면(정신 집중 자연 종료 등) 차단이 아니다.
+--   · 시간 창은 오래된 기록을 지우는 용도이지 성공 증거가 아니다.
+local K = {  -- 차단 판정 상태/보조 함수 (지역 변수 200개 제한 때문에 한 표에 모은다)
+    RESULT_GRACE = 0.3,   -- 신호 순서가 뒤바뀐 경우(중단/미터가 시전보다 먼저) 잠깐 보관
+    METER_WAIT = 1.0,     -- 중단 신호와 미터 증가를 묶는 최대 간격
+    MAX_ATTEMPTS = 4,
+    generation = 0, seq = 0, attempts = {},
+    pendingSelfAt = {},   -- 공개 내 GUID 결과가 시전 신호보다 먼저 온 경우 { at, guid }
+    pendingSecretAt = nil,-- 비밀 중단 결과가 시전 신호보다 먼저 온 경우 { at, castID }
+    lastConfirmed = {},   -- 출처별 마지막 성공 { at, guid, divineToll, deadline }
+    owedMeter = {},       -- 공개 GUID로 성공했지만 미터 증가를 아직 받지 않은 성공들 { source, guid }
+                          -- 시간 제한 없이, 뒤늦게 오는 증가는 먼저 이 성공들의 몫으로 소비한다
+    consumedCasts = {},   -- 성공 처리한 적 시전 식별자(공개일 때만) -> 시각
+    snap = {},            -- 출처별 직전 미터 상태 (기준값). 미터 갱신 때마다 미리 저장한다.
+    recentIncrease = {},  -- 시전 신호 전에 미터 증가가 먼저 보인 경우 { at, guid }
+    sessionID = nil,
+    diag = {},
+}
 
-local function SA_ClearInterruptAttempt()
-    SA_interruptSourceGUID = nil
-    SA_interruptSourceUnit = nil
-    SA_interruptExpiresAt = 0
-    SA_divineTollExpiresAt = 0
+function K.Diag(reason)
+    local diag = K.diag
+    diag[#diag + 1] = string.format("%.2f %s", GetTime(), reason)
+    if #diag > 20 then table.remove(diag, 1) end
 end
 
 local function SA_PublicUnitGUID(unit)
@@ -836,6 +852,57 @@ local function SA_PublicUnitGUID(unit)
     if type(guid) ~= "string" then return nil end
     if guid == "" then return nil end
     return guid
+end
+
+-- 모든 차단 판정 상태를 버린다 (로그인, 지역 이동, 기능 끔, 미터 수동 초기화)
+local function SA_ClearInterruptAttempt()
+    K.generation = K.generation + 1   -- 예약된 확인 타이머도 이 값으로 무효가 된다
+    wipe(K.attempts)
+    wipe(K.pendingSelfAt)
+    wipe(K.lastConfirmed)
+    wipe(K.owedMeter)
+    K.multiAbsorb = nil
+    wipe(K.consumedCasts)
+    wipe(K.snap)
+    wipe(K.recentIncrease)
+    K.pendingSecretAt = nil
+    K.sessionID = nil
+    K.sessionSwitchPending = nil
+end
+
+-- 새 전투 세션 시작: 새 세션은 비어서 시작하므로 기준값을 "행 없음"으로 둔다.
+-- 그래야 새 세션의 첫 갱신에 이미 내 차단이 들어 있어도 첫 차단으로 인정된다.
+-- 세션이 바뀌기 전에 만든 오래된 시도·대기 결과는 버린다(방금 만든 시도는 새 전투 첫 차단일 수 있어 유지).
+-- keepOld: 현재 세션 변경 신호처럼 미터가 아직 이전 세션 값을 보여 줄 수 있는 경우.
+--   이전 값을 기억해 두고, 다음에 읽은 값이 이전 값보다 줄지 않았다면(아직 이전 세션) 기준값으로만 쓴다.
+function K.StartNewSession(keepOld)
+    local now = GetTime()
+    for _, source in ipairs({ "player", "pet" }) do
+        local guid = SA_PublicUnitGUID(source)
+        local old = K.snap[source]
+        K.snap[source] = guid and {
+            row = false, guid = guid,
+            oldSnap = keepOld and old and old.guid == guid and old.row and old or nil,
+        } or nil
+    end
+    wipe(K.recentIncrease)
+    wipe(K.lastConfirmed)
+    for i = #K.attempts, 1, -1 do
+        if now - K.attempts[i].createdAt > K.RESULT_GRACE then table.remove(K.attempts, i) end
+    end
+    if keepOld then
+        -- 전투 시작 신호: 그 전에 받은 끊김·미터 증거는 이전 전투 것이다. 시전 기록만 남겨
+        -- 새 전투에서 오는 끊김 신호와 다시 연결한다.
+        -- 단, 같은 순간(같은 프레임)에 들어온 끊김은 이 전투를 연 첫 차단일 수 있어 남긴다.
+        wipe(K.pendingSelfAt)
+        if K.pendingSecretAt and K.pendingSecretAt.at ~= now then K.pendingSecretAt = nil end
+        for _, a in ipairs(K.attempts) do
+            if a.secretResultAt ~= now then a.secretResultAt = nil; a.castID = nil end
+            a.meterAt = nil
+        end
+    elseif K.pendingSecretAt and now - K.pendingSecretAt.at > K.RESULT_GRACE then
+        K.pendingSecretAt = nil
+    end
 end
 
 local function SA_IsProtectionPaladin()
@@ -850,6 +917,233 @@ local function SA_IsProtectionPaladin()
     return spec == SA_PALADIN_PROTECTION_SPEC
 end
 
+-- 컨테이너는 issecretvalue로만 검사한다(hasanysecretvalues는 공개 메타데이터까지 버린다).
+function K.IsSecret(v)
+    return type(issecretvalue) == "function" and issecretvalue(v) and true or false
+end
+
+-- 내 source 조회가 nil일 때 "정말 행이 없다"를 확인한다.
+-- 세션의 행 목록을 끝까지 공개 값으로 읽을 수 있고, 내 행으로 보이는 줄이 없을 때만 true.
+--   player: isLocalPlayer == true 인 줄이 없어야 한다.
+--   pet: 소환수 줄은 구분할 수 없으므로 목록이 완전히 비어 있을 때만 인정한다.
+function K.ConfirmNoRow(DM, sessionType, meterType, source)
+    if type(DM.GetCombatSessionFromType) ~= "function" then return false end
+    local ok, session = pcall(DM.GetCombatSessionFromType, sessionType, meterType)
+    if not ok or K.IsSecret(session) or type(session) ~= "table" then return false end
+    local rows = session.combatSources
+    if K.IsSecret(rows) or type(rows) ~= "table" then return false end
+    local n = #rows
+    if K.IsSecret(n) or type(n) ~= "number" then return false end
+    if source == "pet" then return n == 0 end
+    for i = 1, n do
+        local r = rows[i]
+        if K.IsSecret(r) or type(r) ~= "table" then return false end
+        local isLocal = r.isLocalPlayer
+        if K.IsSecret(isLocal) or type(isLocal) ~= "boolean" then return false end
+        if isLocal then return false end
+    end
+    return true
+end
+
+-- 블리자드 미터에서 내(또는 내 소환수) 차단 상태를 공개 값만으로 읽는다.
+-- 반환: { row = 행 있음, amount = 공개 횟수 또는 nil, spells = 공개 주문 목록 길이 또는 nil }
+--       읽을 수 없으면 nil, 이유.
+function K.ReadMeter(guid, source)
+    if type(guid) ~= "string" then return nil, "no_guid" end
+    local DM = C_DamageMeter
+    if type(DM) ~= "table" or type(DM.GetCombatSessionSourceFromType) ~= "function" then
+        return nil, "no_api"
+    end
+    local E = Enum
+    local sessionType = E and E.DamageMeterSessionType and E.DamageMeterSessionType.Current
+    local meterType = E and E.DamageMeterType and E.DamageMeterType.Interrupts
+    if sessionType == nil or meterType == nil then return nil, "no_enum" end
+    if type(DM.IsDamageMeterAvailable) == "function" then
+        local okAvail, avail = pcall(DM.IsDamageMeterAvailable)
+        if okAvail and not K.IsSecret(avail) and avail == false then return nil, "unavailable" end
+    end
+    local ok, src = pcall(DM.GetCombatSessionSourceFromType, sessionType, meterType, guid)
+    if not ok then return nil, "api_error" end
+    if K.IsSecret(src) then return nil, "secret_source" end
+    if src == nil then
+        if K.ConfirmNoRow(DM, sessionType, meterType, source) then return { row = false }, "no_row" end
+        return nil, "no_row_unknown"
+    end
+    if type(src) ~= "table" then return nil, "invalid_structure" end
+    local snap = { row = true }
+    local amount = src.totalAmount
+    if not K.IsSecret(amount) and type(amount) == "number" then snap.amount = amount end
+    local spells = src.combatSpells
+    if not K.IsSecret(spells) and type(spells) == "table" then
+        local n = #spells
+        if not K.IsSecret(n) and type(n) == "number" then snap.spells = n end
+    end
+    if snap.amount then return snap, "public" end
+    if snap.spells then return snap, "secret_amount_spells_ok" end
+    return snap, "secret_amount"
+end
+
+-- 같은 세션 안의 두 상태 비교. 공개 값으로 확실히 늘어난 만큼(최소 1)을 돌려준다. 아니면 0.
+--   행 없음 → 행 생김(이번 전투 첫 차단), 공개 횟수 증가, 공개 주문 목록 길이 증가
+function K.Increase(before, after)
+    if not before or not after then return 0 end
+    if not before.row then
+        if not after.row then return 0 end
+        -- 행만 생기고 공개 횟수·목록이 0이거나 읽을 수 없으면 성공 증거가 아니다
+        if after.amount then return after.amount >= 1 and after.amount or 0 end
+        if after.spells and after.spells >= 1 then return 1 end
+        return 0
+    end
+    if not after.row then return 0 end
+    if before.amount and after.amount and after.amount > before.amount then
+        return after.amount - before.amount
+    end
+    if before.spells and after.spells and after.spells > before.spells then return 1 end
+    return 0
+end
+
+-- 값이 줄었으면 세션이 바뀐 것이다(엘스미어의 rebase와 같은 생각).
+function K.Decreased(before, after)
+    if not before or not after then return false end
+    if before.row and not after.row then return true end
+    if before.amount and after.amount and after.amount < before.amount then return true end
+    if before.spells and after.spells and after.spells < before.spells then return true end
+    return false
+end
+
+local function SA_AttemptAlive(attempt, now)
+    return attempt and not attempt.consumed and attempt.generation == K.generation
+        and now <= attempt.deadline
+end
+
+function K.Confirm(attempt, alert, reason, castID)
+    local now = GetTime()
+    attempt.consumed = true
+    K.lastConfirmed[attempt.source] = {
+        at = now, guid = attempt.guid, divineToll = attempt.divineToll,
+        deadline = attempt.deadline,
+    }
+    if not attempt.meterAt then
+        K.owedMeter[#K.owedMeter + 1] = {
+            source = attempt.source, guid = attempt.guid, multi = attempt.divineToll,
+        }
+        while #K.owedMeter > K.MAX_ATTEMPTS * 2 do table.remove(K.owedMeter, 1) end
+    end
+    if castID then K.consumedCasts[castID] = now end
+    -- 이 성공과 함께 기다리던 역순 신호는 모두 이 성공에 속한다
+    K.pendingSecretAt = nil
+    K.pendingSelfAt[attempt.source] = nil
+    K.Diag("성공(" .. reason .. ") " .. attempt.source)
+    SA_PlaySound(alert)
+end
+
+-- 비밀 중단 결과와 같은 출처·같은 GUID의 미터 증가가 모두 있고 시간이 가까울 때만 성공
+function K.TryConfirmMeter(attempt)
+    local alert = MimDiceDB and MimDiceDB.interruptAlert
+    if not alert or not alert.enabled then return false end
+    if attempt.consumed or attempt.generation ~= K.generation then return false end
+    if not attempt.secretResultAt or not attempt.meterAt then return false end
+    if math.abs(attempt.meterAt - attempt.secretResultAt) > K.METER_WAIT then return false end
+    K.Confirm(attempt, alert, "미터", attempt.castID)
+    return true
+end
+
+-- 반환: 갚았는지, 여러 적을 끊는 사용(신성한 종)이었는지
+function K.PayOwed(source, guid)
+    for i, o in ipairs(K.owedMeter) do
+        if o.source == source and o.guid == guid then
+            table.remove(K.owedMeter, i)
+            return true, o.multi
+        end
+    end
+    return false, false
+end
+
+-- 미터 증가 1회분을 어디에 쓸지 정한다. 증거는 한 번만 소비한다.
+--   1) 방금 공개 GUID로 성공 처리한 같은 GUID의 차단이 아직 미터를 쓰지 않았다면 그 차단의 몫
+--   2) 같은 출처·같은 GUID의 대기 중인 시도
+--   3) 둘 다 없으면 시전 신호가 늦을 수 있으니 잠깐 보관
+--   신성한 종처럼 한 번에 여러 적을 끊는 사용은, 그 사용의 시간 안에 늘어난 몫을 전부 가져간다.
+--   반환 true = 이번 갱신의 남은 증가분도 모두 소비됨
+--   allowStore: 이번 갱신의 첫 1회분만 보관할 수 있다. 일반 차단이 한 몫을 가져간 뒤의 남은 증가는
+--   다른 대기 시도(예: 소환수)에만 줄 수 있고, 다음 시도용으로 보관하지 않는다.
+function K.AssignIncrease(source, guid, now, allowStore)
+    local last = K.lastConfirmed[source]
+    if last and last.guid == guid then
+        if last.divineToll and now <= last.deadline + K.METER_WAIT then
+            K.PayOwed(source, guid)
+            return true
+        end
+    end
+    -- 여러 적을 끊는 사용의 늦은 기록이 갱신 몇 번에 나뉘어 오는 경우: 잠깐 동안 계속 그 사용의 몫
+    local absorb = K.multiAbsorb and K.multiAbsorb[source]
+    if absorb and absorb.guid == guid and now <= absorb.untilAt then return true end
+    -- 이미 소리를 낸 성공의 늦은 미터 기록: 몇 초가 지났든 그 성공의 몫이다(새 성공 증거로 쓰지 않음)
+    local paid, multi = K.PayOwed(source, guid)
+    if paid then
+        if multi then
+            -- 신성한 종 한 번은 적 여러 명의 기록을 남긴다. 이번 갱신의 나머지와
+            -- 바로 이어지는 갱신도 그 사용의 몫으로 보고 새 시도에 넘기지 않는다.
+            K.multiAbsorb = K.multiAbsorb or {}
+            K.multiAbsorb[source] = { guid = guid, untilAt = now + K.METER_WAIT }
+            return true
+        end
+        return false
+    end
+    for _, a in ipairs(K.attempts) do
+        if a.source == source and a.guid == guid and not a.consumed and a.generation == K.generation
+            and now <= a.deadline + K.METER_WAIT and not a.meterAt then
+            a.meterAt = now
+            K.TryConfirmMeter(a)
+            return a.divineToll and true or false
+        end
+    end
+    if allowStore then K.recentIncrease[source] = { at = now, guid = guid } end
+    return true   -- 보관은 한 번분만. 남은 증가를 다음 시도들에 나눠 주지 않는다.
+end
+
+-- 출처(player/pet)의 미터를 다시 읽어 직전 기준값과 비교하고, 기준값을 갱신한다.
+function K.Poll(source)
+    local guid = SA_PublicUnitGUID(source)
+    local prev = K.snap[source]
+    if not guid then K.snap[source] = nil; return end
+    if prev and prev.guid ~= guid then
+        -- 소환수가 바뀌었다: 이전 소환수의 시도·증거는 새 소환수 기록과 섞지 않는다.
+        prev = nil
+        K.recentIncrease[source] = nil
+        for i = #K.attempts, 1, -1 do
+            if K.attempts[i].source == source and K.attempts[i].guid ~= guid then table.remove(K.attempts, i) end
+        end
+    end
+    local cur, why = K.ReadMeter(guid, source)
+    K.lastMeterState = why
+    if not cur then
+        -- 모름: 기준값을 버린다. 다시 읽히면 그때 값은 기준값으로만 쓴다(그 사이 누적분을 이번 성공으로 보지 않음).
+        K.snap[source] = nil
+        return
+    end
+    cur.guid = guid
+    K.snap[source] = cur
+    if not prev then return end   -- 첫 기준값만 설정
+    if prev.oldSnap and not K.Decreased(prev.oldSnap, cur) then
+        prev = prev.oldSnap   -- 아직 이전 세션 값이다: 이전 값과 비교(그대로면 증가 0)
+    end
+    if K.Decreased(prev, cur) then
+        prev = { row = false }    -- 새 세션: 빈 상태에서 다시 비교
+    end
+    local now = GetTime()
+    for i = 1, math.min(K.Increase(prev, cur), K.MAX_ATTEMPTS) do
+        if K.AssignIncrease(source, guid, now, i == 1) then break end
+    end
+end
+
+function K.PollAll()
+    local alert = MimDiceDB and MimDiceDB.interruptAlert
+    if not alert or not alert.enabled then return end
+    K.Poll("player")
+    K.Poll("pet")
+end
+
 local function SA_RecordInterruptAttempt(unit, spellID)
     local alert = MimDiceDB and MimDiceDB.interruptAlert
     if not alert or not alert.enabled then
@@ -861,19 +1155,60 @@ local function SA_RecordInterruptAttempt(unit, spellID)
     if type(unit) ~= "string" or type(spellID) ~= "number" then return end
     if unit ~= "player" and unit ~= "pet" then return end
 
+    local isDivineToll = false
     if SA_INTERRUPT_SPELLS[spellID] then
-        -- 검사한 unit 값을 API에 다시 넘기지 않고 안전한 리터럴로 GUID를 읽는다.
-        SA_interruptSourceUnit = unit == "player" and "player" or "pet"
-        SA_interruptSourceGUID = SA_PublicUnitGUID(SA_interruptSourceUnit)
-        SA_interruptExpiresAt = GetTime() + SA_INTERRUPT_WINDOW
+        -- 일반 차단기
     elseif unit == "player" and spellID == SA_DIVINE_TOLL_SPELL_ID and SA_IsProtectionPaladin() then
-        -- 방어 성기사 신성한 종은 다중 투사체 도달 시간을 고려해 0.35초 유효 시간을 둔다.
-        SA_divineTollExpiresAt = GetTime() + SA_DIVINE_TOLL_WINDOW
+        isDivineToll = true
+    else
+        return
     end
+
+    -- 검사한 unit 값을 API에 다시 넘기지 않고 안전한 리터럴로 GUID를 읽는다.
+    local source = unit == "player" and "player" or "pet"
+    local guid = SA_PublicUnitGUID(source)
+    local now = GetTime()
+    K.seq = K.seq + 1
+    local attempt = {
+        id = K.seq,
+        generation = K.generation,
+        source = source,
+        guid = guid,
+        createdAt = now,
+        divineToll = isDivineToll,
+        deadline = now + (isDivineToll and SA_DIVINE_TOLL_WINDOW or SA_INTERRUPT_WINDOW),
+    }
+    -- 같은 출처(player/pet)의 이전 시도는 새 시도로 교체한다. 다른 출처는 유지한다.
+    for i = #K.attempts, 1, -1 do
+        if K.attempts[i].source == source then table.remove(K.attempts, i) end
+    end
+    K.attempts[#K.attempts + 1] = attempt
+    while #K.attempts > K.MAX_ATTEMPTS do table.remove(K.attempts, 1) end
+
+    -- 기준값이 아직 없으면 지금 잡는다(이 경우 이번 차단이 이미 반영됐으면 놓칠 수 있다).
+    if not K.snap[source] then K.Poll(source) end
+
+    -- 순서가 뒤바뀌어 먼저 도착한 신호들을 이 시도에 연결한다(같은 GUID만).
+    local early = K.pendingSelfAt[source]
+    K.pendingSelfAt[source] = nil
+    if early and early.guid == guid and now - early.at <= K.RESULT_GRACE then
+        K.Confirm(attempt, alert, "공개GUID-역순", early.castID)
+        return
+    end
+    local inc = K.recentIncrease[source]
+    K.recentIncrease[source] = nil
+    if inc and inc.guid == guid and now - inc.at <= K.RESULT_GRACE then attempt.meterAt = inc.at end
+    local sec = K.pendingSecretAt
+    if sec and now - sec.at <= K.RESULT_GRACE then
+        K.pendingSecretAt = nil
+        attempt.secretResultAt = sec.at
+        attempt.castID = sec.castID
+    end
+    K.TryConfirmMeter(attempt)
 end
 
 local function SA_IsInterruptTargetUnit(unit)
-    -- 제한 중 unit이 secret이면 토큰을 비교하지 않고, 최근 내 차단기 사용만으로 판정을 이어간다.
+    -- 제한 중 unit이 secret이면 토큰을 비교하지 않는다. 성공 여부는 차단자 증거로만 판단한다.
     if SA_IsSecret(unit) then return true end
     if type(unit) ~= "string" then return false end
     return unit == "target"
@@ -884,7 +1219,17 @@ local function SA_IsInterruptTargetUnit(unit)
         or unit:find("^arena") ~= nil
 end
 
-local function SA_HandleInterruptResult(unit, interruptedBy)
+-- 이미 성공 처리한 차단의 중복/후속 통지인지
+--   · 같은 적 시전 식별자(공개일 때)를 이미 처리했다
+--   · 신성한 종 성공 직후 그 종의 유효 시간 안에 온 내 결과(여러 적이 끊긴 것) = 같은 사용
+function K.IsConsumedResult(source, castID, now)
+    if castID and K.consumedCasts[castID] then return true end
+    local last = source and K.lastConfirmed[source]
+    if last and last.divineToll and now <= last.deadline then return true end
+    return false
+end
+
+local function SA_HandleInterruptResult(unit, interruptedBy, castGUID)
     local alert = MimDiceDB and MimDiceDB.interruptAlert
     if not alert or not alert.enabled then
         SA_ClearInterruptAttempt()
@@ -893,34 +1238,134 @@ local function SA_HandleInterruptResult(unit, interruptedBy)
     if not SA_IsInterruptTargetUnit(unit) then return end
 
     local now = GetTime()
-
-    -- 방어 성기사 신성한 종: 짧은 유효 시간 창 내 첫 중단 신호를 한 번만 사용한다.
-    if SA_divineTollExpiresAt > 0 and now <= SA_divineTollExpiresAt then
-        SA_ClearInterruptAttempt()
-        SA_PlaySound(alert)
-        return
+    -- 적 시전 식별자: 공개 문자열일 때만 중복 판별에 쓴다
+    local castID
+    if not K.IsSecret(castGUID) and type(castGUID) == "string" and castGUID ~= "" then castID = castGUID end
+    for id, t in pairs(K.consumedCasts) do
+        if now - t > 5 then K.consumedCasts[id] = nil end
     end
 
-    if SA_interruptExpiresAt <= 0 or now > SA_interruptExpiresAt then
-        SA_interruptSourceGUID = nil
-        SA_interruptSourceUnit = nil
-        SA_interruptExpiresAt = 0
-        return
-    end
+    -- 1) 차단자 값 상태 분류: 비밀 → 형식 → 비교 순서
+    if not K.IsSecret(interruptedBy) then
+        -- 공개 nil/빈 값/형식 이상 = 차단이 아님(정신 집중 자연 종료 등). 신성한 종도 예외 없음.
+        if type(interruptedBy) ~= "string" or interruptedBy == "" then return end
 
-    -- interruptedBy가 공개 값이면 내 캐릭터/소환수 GUID와 정확히 일치해야 한다.
-    -- secret인 제한 상황에서만 0.25초 시간 상관으로 대체한다.
-    if not SA_IsSecret(interruptedBy) then
-        if type(interruptedBy) ~= "string" then return end
-        local sourceGUID = SA_interruptSourceGUID
-        if not sourceGUID and SA_interruptSourceUnit then
-            sourceGUID = SA_PublicUnitGUID(SA_interruptSourceUnit)
+        local playerGUID = SA_PublicUnitGUID("player")
+        local petGUID = SA_PublicUnitGUID("pet")
+        local source
+        if playerGUID and interruptedBy == playerGUID then source = "player"
+        elseif petGUID and interruptedBy == petGUID then source = "pet" end
+        -- 타인 GUID: 이 결과에 대해서만 배제. 다른 적에서 내 결과가 이어 올 수 있으므로 시도는 유지.
+        if not source then return end
+        if K.IsConsumedResult(source, castID, now) then return end
+
+        -- 2) 공개 GUID: 같은 출처·같은 GUID의 살아 있는 시도가 있을 때만 확정
+        for _, attempt in ipairs(K.attempts) do
+            if attempt.source == source and SA_AttemptAlive(attempt, now)
+                and (attempt.guid or interruptedBy) == interruptedBy then
+                K.Confirm(attempt, alert, "공개GUID", castID)
+                return
+            end
         end
-        if not sourceGUID or interruptedBy ~= sourceGUID then return end
+        -- 시전 신호가 아직 안 왔을 수 있다: 잠깐 보관.
+        -- 단, 방금 성공한 차단 직후의 결과는 그 차단의 중복 통지일 수 있으므로 보관하지 않는다
+        -- (다음 차단기가 실패해도 이 결과로 울리는 것 방지). 정상 순서의 연속 성공은 위에서 처리된다.
+        local last = K.lastConfirmed[source]
+        if last and now - last.at <= K.RESULT_GRACE + SA_DIVINE_TOLL_WINDOW then return end
+        K.pendingSelfAt[source] = { at = now, guid = interruptedBy, castID = castID }
+        return
     end
 
+    if castID and K.consumedCasts[castID] then return end
+
+    -- 3) 비밀 차단자: 시간 근접만으로는 성공이 아니다. 같은 출처의 미터 증가를 함께 요구한다.
+    local matched = false
+    for _, attempt in ipairs(K.attempts) do
+        if SA_AttemptAlive(attempt, now) then
+            matched = true   -- 이미 결과를 기다리는 시도의 중복 통지(target+nameplate)도 여기서 흡수
+            if not attempt.secretResultAt then
+                attempt.secretResultAt = now
+                attempt.castID = castID
+                K.Poll(attempt.source)
+                if not K.TryConfirmMeter(attempt) then
+                    local gen, id = K.generation, attempt.id
+                    C_Timer.After(K.METER_WAIT * 0.5, function()
+                        if gen ~= K.generation then return end
+                        for _, a in ipairs(K.attempts) do
+                            if a.id == id then
+                                K.Poll(a.source)
+                                if not K.TryConfirmMeter(a) and not a.consumed then
+                                    K.Diag("확인불가(" .. tostring(K.lastMeterState) .. ") " .. a.source)
+                                end
+                                return
+                            end
+                        end
+                    end)
+                end
+            end
+        end
+    end
+    if not matched then
+        local lastP, lastPet = K.lastConfirmed.player, K.lastConfirmed.pet
+        local recent = (lastP and now - lastP.at <= K.RESULT_GRACE + SA_DIVINE_TOLL_WINDOW)
+            or (lastPet and now - lastPet.at <= K.RESULT_GRACE + SA_DIVINE_TOLL_WINDOW)
+        if not recent then K.pendingSecretAt = { at = now, castID = castID } end   -- 시전 신호보다 먼저 온 중단 결과
+    end
+end
+
+-- 미터 이벤트
+function K.OnMeterUpdated(meterType, sessionID)
+    local alert = MimDiceDB and MimDiceDB.interruptAlert
+    if not alert or not alert.enabled then return end
+    if K.IsSecret(meterType) then return end
+    local interrupts = Enum and Enum.DamageMeterType and Enum.DamageMeterType.Interrupts
+    if interrupts == nil or meterType ~= interrupts then return end
+    if not K.IsSecret(sessionID) and type(sessionID) == "number" then
+        -- 세션 번호가 바뀌었다 = 새 전투. 이 갱신에 새 전투 첫 차단이 들어 있을 수 있으므로
+        -- 기준값을 버리지 않고 "행 없음"으로 두고 비교한다.
+        -- 단, 바로 앞에서 전투 시작 신호로 이미 새 전투를 시작했다면 같은 전환이다.
+        -- 다시 0부터 비교하면 이미 처리한 첫 차단 기록을 또 증가로 보게 되므로 번호만 기록한다.
+        -- 시간 제한은 두지 않는다: 늦게 온 같은 전환과 다음 전투를 시간으로는 구별할 수 없다.
+        -- 전투 시작 신호 뒤의 번호 변경은 기준값을 다시 0으로 돌리지 않고, 지금 기준값(이미 새 전투에서
+        -- 읽은 값)과 비교한다. 진짜 다음 전투라면 값이 줄어든 것이 보여 K.Poll에서 다시 0부터 비교한다.
+        local sw = K.sessionSwitchPending
+        if sw then
+            -- 이전 번호의 갱신은 계속 기다리고, 다른 번호가 오면 그게 이 전환이다
+            if sessionID ~= sw.fromID then K.sessionSwitchPending = nil end
+        elseif K.sessionID and K.sessionID ~= sessionID then
+            K.StartNewSession()
+        end
+        K.sessionID = sessionID
+    end
+    K.PollAll()
+end
+
+-- 현재 세션 변경(새 전투 시작): 기준값을 빈 상태로 두고 바로 비교한다.
+function K.OnCurrentSessionChanged()
+    local alert = MimDiceDB and MimDiceDB.interruptAlert
+    if not alert or not alert.enabled then return end
+    K.StartNewSession(true)
+    -- 뒤이어 오는 세션 번호 변경은 이 전환과 같은 것. 어느 번호에서 바뀌기를 기다리는지 기억한다.
+    K.sessionSwitchPending = { fromID = K.sessionID }
+    K.PollAll()
+end
+
+-- 미터 수동 초기화: 기다리던 시도·결과·타이머를 모두 버리고 새 기준값만 잡는다.
+function K.OnMeterReset()
     SA_ClearInterruptAttempt()
-    SA_PlaySound(alert)
+    K.PollAll()
+end
+
+-- /밈 차단진단 : 최근 차단 판정 기록과 미터 읽기 상태(값 자체는 출력하지 않음)
+function MimDice_InterruptDiagnostics()
+    local out = DEFAULT_CHAT_FRAME
+    local _, why = K.ReadMeter(SA_PublicUnitGUID("player"), "player")
+    local combat = InCombatLockdown and InCombatLockdown() and "전투 중" or "전투 밖"
+    out:AddMessage("|cff00ff00[MimDice]|r 차단 진단 (" .. combat .. ", 미터 읽기: " .. tostring(why) .. ")")
+    if #K.diag == 0 then
+        out:AddMessage("  아직 기록이 없습니다.")
+    end
+    for _, line in ipairs(K.diag) do out:AddMessage("  " .. line) end
 end
 
 -- 죽은 유닛 GUID → 사용 가능한 unitID 로 변환
@@ -5830,6 +6275,9 @@ SA_EventFrame:RegisterEvent("ADDON_LOADED")              -- 제한이 시작되�
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_SUCCEEDED")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
 SA_EventFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
+pcall(SA_EventFrame.RegisterEvent, SA_EventFrame, "DAMAGE_METER_COMBAT_SESSION_UPDATED") -- 차단 성공 미터 증거
+pcall(SA_EventFrame.RegisterEvent, SA_EventFrame, "DAMAGE_METER_CURRENT_SESSION_UPDATED") -- 세션 변경: 기준값 폐기
+pcall(SA_EventFrame.RegisterEvent, SA_EventFrame, "DAMAGE_METER_RESET")                   -- 미터 초기화: 기준값 폐기
 SA_EventFrame:RegisterEvent("PLAYER_LOGIN")
 SA_EventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")   -- 인스턴스 진입 시 전투부활 충전 기준값 동기화
 SA_EventFrame:RegisterEvent("LOADING_SCREEN_ENABLED")  -- 지역 이동 오라 재전송을 새 블러드로 오인하지 않도록 선차단
@@ -5884,6 +6332,7 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
     elseif event == "PLAYER_ENTERING_WORLD" then
         SA_SuppressBloodlustTriggers(3)
         SA_ClearInterruptAttempt()
+        K.PollAll()   -- 차단 미터 기준값
         -- 인스턴스 진입/이동 시 충전 기준값 재동기화 (진입 직후 충전 변화 오발동 방지)
         SA_SyncBattleResCharges()
         SA_UpdateBattleResRuntime()
@@ -5934,8 +6383,15 @@ SA_EventFrame:SetScript("OnEvent", function(self, event, ...)
             end
         end
     elseif event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_CHANNEL_STOP" then
-        local unit, _, _, interruptedBy = ...
-        SA_HandleInterruptResult(unit, interruptedBy)
+        local unit, castGUID, _, interruptedBy = ...
+        SA_HandleInterruptResult(unit, interruptedBy, castGUID)
+    elseif event == "DAMAGE_METER_COMBAT_SESSION_UPDATED" then
+        local meterType, sessionID = ...
+        K.OnMeterUpdated(meterType, sessionID)
+    elseif event == "DAMAGE_METER_CURRENT_SESSION_UPDATED" then
+        K.OnCurrentSessionChanged()
+    elseif event == "DAMAGE_METER_RESET" then
+        K.OnMeterReset()
     elseif event == "UNIT_AURA" then
         -- RegisterUnitEvent로 player만 받는다. secret일 수 있는 payload는 읽지 않는다.
         pcall(SA_SyncBloodlustAuraPresence, false)

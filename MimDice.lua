@@ -1,6 +1,6 @@
 -- Author         : BIK
 -- Create Date    : 2023-02-02 오후 05:37:12
--- Last Updated   : 2026-11-11 오전 00:51:08
+-- Last Updated   : 2026-11-18 오후 22:18:18
 -- Version        : v1.15.30
 
 ---@diagnostic disable: undefined-global, param-type-mismatch, undefined-field, cast-local-type -- 전역 함수 정의 에러, 매개변수 타입 불일치, 정의되지 않은 필드, 로컬 타입 캐스팅 무시
@@ -914,6 +914,11 @@ function MimDice_OnLoad(self)
             if MimDiceRollProgress and MimDiceRollProgress.RunTest then
                 MimDiceRollProgress.RunTest(arg)
             end
+            return
+        end
+        -- /밈 차단진단 : 최근 차단 성공 판정 기록 보기
+        if cmd == "차단진단" or cmd == "kickdiag" then
+            if MimDice_InterruptDiagnostics then MimDice_InterruptDiagnostics() end
             return
         end
         MimDice_ShowWindow()

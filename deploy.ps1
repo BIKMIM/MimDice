@@ -12,7 +12,7 @@ $Dst = "D:\Games\World of Warcraft\_retail_\Interface\AddOns\MimDice"
 
 # 배포본에 넣지 않을 개발 파일
 $ExcludeDirs  = @(".git", ".vscode", ".claude", "tests", "dist")
-$ExcludeFiles = @(".gitignore", "AGENTS.md", "CLAUDE.md", "DEVGUIDE.md", "README.md", "deploy.ps1", "*.zip")
+$ExcludeFiles = @(".gitignore", "AGENTS.md", "CLAUDE.md", "DEVGUIDE.md", "README.md", "INTERRUPT_ALERT_IMPLEMENTATION_GUIDE.md", "deploy.ps1", "*.zip")
 
 # ── 내장 선택창용 sounds 목록 생성 ──
 $soundDir = Join-Path $Src "sounds"
